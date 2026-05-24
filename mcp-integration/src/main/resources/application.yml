@@ -1,0 +1,35 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: mcp-client
+  ai:
+    mcp:
+      client:
+        # Disable Spring AI's property-driven auto-configuration.
+        # All server lifecycle is managed by McpServerRegistryService.
+        enabled: false
+
+mcp:
+  # Path to the MCP servers config file (Claude Desktop format).
+  # Supports absolute paths and ~/... home-relative paths.
+  config-file: ./mcp-servers.json
+
+ollama:
+  # Ollama base URL – must expose the OpenAI-compatible /v1 API
+  base-url: http://localhost:11434
+  # Default model used when the request does not specify one.
+  # Must be a model that supports tool calling (e.g. llama3.2, mistral-nemo).
+  model: llama3.2
+
+agent:
+  # API key for the /api/agent/** endpoints. Leave blank to disable authentication
+  # (e.g. running behind a network-level security boundary).
+  api-key:
+  # Maximum wall-clock time allowed for a single agent request
+  request-timeout: 5m
+
+logging:
+  level:
+    com.example: DEBUG

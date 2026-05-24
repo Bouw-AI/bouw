@@ -1,0 +1,209 @@
+package com.example.agent;
+
+import com.example.agent.model.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+/**
+ * Unit tests for {@link AgentService}.
+ *
+ * <p>Verifies the agent loop iteration logic, tool-call routing, error recovery,
+ * and edge cases using a mocked {@link McpToolProvider} and {@link OllamaClient}.
+ */
+@ExtendWith(MockitoExtension.class)
+class AgentServiceTest {
+
+    private static final String MODEL = "test-model";
+    private static final String PROMPT = "What time is it?";
+    private static final Duration FIVE_MINUTES = Duration.ofMinutes(5);
+    private static final Duration SHORT_TIMEOUT = Duration.ofMillis(1);
+
+    @Mock
+    private OllamaClient ollamaClient;
+
+    @Mock
+    private McpToolProvider toolProvider;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private AgentService agentService;
+
+    @BeforeEach
+    void setUp() {
+        agentService = new AgentService(ollamaClient, toolProvider, objectMapper, FIVE_MINUTES);
+    }
+
+    @Test
+    void shouldCallToolAndProduceFinalAnswer() {
+        // Given: one tool available, model returns tool call then final answer
+        var availableTool = new AvailableTool("get_time", "Get the current time",
+                Map.of("type", "object", "properties", Map.of()));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
+        when(toolProvider.callTool(eq("server1"), eq("get_time"), anyMap())).thenReturn("12:00");
+
+        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithToolCall("call_1", "get_time", "{}"))
+                .thenReturn(responseWithContent("The time is 12:00."));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then
+        assertThat(result.response()).contains("The time is 12:00");
+        verify(toolProvider, times(1)).callTool("server1", "get_time", Map.of());
+    }
+
+    @Test
+    void shouldStopAfterMaxIterations() {
+        // Given: tool always returns a result, model keeps requesting tool calls
+        var availableTool = new AvailableTool("always_call", "Always calls",
+                Map.of("type", "object", "properties", Map.of()));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
+        when(toolProvider.callTool(eq("server1"), eq("always_call"), anyMap())).thenReturn("done");
+
+        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithToolCall("call_x", "always_call", "{}"));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: should hit the max-iterations guardrail
+        assertThat(result.response()).contains("maximum number of tool-call iterations");
+        verify(toolProvider, times(AgentService.MAX_ITERATIONS))
+                .callTool(eq("server1"), eq("always_call"), anyMap());
+    }
+
+    @Test
+    void shouldHandleToolCallFailureGracefully() {
+        // Given: tool throws, model retries then answers
+        var availableTool = new AvailableTool("flaky_tool", "Might fail",
+                Map.of("type", "object", "properties", Map.of()));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
+        when(toolProvider.callTool(eq("server1"), eq("flaky_tool"), anyMap()))
+                .thenThrow(new RuntimeException("Something went wrong"));
+
+        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithToolCall("call_1", "flaky_tool", "{}"))
+                .thenReturn(responseWithContent("I tried but failed."));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: error message is fed back to the model, then final answer returned
+        assertThat(result.response()).contains("I tried but failed.");
+        verify(toolProvider, times(1)).callTool(eq("server1"), eq("flaky_tool"), anyMap());
+    }
+
+    @Test
+    void shouldHandleUnknownToolGracefully() {
+        // Given: model calls a tool that doesn't exist on any server
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+
+        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithToolCall("call_1", "nonexistent_tool", "{}"))
+                .thenReturn(responseWithContent("I cannot find that tool."));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then
+        assertThat(result.response()).contains("I cannot find that tool.");
+        verify(toolProvider, never()).callTool(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void shouldHandleToolCallsWhenFinishReasonIsNotToolCalls() {
+        // Given: finish_reason is "stop" but tool_calls are present (edge case)
+        var availableTool = new AvailableTool("my_tool", "Some tool",
+                Map.of("type", "object", "properties", Map.of()));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
+        when(toolProvider.callTool(eq("server1"), eq("my_tool"), anyMap())).thenReturn("result");
+
+        var chatResponse = new ChatResponse("id", List.of(
+                new ChatResponse.Choice(0,
+                        ChatMessage.assistantWithToolCalls(
+                                List.of(new ToolCall("call_1", "function",
+                                        new ToolCall.FunctionCall("my_tool", "{}")))),
+                        "stop")
+        ));
+
+        var finalResponse = responseWithContent("Final answer.");
+
+        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(chatResponse)
+                .thenReturn(finalResponse);
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: tool call should still execute despite "stop" finish_reason
+        assertThat(result.response()).contains("Final answer.");
+        verify(toolProvider, times(1)).callTool("server1", "my_tool", Map.of());
+    }
+
+    @Test
+    void shouldTimeoutBeforeMaxIterations() {
+        // Given: a very short timeout and a tool call that blocks
+        var shortTimeoutService = new AgentService(
+                ollamaClient, toolProvider, objectMapper, SHORT_TIMEOUT);
+
+        var availableTool = new AvailableTool("slow_tool", "Slow tool",
+                Map.of("type", "object", "properties", Map.of()));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
+        when(toolProvider.callTool(eq("server1"), eq("slow_tool"), anyMap())).thenAnswer(invocation -> {
+            Thread.sleep(100); // exceed the 1ms timeout
+            return "done";
+        });
+
+        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithToolCall("call_1", "slow_tool", "{}"));
+
+        // When
+        AgentResponse result = shortTimeoutService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then
+        assertThat(result.response()).contains("timed out");
+    }
+
+    @Test
+    void shouldReturnDirectAnswerWithNoTools() {
+        // Given: no tools available, model responds directly
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent("Hello there!"));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then
+        assertThat(result.response()).isEqualTo("Hello there!");
+        verify(toolProvider, never()).callTool(anyString(), anyString(), anyMap());
+    }
+
+    // ---- helpers ----
+
+    private static ChatResponse responseWithContent(String content) {
+        return new ChatResponse("id", List.of(
+                new ChatResponse.Choice(0, ChatMessage.assistant(content), "stop")));
+    }
+
+    private static ChatResponse responseWithToolCall(String id, String name, String args) {
+        var toolCall = new ToolCall(id, "function", new ToolCall.FunctionCall(name, args));
+        return new ChatResponse("id", List.of(
+                new ChatResponse.Choice(0,
+                        ChatMessage.assistantWithToolCalls(List.of(toolCall)),
+                        "tool_calls")));
+    }
+}
