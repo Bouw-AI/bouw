@@ -26,10 +26,11 @@ public class McpToolProviderImpl implements McpToolProvider {
     private static final Logger log = LoggerFactory.getLogger(McpToolProviderImpl.class);
 
     private final McpServerRegistryService registry;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
-    public McpToolProviderImpl(McpServerRegistryService registry) {
+    public McpToolProviderImpl(McpServerRegistryService registry, ObjectMapper objectMapper) {
         this.registry = registry;
+        this.objectMapper = objectMapper;
     }
 
     @Override

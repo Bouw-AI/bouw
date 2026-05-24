@@ -5,8 +5,11 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -24,18 +27,27 @@ import java.util.stream.Collectors;
 public class AgentService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
-    private static final int MAX_ITERATIONS = 10;
+    static final int MAX_ITERATIONS = 10;
 
     private final OllamaClient ollamaClient;
     private final McpToolProvider toolProvider;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
+    private final Duration requestTimeout;
 
-    public AgentService(OllamaClient ollamaClient, McpToolProvider toolProvider) {
+    public AgentService(
+            OllamaClient ollamaClient,
+            McpToolProvider toolProvider,
+            ObjectMapper objectMapper,
+            @Value("${agent.request-timeout:5m}") Duration requestTimeout) {
         this.ollamaClient = ollamaClient;
         this.toolProvider = toolProvider;
+        this.objectMapper = objectMapper;
+        this.requestTimeout = requestTimeout;
     }
 
     public AgentResponse chat(AgentRequest request) {
+        Instant deadline = Instant.now().plus(requestTimeout);
+
         // Build flattened tool list and a reverse lookup: tool name → server name
         Map<String, String> toolServerMap = new LinkedHashMap<>();
         List<ToolDefinition> toolDefinitions = new ArrayList<>();
@@ -53,15 +65,25 @@ public class AgentService {
         messages.add(ChatMessage.user(request.prompt()));
 
         for (int i = 0; i < MAX_ITERATIONS; i++) {
+            if (Instant.now().isAfter(deadline)) {
+                log.warn("Agent request timed out after {}", requestTimeout);
+                return new AgentResponse(
+                        "Request timed out after " + requestTimeout.toSeconds() + "s.",
+                        Collections.unmodifiableList(messages));
+            }
+
             ChatResponse response = ollamaClient.chat(request.model(), messages, toolDefinitions);
             ChatResponse.Choice choice = response.choices().get(0);
             ChatMessage assistantMsg = choice.message();
             messages.add(assistantMsg);
 
             String finishReason = choice.finishReason();
-            log.debug("Iteration {}: finish_reason={}", i, finishReason);
+            log.debug("Iteration {}: finish_reason={}, has_tool_calls={}",
+                    i, finishReason, assistantMsg.toolCalls() != null);
 
-            if ("tool_calls".equals(finishReason) && assistantMsg.toolCalls() != null) {
+            // Handle tool calls regardless of finishReason — some models set
+            // finish_reason to "stop" or leave it null even when tool_calls are present.
+            if (assistantMsg.toolCalls() != null && !assistantMsg.toolCalls().isEmpty()) {
                 for (ToolCall toolCall : assistantMsg.toolCalls()) {
                     String toolResult = executeToolCall(toolCall, toolServerMap);
                     messages.add(ChatMessage.tool(toolCall.id(), toolResult));

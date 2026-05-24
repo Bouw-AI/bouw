@@ -23,6 +23,13 @@ ollama:
   # Must be a model that supports tool calling (e.g. llama3.2, mistral-nemo).
   model: llama3.2
 
+agent:
+  # API key for the /api/agent/** endpoints. Leave blank to disable authentication
+  # (e.g. running behind a network-level security boundary).
+  api-key:
+  # Maximum wall-clock time allowed for a single agent request
+  request-timeout: 5m
+
 logging:
   level:
     com.example: DEBUG
