@@ -1,0 +1,24 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: mcp-client
+  ai:
+    mcp:
+      client:
+        # Disable Spring AI's property-driven auto-configuration.
+        # All server lifecycle is managed by McpServerRegistryService which
+        # reads from mcp-servers.json at startup and via the REST API.
+        enabled: false
+
+mcp:
+  # Path to the MCP servers config file.
+  # Follows the same JSON format used by Claude Desktop and other MCP clients:
+  #   https://modelcontextprotocol.io/quickstart/user
+  # Supports absolute paths and ~/... home-relative paths.
+  config-file: ./mcp-servers.json
+
+logging:
+  level:
+    com.example.mcpclient: DEBUG
