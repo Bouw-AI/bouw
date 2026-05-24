@@ -16,7 +16,13 @@ A Spring Boot AI agent that connects to [Model Context Protocol](https://modelco
 
 ## Configure MCP servers
 
-Servers are declared in `mcp-servers.json` (repo root) using the standard Claude Desktop format:
+Servers are declared in `mcp-servers.json` (repo root) using the standard Claude Desktop format. This file is **gitignored** so your local server list stays private — create it by copying the committed example:
+
+```bash
+cp mcp-servers.example.json mcp-servers.json
+```
+
+`mcp-servers.example.json`:
 
 ```json
 {
