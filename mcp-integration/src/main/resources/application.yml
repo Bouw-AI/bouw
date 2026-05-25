@@ -10,6 +10,12 @@ spring:
         # Disable Spring AI's property-driven auto-configuration.
         # All server lifecycle is managed by McpServerRegistryService.
         enabled: false
+  data:
+    # Redis backing the long-term memory store. Only contacted when memory.enabled=true
+    # (the connection is established lazily on first use).
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
 
 mcp:
   # Path to the MCP servers config file (Claude Desktop format).
@@ -32,6 +38,29 @@ llm:
     openrouter:
       base-url: https://openrouter.ai/api/v1
       api-key: ${OPENROUTER_API_KEY:}
+
+memory:
+  # Redis-backed long-term memory with text-embedding recall. Disabled by default; when enabled it
+  # requires a reachable Redis (spring.data.redis.*) and an embedding endpoint (embedding.* below).
+  # When enabled, each finished exchange is embedded and stored, and the most-similar past memories
+  # are injected into the prompt of future requests.
+  enabled: ${MEMORY_ENABLED:false}
+  # Redis key prefix under which memory records are stored (hash key is "<prefix>:records").
+  key-prefix: agent:memory
+  # Number of most-similar past memories recalled into the prompt.
+  top-k: 3
+  # Minimum cosine similarity (0..1) a memory must reach to be recalled; 0 disables the threshold.
+  min-score: 0.75
+  # Hard cap on stored memories; the oldest are evicted past this.
+  max-entries: 1000
+
+embedding:
+  # OpenAI-schema embeddings endpoint (POST <base-url>/embeddings) used to vectorise memory text.
+  # Defaults to OpenRouter; authenticates with Authorization: Bearer <api-key> when a key is set.
+  base-url: ${EMBEDDING_BASE_URL:https://openrouter.ai/api/v1}
+  api-key: ${OPENROUTER_API_KEY:}
+  # Model used specifically for embedding text (independent of the chat llm.model above).
+  model: ${EMBEDDING_MODEL:openai/text-embedding-3-small}
 
 agent:
   # API key for the /api/agent/** endpoints. Leave blank to disable authentication

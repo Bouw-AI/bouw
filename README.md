@@ -15,6 +15,7 @@ A Spring Boot AI agent that connects to [Model Context Protocol](https://modelco
 - Runtimes for the MCP servers you configure. The default `mcp-servers.json` uses:
   - `npx` (Node.js) for the filesystem server
   - `uvx` ([uv](https://docs.astral.sh/uv/)) for the time server
+- **(Optional) Redis** — only needed if you enable [long-term memory](#long-term-memory). Any Redis 6+ works; no modules required.
 
 ## Configure MCP servers
 
@@ -149,6 +150,60 @@ llm:
 
 To add another OpenAI-compatible provider, add an entry under `llm.providers` with its `base-url` and (optionally) `api-key`, then point `llm.provider` at it.
 
+## Long-term memory
+
+The agent can keep a **Redis-backed long-term memory** of past conversations using text embeddings. It is **disabled by default**. When enabled, every finished exchange (the prompt and the agent's final answer) is embedded and stored in Redis; on each new request the most similar past memories are recalled and injected into the prompt as extra context, so the agent can remember things across requests and restarts.
+
+Similarity search runs in-process (cosine similarity over the stored vectors), so it works against plain Redis — no RediSearch or vector modules required.
+
+### Setup
+
+1. **Start Redis** (any 6+ instance). For a quick local one:
+
+   ```bash
+   docker run -p 6379:6379 redis:7
+   ```
+
+2. **Provide an embedding endpoint.** Embeddings are generated through an OpenAI-schema `POST {base-url}/embeddings` call. The defaults target **OpenRouter**, so set your key:
+
+   ```bash
+   export OPENROUTER_API_KEY=sk-or-v1-...
+   ```
+
+   (The embedding endpoint is configured independently of the chat LLM — you can embed via OpenRouter while chatting against a local Ollama model.)
+
+3. **Enable memory** when starting the server:
+
+   ```bash
+   MEMORY_ENABLED=true mvn -pl mcp-integration spring-boot:run
+   ```
+
+   Or set `memory.enabled: true` in `application.yml`.
+
+### Configuration
+
+```yaml
+memory:
+  enabled: ${MEMORY_ENABLED:false}   # master switch
+  key-prefix: agent:memory           # Redis key prefix (hash key is "<prefix>:records")
+  top-k: 3                           # how many past memories to recall into the prompt
+  min-score: 0.75                    # min cosine similarity (0..1) to recall; 0 disables the threshold
+  max-entries: 1000                  # cap on stored memories; oldest are evicted past this
+
+embedding:
+  base-url: ${EMBEDDING_BASE_URL:https://openrouter.ai/api/v1}
+  api-key: ${OPENROUTER_API_KEY:}    # sent as Authorization: Bearer <key> when set
+  model: ${EMBEDDING_MODEL:openai/text-embedding-3-small}   # model used specifically for embeddings
+
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+```
+
+To use a different embedding model, set `embedding.model` (or the `EMBEDDING_MODEL` env var) — for example a local Ollama embedding model by also pointing `embedding.base-url` at `http://localhost:11434/v1`. Embedding and store failures are non-fatal: if Redis or the embedding endpoint is unavailable the agent logs a warning and continues without memory.
+
 ## Configuration
 
 Settings live in `mcp-integration/src/main/resources/application.yml`:
@@ -162,3 +217,12 @@ Settings live in `mcp-integration/src/main/resources/application.yml`:
 | `mcp.config-file` | Path to the MCP servers JSON (supports `~/`) | `./mcp-servers.json` |
 | `agent.api-key` | If set, `/api/agent/**` requires the `X-API-Key` header; if blank, those endpoints are open | _(blank)_ |
 | `agent.request-timeout` | Per-request wall-clock budget for the agent loop | `5m` |
+| `memory.enabled` | Enable Redis-backed long-term memory (see [Long-term memory](#long-term-memory)) | `false` |
+| `memory.key-prefix` | Redis key prefix for stored memory records | `agent:memory` |
+| `memory.top-k` | Number of most-similar past memories recalled into the prompt | `3` |
+| `memory.min-score` | Minimum cosine similarity (0..1) to recall a memory; `0` disables the threshold | `0.75` |
+| `memory.max-entries` | Cap on stored memories; oldest are evicted past this | `1000` |
+| `embedding.base-url` | OpenAI-schema embeddings API root (before `/embeddings`) | `https://openrouter.ai/api/v1` |
+| `embedding.api-key` | Optional; when set, sent as `Authorization: Bearer <key>` | `${OPENROUTER_API_KEY:}` |
+| `embedding.model` | Model used specifically for embedding text | `openai/text-embedding-3-small` |
+| `spring.data.redis.host` / `.port` | Redis connection (only used when `memory.enabled`) | `localhost` / `6379` |
