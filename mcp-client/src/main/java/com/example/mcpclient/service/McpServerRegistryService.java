@@ -15,6 +15,7 @@ import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import jakarta.annotation.PostConstruct;
+import java.time.Duration;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -223,7 +224,9 @@ public class McpServerRegistryService {
         if (def.args() != null && !def.args().isEmpty()) builder.args(def.args());
         if (def.env()  != null && !def.env().isEmpty())  builder.env(def.env());
         return McpClient.sync(new StdioClientTransport(builder.build(), mcpJsonMapper))
-                .clientInfo(CLIENT_INFO).build();
+                .clientInfo(CLIENT_INFO)
+                .initializationTimeout(Duration.ofSeconds(120))
+                .build();
     }
 
     private McpSyncClient buildSseClient(McpServerDefinition def) {
