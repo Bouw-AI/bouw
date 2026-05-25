@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Resolves and confines file paths used by the local tools to a single workspace root.
@@ -20,6 +21,10 @@ import java.nio.file.Path;
 public class Workspace {
 
     private static final Logger log = LoggerFactory.getLogger(Workspace.class);
+
+    /** Directories skipped by recursive tools (search, listing). */
+    public static final List<String> IGNORED_DIRECTORIES =
+            List.of(".git", "target", "node_modules", "build", "dist", ".idea");
 
     private final Path root;
 
@@ -37,7 +42,14 @@ public class Workspace {
     public Path resolve(String path) {
         Path candidate = Path.of(path);
         Path resolved = (candidate.isAbsolute() ? candidate : root.resolve(candidate)).normalize();
-        if (!realPath(resolved).startsWith(root)) {
+        Path real;
+        try {
+            real = realPath(resolved);
+        } catch (IOException e) {
+            throw new IllegalArgumentException(
+                    "Path '" + path + "' could not be resolved within the workspace root " + root, e);
+        }
+        if (!real.startsWith(root)) {
             throw new IllegalArgumentException(
                     "Path '" + path + "' resolves outside the workspace root " + root);
         }
@@ -47,17 +59,21 @@ public class Workspace {
     /**
      * Returns the real (symlink-resolved) path of {@code path}. Because the target may not exist
      * yet (e.g. a file about to be written), this resolves symlinks on the deepest existing
-     * ancestor and re-appends the remaining, not-yet-created segments.
+     * ancestor and re-appends the remaining, not-yet-created segments. Dangling symlink components
+     * are rejected so an unresolvable link cannot be treated as an in-workspace path.
      */
-    private static Path realPath(Path path) {
+    private static Path realPath(Path path) throws IOException {
         Path existing = path;
         while (existing != null && !Files.exists(existing)) {
+            if (Files.isSymbolicLink(existing)) {
+                throw new IOException("Dangling symbolic link in path: " + existing);
+            }
             existing = existing.getParent();
         }
         if (existing == null) {
-            return path;
+            throw new IOException("No existing ancestor for path: " + path);
         }
-        Path realExisting = realPathQuietly(existing);
+        Path realExisting = existing.toRealPath();
         return realExisting.resolve(existing.relativize(path)).normalize();
     }
 

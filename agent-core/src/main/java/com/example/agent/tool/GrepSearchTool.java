@@ -21,8 +21,6 @@ public class GrepSearchTool implements LocalTool {
 
     private static final int DEFAULT_MAX_RESULTS = 200;
     private static final int HARD_MAX_RESULTS = 2000;
-    private static final List<String> SKIP_DIRS =
-            List.of(".git", "target", "node_modules", "build", "dist", ".idea");
 
     private final Workspace workspace;
 
@@ -137,7 +135,7 @@ public class GrepSearchTool implements LocalTool {
 
     private static boolean isNotSkipped(Path base, Path path) {
         for (Path part : base.relativize(path)) {
-            if (SKIP_DIRS.contains(part.toString())) {
+            if (Workspace.IGNORED_DIRECTORIES.contains(part.toString())) {
                 return false;
             }
         }

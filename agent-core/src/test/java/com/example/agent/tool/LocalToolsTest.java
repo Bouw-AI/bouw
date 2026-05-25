@@ -149,6 +149,21 @@ class LocalToolsTest {
     }
 
     @Test
+    void writeThroughDanglingSymlinkIsRejected() throws Exception {
+        Path link = tmp.resolve("badlink");
+        try {
+            Files.createSymbolicLink(link, Path.of("/nonexistent-outside-target/dir"));
+        } catch (UnsupportedOperationException | java.io.IOException e) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "symlinks unsupported on this platform");
+        }
+
+        var write = new WriteFileTool(workspace);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> write.execute(Map.of("path", "badlink/file.txt", "content", "x")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void disabledRegistryExposesNoTools() {
         var disabled = new LocalToolProperties(false, tmp.toString(), Duration.ofSeconds(10), 30_000);
         var emptyRegistry = new LocalToolRegistry(

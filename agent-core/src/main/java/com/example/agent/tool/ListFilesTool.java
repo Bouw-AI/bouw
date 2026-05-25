@@ -16,8 +16,6 @@ import java.util.stream.Stream;
 public class ListFilesTool implements LocalTool {
 
     private static final int MAX_ENTRIES = 1000;
-    private static final List<String> SKIP_DIRS =
-            List.of(".git", "target", "node_modules", "build", "dist", ".idea");
 
     private final Workspace workspace;
 
@@ -93,7 +91,7 @@ public class ListFilesTool implements LocalTool {
 
     private static boolean isNotSkipped(Path base, Path path) {
         for (Path part : base.relativize(path)) {
-            if (SKIP_DIRS.contains(part.toString())) {
+            if (Workspace.IGNORED_DIRECTORIES.contains(part.toString())) {
                 return false;
             }
         }
