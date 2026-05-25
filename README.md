@@ -1,15 +1,17 @@
 # mcp-client
 
-A Spring Boot AI agent that connects to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and lets a local Ollama model use their tools to answer prompts.
+A Spring Boot AI agent that connects to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and lets an OpenAI-schema LLM use their tools to answer prompts. The LLM backend is pluggable — point it at a local [Ollama](https://ollama.com) instance or a hosted provider such as [OpenRouter](https://openrouter.ai) (see [LLM provider](#llm-provider)).
 
 ## Prerequisites
 
 - **Java 21** and **Maven**
-- **[Ollama](https://ollama.com)** running locally with a tool-calling model pulled:
-  ```bash
-  ollama pull llama3.2
-  ollama serve            # exposes http://localhost:11434
-  ```
+- An **OpenAI-compatible LLM endpoint** with a tool-calling model. Either:
+  - **[Ollama](https://ollama.com)** running locally (no API key):
+    ```bash
+    ollama pull llama3.2
+    ollama serve            # exposes http://localhost:11434
+    ```
+  - or a hosted provider like **OpenRouter** (set `OPENROUTER_API_KEY`).
 - Runtimes for the MCP servers you configure. The default `mcp-servers.json` uses:
   - `npx` (Node.js) for the filesystem server
   - `uvx` ([uv](https://docs.astral.sh/uv/)) for the time server
@@ -83,7 +85,7 @@ curl -X POST http://localhost:8080/api/agent/chat \
   -d '{"prompt": "What time is it in Tokyo?", "model": "llama3.2"}'
 ```
 
-`model` is optional and falls back to `ollama.model` from configuration.
+`model` is optional and falls back to `llm.model` from configuration. Use a model name valid for the active provider (e.g. `llama3.2` for Ollama, `deepseek/deepseek-chat` for OpenRouter).
 
 Manage MCP servers at runtime:
 
@@ -93,14 +95,37 @@ curl http://localhost:8080/api/servers/time/tools      # list a server's tools
 curl -X POST http://localhost:8080/api/servers/time/reconnect
 ```
 
+## LLM provider
+
+The agent talks to any OpenAI-schema `/chat/completions` endpoint. Providers are declared under `llm.providers` in `application.yml`, and `llm.provider` selects the active one:
+
+```yaml
+llm:
+  provider: ollama            # switch to "openrouter" to use OpenRouter
+  model: qwen-coder-3:latest  # default model for the active provider
+  providers:
+    ollama:
+      base-url: http://localhost:11434/v1   # no api-key → no auth header sent
+    openrouter:
+      base-url: https://openrouter.ai/api/v1
+      api-key: ${OPENROUTER_API_KEY:}        # sent as Authorization: Bearer <key>
+```
+
+- **Ollama** has no `api-key`, so requests are sent without an `Authorization` header.
+- **OpenRouter** authenticates with an `Authorization: Bearer <api-key>` header ([OpenRouter auth docs](https://openrouter.ai/docs/api/reference/authentication)). Provide the key via the `OPENROUTER_API_KEY` environment variable and set `llm.provider: openrouter` (also pick an OpenRouter `model`, e.g. `deepseek/deepseek-chat`).
+
+To add another OpenAI-compatible provider, add an entry under `llm.providers` with its `base-url` and (optionally) `api-key`, then point `llm.provider` at it.
+
 ## Configuration
 
 Settings live in `mcp-integration/src/main/resources/application.yml`:
 
 | Key | Description | Default |
 | --- | --- | --- |
-| `ollama.base-url` | Ollama OpenAI-compatible endpoint | `http://localhost:11434` |
-| `ollama.model` | Default model (must support tool calling) | `llama3.2` |
+| `llm.provider` | Active provider; must match a key under `llm.providers` | `ollama` |
+| `llm.model` | Default model when a request omits one (must support tool calling) | `qwen-coder-3:latest` |
+| `llm.providers.<name>.base-url` | OpenAI-compatible API root (the part before `/chat/completions`) | _(per provider)_ |
+| `llm.providers.<name>.api-key` | Optional; when set, sent as `Authorization: Bearer <key>` | _(blank)_ |
 | `mcp.config-file` | Path to the MCP servers JSON (supports `~/`) | `./mcp-servers.json` |
 | `agent.api-key` | If set, `/api/agent/**` requires the `X-API-Key` header; if blank, those endpoints are open | _(blank)_ |
 | `agent.request-timeout` | Per-request wall-clock budget for the agent loop | `5m` |

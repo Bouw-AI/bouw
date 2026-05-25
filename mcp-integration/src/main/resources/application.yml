@@ -16,12 +16,22 @@ mcp:
   # Supports absolute paths and ~/... home-relative paths.
   config-file: ./mcp-servers.json
 
-ollama:
-  # Ollama base URL – must expose the OpenAI-compatible /v1 API
-  base-url: http://localhost:11434
-  # Default model used when the request does not specify one.
-  # Must be a model that supports tool calling (e.g. llama3.2, mistral-nemo).
+llm:
+  # Active LLM provider — must match a key under llm.providers below.
+  provider: ollama
+  # Default model used when a request does not specify one.
+  # Must be a model that supports tool calling and be valid for the active provider
+  # (e.g. llama3.2 / mistral-nemo for Ollama, deepseek/deepseek-chat for OpenRouter).
   model: qwen-coder-3:latest
+  providers:
+    # Local Ollama exposing the OpenAI-compatible API — no API key, so no auth header is sent.
+    ollama:
+      base-url: http://localhost:11434/v1
+    # OpenRouter — authenticates with an Authorization: Bearer <api-key> header.
+    # Set OPENROUTER_API_KEY in the environment (sk-or-v1-...) and switch provider to "openrouter".
+    openrouter:
+      base-url: https://openrouter.ai/api/v1
+      api-key: ${OPENROUTER_API_KEY:}
 
 agent:
   # API key for the /api/agent/** endpoints. Leave blank to disable authentication

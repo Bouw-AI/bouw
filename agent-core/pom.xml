@@ -12,7 +12,7 @@
 
     <artifactId>agent-core</artifactId>
     <name>agent-core</name>
-    <description>AI agent loop and Ollama OpenAI-compatible client – no MCP dependency</description>
+    <description>AI agent loop and OpenAI-schema LLM client (Ollama, OpenRouter, …) – no MCP dependency</description>
 
     <dependencies>
         <!-- Spring Boot base: IoC, SLF4J/Logback, @Value, @Component, etc. -->
@@ -20,7 +20,7 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
         </dependency>
-        <!-- RestClient (Spring 6.1+) for Ollama HTTP calls -->
+        <!-- RestClient (Spring 6.1+) for LLM HTTP calls -->
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-web</artifactId>

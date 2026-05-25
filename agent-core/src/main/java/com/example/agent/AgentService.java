@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
  *
  * <ol>
  *   <li>Fetches all tools from every connected MCP server.</li>
- *   <li>Sends the user prompt to Ollama with those tools advertised.</li>
+ *   <li>Sends the user prompt to the configured LLM with those tools advertised.</li>
  *   <li>When the model requests a tool call, routes it to the correct MCP server.</li>
  *   <li>Feeds the tool result back and repeats until the model produces a final answer.</li>
  * </ol>
@@ -29,24 +29,28 @@ public class AgentService {
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
     static final int MAX_ITERATIONS = 10;
 
-    private final OllamaClient ollamaClient;
+    private final OpenAiClient llmClient;
     private final McpToolProvider toolProvider;
     private final ObjectMapper objectMapper;
     private final Duration requestTimeout;
+    private final String defaultModel;
 
     public AgentService(
-            OllamaClient ollamaClient,
+            OpenAiClient llmClient,
             McpToolProvider toolProvider,
             ObjectMapper objectMapper,
-            @Value("${agent.request-timeout:5m}") Duration requestTimeout) {
-        this.ollamaClient = ollamaClient;
+            @Value("${agent.request-timeout:5m}") Duration requestTimeout,
+            @Value("${llm.model:}") String defaultModel) {
+        this.llmClient = llmClient;
         this.toolProvider = toolProvider;
         this.objectMapper = objectMapper;
         this.requestTimeout = requestTimeout;
+        this.defaultModel = defaultModel;
     }
 
     public AgentResponse chat(AgentRequest request) {
         Instant deadline = Instant.now().plus(requestTimeout);
+        String model = resolveModel(request.model());
 
         // Build flattened tool list and a reverse lookup: tool name → server name
         Map<String, String> toolServerMap = new LinkedHashMap<>();
@@ -59,7 +63,7 @@ public class AgentService {
                 })
         );
 
-        log.debug("Agent chat: model={}, tools available={}", request.model(), toolDefinitions.size());
+        log.debug("Agent chat: model={}, tools available={}", model, toolDefinitions.size());
 
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.user(request.prompt()));
@@ -72,7 +76,7 @@ public class AgentService {
                         Collections.unmodifiableList(messages));
             }
 
-            ChatResponse response = ollamaClient.chat(request.model(), messages, toolDefinitions);
+            ChatResponse response = llmClient.chat(model, messages, toolDefinitions);
             ChatResponse.Choice choice = response.choices().get(0);
             ChatMessage assistantMsg = choice.message();
             messages.add(assistantMsg);
@@ -97,6 +101,13 @@ public class AgentService {
         return new AgentResponse(
                 "Reached the maximum number of tool-call iterations without a final answer.",
                 Collections.unmodifiableList(messages));
+    }
+
+    private String resolveModel(String requested) {
+        if (requested != null && !requested.isBlank()) {
+            return requested;
+        }
+        return defaultModel;
     }
 
     private String executeToolCall(ToolCall toolCall, Map<String, String> toolServerMap) {

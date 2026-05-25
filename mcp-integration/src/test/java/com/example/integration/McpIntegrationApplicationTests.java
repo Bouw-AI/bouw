@@ -2,7 +2,7 @@ package com.example.integration;
 
 import com.example.agent.AgentService;
 import com.example.agent.McpToolProvider;
-import com.example.agent.OllamaClient;
+import com.example.agent.OpenAiClient;
 import com.example.agent.model.AvailableTool;
 import com.example.agent.model.ChatMessage;
 import com.example.agent.model.ChatResponse;
@@ -44,10 +44,10 @@ class McpIntegrationApplicationTests {
     private McpToolProvider toolProvider;
 
     @MockBean
-    private OllamaClient ollamaClient;
+    private OpenAiClient llmClient;
 
     private void stubLlmFinalAnswer(String answer) {
-        when(ollamaClient.chat(anyString(), anyList(), anyList()))
+        when(llmClient.chat(anyString(), anyList(), anyList()))
                 .thenReturn(new ChatResponse("test-id", List.of(
                         new ChatResponse.Choice(0, ChatMessage.assistant(answer), "stop"))));
     }
