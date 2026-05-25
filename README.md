@@ -43,6 +43,22 @@ cp mcp-servers.example.json mcp-servers.json
 
 Stdio servers use `command` / `args` / `env`; SSE/HTTP servers use `url` / `headers`. Servers can also be managed at runtime through the `/api/servers` REST API.
 
+### Passing secrets and environment variables
+
+The client launches stdio servers as subprocesses and **does not inherit your shell environment** — only a fixed whitelist (`PATH`, `HOME`, etc.) is passed through. To give a server an API key or other config, put it in that server's `env` block:
+
+```json
+"ddg-mcp": {
+  "command": "node",
+  "args": ["/path/to/ddg-mcp/dist/server.js"],
+  "env": {
+    "OPENROUTER_API_KEY": "sk-or-v1-..."
+  }
+}
+```
+
+Exporting a variable in your shell (or relying on the server's own `.env` file) will **not** work unless the server explicitly loads it — pass values through the `env` block instead. Because `mcp-servers.json` is gitignored, secrets placed here stay local.
+
 ## Build
 
 ```bash

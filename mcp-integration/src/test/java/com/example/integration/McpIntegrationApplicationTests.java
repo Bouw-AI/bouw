@@ -2,6 +2,7 @@ package com.example.integration;
 
 import com.example.agent.AgentService;
 import com.example.agent.McpToolProvider;
+import com.example.agent.OllamaClient;
 import com.example.agent.model.AvailableTool;
 import com.example.agent.model.ChatMessage;
 import com.example.agent.model.ChatResponse;
@@ -42,6 +43,15 @@ class McpIntegrationApplicationTests {
     @MockBean
     private McpToolProvider toolProvider;
 
+    @MockBean
+    private OllamaClient ollamaClient;
+
+    private void stubLlmFinalAnswer(String answer) {
+        when(ollamaClient.chat(anyString(), anyList(), anyList()))
+                .thenReturn(new ChatResponse("test-id", List.of(
+                        new ChatResponse.Choice(0, ChatMessage.assistant(answer), "stop"))));
+    }
+
     @Test
     void contextLoads() {
         // Verifies the full multi-module Spring context starts successfully
@@ -78,6 +88,7 @@ class McpIntegrationApplicationTests {
         var availableTool = new AvailableTool("get_time", "Get time", Map.of());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
         when(toolProvider.callTool(anyString(), anyString(), anyMap())).thenReturn("12:00");
+        stubLlmFinalAnswer("It is 12:00.");
 
         // The rest template sends requests through the full web layer, which now
         // includes Spring Security. Since no api-key is configured in the test,
@@ -93,6 +104,7 @@ class McpIntegrationApplicationTests {
     void agentEndpointCanBeCalledWithApiKeyWhenConfigured() throws Exception {
         // This test verifies the security filter works:
         // - the endpoint returns 401 when a wrong API key is sent
+        stubLlmFinalAnswer("ok");
         var request = Map.of("prompt", "test", "model", "llama3.2");
 
         HttpHeaders headers = new HttpHeaders();
