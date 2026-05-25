@@ -39,6 +39,18 @@ llm:
       base-url: https://openrouter.ai/api/v1
       api-key: ${OPENROUTER_API_KEY:}
 
+conversation:
+  memory:
+    # Short-term, per-session conversation memory: the recent turns of a chat session are replayed
+    # back into the model on each request so it remembers what was just said. Requests opt in by
+    # sending a "sessionId"; requests without one stay stateless. Kept in-process by default (no
+    # external dependency) and distinct from the long-term semantic memory below.
+    enabled: ${CONVERSATION_MEMORY_ENABLED:true}
+    # Sliding-window size: the most recent N stored messages kept per session.
+    max-messages: 20
+    # How long an idle session's history is retained before eviction.
+    ttl: 2h
+
 memory:
   # Redis-backed long-term memory with text-embedding recall. Disabled by default; when enabled it
   # requires a reachable Redis (spring.data.redis.*) and an embedding endpoint (embedding.* below).
