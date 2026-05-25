@@ -20,18 +20,19 @@ import static org.mockito.Mockito.*;
  * Unit tests for {@link AgentService}.
  *
  * <p>Verifies the agent loop iteration logic, tool-call routing, error recovery,
- * and edge cases using a mocked {@link McpToolProvider} and {@link OllamaClient}.
+ * and edge cases using a mocked {@link McpToolProvider} and {@link OpenAiClient}.
  */
 @ExtendWith(MockitoExtension.class)
 class AgentServiceTest {
 
     private static final String MODEL = "test-model";
+    private static final String DEFAULT_MODEL = "default-model";
     private static final String PROMPT = "What time is it?";
     private static final Duration FIVE_MINUTES = Duration.ofMinutes(5);
     private static final Duration SHORT_TIMEOUT = Duration.ofMillis(1);
 
     @Mock
-    private OllamaClient ollamaClient;
+    private OpenAiClient llmClient;
 
     @Mock
     private McpToolProvider toolProvider;
@@ -42,7 +43,7 @@ class AgentServiceTest {
 
     @BeforeEach
     void setUp() {
-        agentService = new AgentService(ollamaClient, toolProvider, objectMapper, FIVE_MINUTES);
+        agentService = new AgentService(llmClient, toolProvider, objectMapper, FIVE_MINUTES, DEFAULT_MODEL);
     }
 
     @Test
@@ -53,7 +54,7 @@ class AgentServiceTest {
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
         when(toolProvider.callTool(eq("server1"), eq("get_time"), anyMap())).thenReturn("12:00");
 
-        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithToolCall("call_1", "get_time", "{}"))
                 .thenReturn(responseWithContent("The time is 12:00."));
 
@@ -73,7 +74,7 @@ class AgentServiceTest {
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
         when(toolProvider.callTool(eq("server1"), eq("always_call"), anyMap())).thenReturn("done");
 
-        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithToolCall("call_x", "always_call", "{}"));
 
         // When
@@ -94,7 +95,7 @@ class AgentServiceTest {
         when(toolProvider.callTool(eq("server1"), eq("flaky_tool"), anyMap()))
                 .thenThrow(new RuntimeException("Something went wrong"));
 
-        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithToolCall("call_1", "flaky_tool", "{}"))
                 .thenReturn(responseWithContent("I tried but failed."));
 
@@ -111,7 +112,7 @@ class AgentServiceTest {
         // Given: model calls a tool that doesn't exist on any server
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
 
-        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithToolCall("call_1", "nonexistent_tool", "{}"))
                 .thenReturn(responseWithContent("I cannot find that tool."));
 
@@ -141,7 +142,7 @@ class AgentServiceTest {
 
         var finalResponse = responseWithContent("Final answer.");
 
-        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(chatResponse)
                 .thenReturn(finalResponse);
 
@@ -157,7 +158,7 @@ class AgentServiceTest {
     void shouldTimeoutBeforeMaxIterations() {
         // Given: a very short timeout and a tool call that blocks
         var shortTimeoutService = new AgentService(
-                ollamaClient, toolProvider, objectMapper, SHORT_TIMEOUT);
+                llmClient, toolProvider, objectMapper, SHORT_TIMEOUT, DEFAULT_MODEL);
 
         var availableTool = new AvailableTool("slow_tool", "Slow tool",
                 Map.of("type", "object", "properties", Map.of()));
@@ -167,7 +168,7 @@ class AgentServiceTest {
             return "done";
         });
 
-        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithToolCall("call_1", "slow_tool", "{}"));
 
         // When
@@ -181,7 +182,7 @@ class AgentServiceTest {
     void shouldReturnDirectAnswerWithNoTools() {
         // Given: no tools available, model responds directly
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
-        when(ollamaClient.chat(eq(MODEL), anyList(), anyList()))
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithContent("Hello there!"));
 
         // When
