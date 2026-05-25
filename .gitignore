@@ -7,3 +7,4 @@ target/
 .vscode/
 .DS_Store
 mcp-servers.json
+application-local.yml

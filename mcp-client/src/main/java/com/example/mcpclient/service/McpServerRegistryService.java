@@ -154,14 +154,17 @@ public class McpServerRegistryService {
         if (client == null)
             throw new IllegalStateException("Server '" + serverName + "' is not connected");
 
+        log.debug("→ MCP tool call: server={} tool={} args={}", serverName, toolName, arguments);
+
         McpSchema.CallToolResult result = client.callTool(
                 new McpSchema.CallToolRequest(toolName, arguments));
 
         if (result == null || result.content() == null || result.content().isEmpty()) {
+            log.debug("← MCP tool result: server={} tool={} result=(empty)", serverName, toolName);
             return "";
         }
 
-        return result.content().stream()
+        String output = result.content().stream()
                 .map(c -> {
                     if (c instanceof McpSchema.TextContent tc) {
                         return tc.text();
@@ -175,6 +178,8 @@ public class McpServerRegistryService {
                 })
                 .filter(s -> s != null && !s.isBlank())
                 .collect(Collectors.joining("\n"));
+        log.debug("← MCP tool result: server={} tool={} result={}", serverName, toolName, output);
+        return output;
     }
 
     // -------------------------------------------------------------------------

@@ -7,12 +7,22 @@ import com.example.agent.model.ToolDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpRequest;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpRequestExecution;
+import org.springframework.http.client.ClientHttpRequestInterceptor;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 
@@ -38,6 +48,7 @@ public class OllamaClient {
         this.restClient = RestClient.builder()
                 .baseUrl(baseUrl)
                 .requestFactory(factory)
+                .requestInterceptor(new OllamaLoggingInterceptor())
                 .build();
         log.info("OllamaClient configured with base-url={}", baseUrl);
     }
@@ -68,5 +79,55 @@ public class OllamaClient {
                 .body(request)
                 .retrieve()
                 .body(ChatResponse.class);
+    }
+
+    private static class OllamaLoggingInterceptor implements ClientHttpRequestInterceptor {
+
+        private static final Logger log = LoggerFactory.getLogger(OllamaClient.class);
+
+        @Override
+        public ClientHttpResponse intercept(HttpRequest request, byte[] body,
+                                            ClientHttpRequestExecution execution) throws IOException {
+            if (log.isDebugEnabled()) {
+                log.debug("→ Ollama {} {}\n{}", request.getMethod(), request.getURI(),
+                        new String(body, StandardCharsets.UTF_8));
+            }
+            ClientHttpResponse response = execution.execute(request, body);
+            byte[] responseBody = response.getBody().readAllBytes();
+            if (log.isDebugEnabled()) {
+                log.debug("← Ollama {} {}\n{}", request.getMethod(), response.getStatusCode(),
+                        new String(responseBody, StandardCharsets.UTF_8));
+            }
+            return new BufferedClientHttpResponse(response, responseBody);
+        }
+    }
+
+    private record BufferedClientHttpResponse(ClientHttpResponse delegate, byte[] body)
+            implements ClientHttpResponse {
+
+        @Override
+        public InputStream getBody() {
+            return new ByteArrayInputStream(body);
+        }
+
+        @Override
+        public HttpHeaders getHeaders() {
+            return delegate.getHeaders();
+        }
+
+        @Override
+        public HttpStatusCode getStatusCode() throws IOException {
+            return delegate.getStatusCode();
+        }
+
+        @Override
+        public String getStatusText() throws IOException {
+            return delegate.getStatusText();
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
     }
 }
