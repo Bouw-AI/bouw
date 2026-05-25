@@ -20,7 +20,7 @@ spring:
 mcp:
   # Path to the MCP servers config file (Claude Desktop format).
   # Supports absolute paths and ~/... home-relative paths.
-  config-file: ./mcp-servers.json
+  config-file: ../mcp-servers.json
 
 llm:
   # Active LLM provider — must match a key under llm.providers below.

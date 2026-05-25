@@ -22,23 +22,27 @@ Two modules have a main class: `mcp-integration` (`McpClientApplication`, the ag
 ### Runtime prerequisites
 - **An OpenAI-schema LLM endpoint** with a tool-calling model, selected via `llm.provider` in `mcp-integration/src/main/resources/application.yml`. Default is local **Ollama** at `http://localhost:11434/v1` (e.g. `llama3.2`, `mistral-nemo`); the `openrouter` provider is also configured and uses an API key (`OPENROUTER_API_KEY`).
 - **MCP server runtimes**: the default `mcp-servers.json` launches stdio servers via `npx` (filesystem) and `uvx` (time), so Node/npm and uv must be on PATH for those to connect.
+- **Redis** — only when long-term memory is enabled (`memory.enabled=true`); connection from `spring.data.redis.*` (`REDIS_HOST`/`REDIS_PORT`). Not needed for the default config or for short-term conversation memory (which is in-process).
+- **An embeddings endpoint** — only when `memory.enabled=true`; an OpenAI-schema `/embeddings` API configured under `embedding.*` (defaults to OpenRouter, needs `OPENROUTER_API_KEY`).
 
 ## Architecture
 
-Four modules with a deliberate dependency rule: **`agent-core` must never depend on the MCP SDK.**
+Four modules with a deliberate dependency rule: **`agent-core` must never depend on the MCP SDK** (and, more generally, on any transport/storage implementation). It defines several **SPI interfaces** — `McpToolProvider`, `MemoryStore`, `ConversationStore` — that are implemented in `mcp-integration`, so the agent logic stays decoupled from MCP, Redis, etc.
 
-- **`agent-core`** — the LLM agent loop and the `OpenAiClient` (a generic OpenAI-schema chat-completions HTTP client; the active provider — Ollama, OpenRouter, … — and its base URL / optional API key come from `LlmProperties`). Pure logic; depends only on Spring base + Jackson. It talks to MCP only through the `McpToolProvider` interface (`agent-core/.../McpToolProvider.java`), which it does *not* implement.
+- **`agent-core`** — the LLM agent loop, the `OpenAiClient` (a generic OpenAI-schema chat-completions HTTP client; active provider, base URL, optional API key from `LlmProperties`), the **built-in local tools** (`tool/` package, see below), the `EmbeddingClient`, and the two memory orchestration services (`MemoryService`, `ConversationMemoryService`). Pure logic; depends only on Spring base + Jackson. Talks to MCP only through `McpToolProvider`, and to persistence only through the `MemoryStore` / `ConversationStore` interfaces — none of which it implements (except the in-process `InMemoryConversationStore`).
 - **`mcp-client`** — the MCP server registry. Owns the full lifecycle (connect/disconnect/reconnect) of MCP servers via the MCP Java SDK, plus a `/api/servers` CRUD REST API. No main class.
-- **`mcp-integration`** — the runnable Spring Boot **server**. Wires the other two together. `McpToolProviderImpl` is **the only class that imports both MCP SDK types and agent-core types** — it adapts `McpServerRegistryService` to the `McpToolProvider` interface. Also owns security config and exposes the agent over HTTP (`/api/agent/chat` and the streaming `/api/agent/stream`).
+- **`mcp-integration`** — the runnable Spring Boot **server**. Wires the other two together. `McpToolProviderImpl` is **the only class that imports both MCP SDK types and agent-core types** — it adapts `McpServerRegistryService` to the `McpToolProvider` interface. Also provides `RedisMemoryStore` (the Redis-backed `MemoryStore` impl), owns security config, and exposes the agent over HTTP (`/api/agent/chat` and the streaming `/api/agent/stream`).
 - **`agent-terminal`** — the interactive terminal **front-end** (`AgentTerminalApplication`). A console-only Spring Boot app (no web server) that POSTs prompts to the server's `/api/agent/stream` SSE endpoint and renders the answer token-by-token, Claude-Code style. It is a thin HTTP client: depends on `agent-core` only to reuse the `AgentRequest` model, never on the MCP SDK or `mcp-integration`. Config under the `terminal` prefix (`server-url`, `api-key`, `model`).
 
 This boundary is enforced by the POMs (agent-core has no MCP dependency) and exists so the agent logic stays decoupled from the MCP transport implementation. When adding agent features, keep MCP-specific types out of `agent-core`; add to the `McpToolProvider` interface and implement in `mcp-integration` instead.
 
 ### Agent loop (`AgentService.chat`)
-1. Flattens all tools from all connected MCP servers into an OpenAI-format tool list, building a `toolName → serverName` reverse map.
-2. Sends the prompt to the configured LLM (`OpenAiClient`) advertising those tools. The model name comes from the request, falling back to `llm.model`.
-3. If the model returns `tool_calls`, routes each to the owning server via `McpToolProvider.callTool`, appends results as `tool` messages, and repeats.
-4. Loop is bounded by `MAX_ITERATIONS` (10) and a wall-clock `agent.request-timeout` (default 5m).
+1. Flattens **built-in local tools first, then** all tools from all connected MCP servers into one OpenAI-format tool list, building a `toolName → serverName` reverse map. Local tools take precedence on name collision — a colliding MCP tool is shadowed (logged and skipped).
+2. Builds the message list: optional tool-use system prompt, optional recalled long-term memories (when `memory.enabled`), the replayed short-term conversation history for this `sessionId` (when present), then the user prompt.
+3. Sends to the configured LLM (`OpenAiClient`) advertising those tools. The model name comes from the request, falling back to `llm.model`.
+4. If the model returns `tool_calls`, executes each — local tools run in-process via `LocalToolRegistry`, otherwise routed to the owning server via `McpToolProvider.callTool` — appends results as `tool` messages, and repeats.
+5. On the final answer, persists the exchange to long-term memory (`MemoryService.remember`) and short-term conversation memory (`ConversationMemoryService.record`).
+6. Loop is bounded by `MAX_ITERATIONS` (10) and a wall-clock `agent.request-timeout` (default 5m).
 
 Note: tool calls are handled whenever `tool_calls` are present **regardless of `finish_reason`** — some models set `stop` or null even with tool calls present. Preserve this behavior.
 
@@ -51,6 +55,15 @@ Note: tool calls are handled whenever `tool_calls` are present **regardless of `
 - Spring AI's MCP auto-configuration is **deliberately disabled** (`spring.ai.mcp.client.enabled=false`) so this service owns the entire lifecycle. Don't re-enable it.
 - Config file path comes from the `mcp` config prefix; supports `~/`-relative paths.
 
+### Built-in local tools (`agent-core/.../tool/`)
+- In-process tools the agent can call directly, with **no MCP-SDK dependency** so they live in `agent-core`: `read_file`, `write_file`, `edit_file`, `list_files`, `grep_search`, `run_bash`. Each implements `LocalTool` (discovered as Spring beans) and is collected by `LocalToolRegistry`.
+- Gated by `agent.tools.enabled` (master switch). When false the registry is empty — no local tools advertised or executable.
+- **All file/shell access is confined to a single workspace root** by `Workspace`: paths resolve relative to the root or absolute, but the symlink-resolved path must stay inside the root (blocks `../` traversal and symlink escapes). The root is also the working dir for `run_bash`. Configure via `agent.tools.workspace-root` (relative/`~` are NOT expanded — pin an absolute path). These tools grant filesystem + shell access; scope or disable them when that's a concern.
+
+### Memory (two independent layers)
+- **Short-term, per-session conversation memory** (`ConversationMemoryService` + `ConversationStore`): replays the recent verbatim turns of a single session back into the model so it remembers the conversation. Keyed by an opaque `sessionId` on `AgentRequest` (requests without one stay stateless; `agent-terminal` generates a UUID per session). Sliding window of `conversation.memory.max-messages`. Only the user prompt + final answer are stored per turn — tool-call scaffolding is dropped so the trimmed history is always a valid transcript. **Enabled by default**, in-process via `InMemoryConversationStore` (no external dependency). `ConversationStore.append` must be atomic to avoid losing turns under concurrent same-session requests.
+- **Long-term semantic memory** (`MemoryService` + `EmbeddingClient` + `MemoryStore`): embeds each finished exchange and stores it; on later requests recalls the top-k most cosine-similar past memories and injects them into the prompt. **Disabled by default** (`memory.enabled`); requires Redis + an embeddings endpoint. `RedisMemoryStore` keeps records as JSON in one Redis hash and ranks in-process (works against vanilla Redis, no RediSearch). Both recall and store are **best-effort** — failures are logged and swallowed so the loop keeps working.
+
 ## Configuration (`application.yml`)
 - `llm.provider` — active LLM provider; must match a key under `llm.providers` (`ollama`, `openrouter`, …).
 - `llm.model` — default model used when a request omits one.
@@ -58,6 +71,10 @@ Note: tool calls are handled whenever `tool_calls` are present **regardless of `
 - `mcp.config-file` — path to the MCP servers JSON (default `./mcp-servers.json`).
 - `agent.api-key` — if set, `/api/agent/**` requires the `X-API-Key` header; if blank, those endpoints are open (relies on network-level security). The `/api/servers/**` CRUD endpoints are currently **unauthenticated** regardless.
 - `agent.request-timeout` — per-request wall-clock budget for the agent loop.
+- `agent.tools.*` — built-in local tools: `enabled` (master switch), `workspace-root` (sandbox + shell working dir), `bash-timeout`, `max-output-chars` (per-result cap).
+- `conversation.memory.*` — short-term session memory: `enabled` (default true, `CONVERSATION_MEMORY_ENABLED`), `max-messages` (window), `ttl` (idle eviction).
+- `memory.*` — long-term semantic memory: `enabled` (default false, `MEMORY_ENABLED`), `key-prefix`, `top-k`, `min-score` (cosine threshold), `max-entries` (eviction cap). Requires `spring.data.redis.*` (`REDIS_HOST`/`REDIS_PORT`).
+- `embedding.*` — embeddings endpoint used by long-term memory: `base-url` (`POST {base-url}/embeddings`), `api-key`, `model` (independent of `llm.model`).
 
 ## CI
 `.github/workflows/openrouter-review.yml` runs an automated OpenRouter PR review (via the `jeremyunck/openrouter-review` action) on every PR. There is no other CI build/test pipeline.
