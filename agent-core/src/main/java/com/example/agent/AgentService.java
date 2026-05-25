@@ -39,12 +39,18 @@ public class AgentService {
             using each result to decide the next step. When you have gathered enough information, \
             reply to the user directly. If no tool is relevant, simply answer normally.""";
 
+    /** Prepended to recalled memories injected into the conversation. */
+    static final String MEMORY_SYSTEM_PROMPT_HEADER = """
+            Relevant context recalled from long-term memory of past conversations. \
+            Use it if it helps answer the user; ignore it if it is not relevant:""";
+
     private final OpenAiClient llmClient;
     private final McpToolProvider toolProvider;
     private final LocalToolRegistry localTools;
     private final ObjectMapper objectMapper;
     private final Duration requestTimeout;
     private final String defaultModel;
+    private final Optional<MemoryService> memoryService;
 
     public AgentService(
             OpenAiClient llmClient,
@@ -52,13 +58,15 @@ public class AgentService {
             LocalToolRegistry localTools,
             ObjectMapper objectMapper,
             @Value("${agent.request-timeout:5m}") Duration requestTimeout,
-            @Value("${llm.model:}") String defaultModel) {
+            @Value("${llm.model:}") String defaultModel,
+            Optional<MemoryService> memoryService) {
         this.llmClient = llmClient;
         this.toolProvider = toolProvider;
         this.localTools = localTools;
         this.objectMapper = objectMapper;
         this.requestTimeout = requestTimeout;
         this.defaultModel = defaultModel;
+        this.memoryService = memoryService;
     }
 
     public AgentResponse chat(AgentRequest request) {
@@ -90,6 +98,12 @@ public class AgentService {
         if (!toolDefinitions.isEmpty()) {
             messages.add(ChatMessage.system(TOOL_SYSTEM_PROMPT));
         }
+        memoryService.ifPresent(memory -> {
+            List<MemoryStore.ScoredMemory> recalled = memory.recall(request.prompt());
+            if (!recalled.isEmpty()) {
+                messages.add(ChatMessage.system(formatMemories(recalled)));
+            }
+        });
         messages.add(ChatMessage.user(request.prompt()));
 
         for (int i = 0; i < MAX_ITERATIONS; i++) {
@@ -121,7 +135,9 @@ public class AgentService {
                     messages.add(ChatMessage.tool(toolCall.id(), toolResult));
                 }
             } else {
-                return new AgentResponse(assistantMsg.content(), Collections.unmodifiableList(messages));
+                String answer = assistantMsg.content();
+                memoryService.ifPresent(memory -> memory.remember(request.prompt(), answer));
+                return new AgentResponse(answer, Collections.unmodifiableList(messages));
             }
         }
 
@@ -155,6 +171,15 @@ public class AgentService {
                 })
         );
         return toolDefinitions;
+    }
+
+    private static String formatMemories(List<MemoryStore.ScoredMemory> memories) {
+        StringBuilder sb = new StringBuilder(MEMORY_SYSTEM_PROMPT_HEADER);
+        int n = 1;
+        for (MemoryStore.ScoredMemory memory : memories) {
+            sb.append("\n\n").append(n++).append(". ").append(memory.record().text());
+        }
+        return sb.toString();
     }
 
     private static final AgentStreamListener NO_OP_LISTENER = new AgentStreamListener() {};

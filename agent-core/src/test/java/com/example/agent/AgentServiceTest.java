@@ -15,6 +15,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -53,7 +54,8 @@ class AgentServiceTest {
     @BeforeEach
     void setUp() {
         agentService = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL);
+                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
+                Optional.empty());
     }
 
     @Test
@@ -168,7 +170,8 @@ class AgentServiceTest {
     void shouldTimeoutBeforeMaxIterations() {
         // Given: a very short timeout and a tool call that blocks
         var shortTimeoutService = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, SHORT_TIMEOUT, DEFAULT_MODEL);
+                llmClient, toolProvider, registry(), objectMapper, SHORT_TIMEOUT, DEFAULT_MODEL,
+                Optional.empty());
 
         var availableTool = new AvailableTool("slow_tool", "Slow tool",
                 Map.of("type", "object", "properties", Map.of()));
@@ -208,7 +211,8 @@ class AgentServiceTest {
         // Given: a built-in local tool and no MCP servers
         var recordingTool = new RecordingLocalTool("local_echo", "echoed: ok");
         var localService = new AgentService(
-                llmClient, toolProvider, registry(recordingTool), objectMapper, FIVE_MINUTES, DEFAULT_MODEL);
+                llmClient, toolProvider, registry(recordingTool), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
+                Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
 
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
@@ -306,6 +310,60 @@ class AgentServiceTest {
         assertThat(listener.toolResults).containsExactly("12:00");
         assertThat(result.response()).contains("The time is 12:00");
         verify(toolProvider, times(1)).callTool("server1", "get_time", Map.of());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void injectsRecalledMemoryAndStoresFinalAnswer() {
+        // Given: a memory service that recalls one past exchange
+        MemoryService memory = mock(MemoryService.class);
+        when(memory.recall(PROMPT)).thenReturn(List.of(new MemoryStore.ScoredMemory(
+                new MemoryRecord("1", "User: hi\nAssistant: hello", new float[]{0.1f, 0.2f},
+                        java.time.Instant.now()),
+                0.9)));
+        var service = new AgentService(
+                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
+                Optional.of(memory));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent("Final answer."));
+
+        // When
+        AgentResponse result = service.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: recalled memory is injected as a system message before the user prompt,
+        // and the finished exchange is stored back.
+        assertThat(result.response()).isEqualTo("Final answer.");
+        verify(memory).recall(PROMPT);
+        verify(memory).remember(PROMPT, "Final answer.");
+
+        ArgumentCaptor<List<ChatMessage>> captor = ArgumentCaptor.forClass(List.class);
+        verify(llmClient).chat(eq(MODEL), captor.capture(), anyList());
+        List<ChatMessage> sent = captor.getValue();
+        assertThat(sent.get(0).role()).isEqualTo("system");
+        assertThat(sent.get(0).content()).contains("User: hi\nAssistant: hello");
+        assertThat(sent.get(1).role()).isEqualTo("user");
+        assertThat(sent.get(1).content()).isEqualTo(PROMPT);
+    }
+
+    @Test
+    void doesNotInjectMemoryMessageWhenNothingRecalled() {
+        // Given: memory enabled but nothing relevant recalled
+        MemoryService memory = mock(MemoryService.class);
+        when(memory.recall(PROMPT)).thenReturn(List.of());
+        var service = new AgentService(
+                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
+                Optional.of(memory));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent("Hi!"));
+
+        // When
+        AgentResponse result = service.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: conversation starts directly with the user message, answer still stored
+        assertThat(result.response()).isEqualTo("Hi!");
+        verify(memory).remember(PROMPT, "Hi!");
     }
 
     // ---- helpers ----
