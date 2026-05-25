@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.ConnectException;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 /**
  * Interactive read-eval-print loop. Prints a welcome banner, then reads prompts from stdin and
@@ -30,6 +31,7 @@ public class TerminalRunner implements CommandLineRunner {
     private final TerminalProperties properties;
 
     private String model;
+    private String sessionId = UUID.randomUUID().toString();
 
     public TerminalRunner(AgentClient client, TerminalProperties properties) {
         this.client = client;
@@ -65,6 +67,11 @@ public class TerminalRunner implements CommandLineRunner {
                 handleModelCommand(line);
                 continue;
             }
+            if (line.equals("/new")) {
+                sessionId = UUID.randomUUID().toString();
+                System.out.println(GRAY + "Started a new conversation." + RESET);
+                continue;
+            }
             ask(line);
         }
 
@@ -75,7 +82,7 @@ public class TerminalRunner implements CommandLineRunner {
         System.out.println();
         StreamPrinter printer = new StreamPrinter();
         try {
-            client.streamChat(prompt, model, printer);
+            client.streamChat(prompt, model, sessionId, printer);
         } catch (ConnectException e) {
             System.out.println(YELLOW + "Cannot reach the agent server at " + properties.serverUrl()
                     + ".\nStart it with:  mvn -pl mcp-integration spring-boot:run" + RESET);
@@ -158,7 +165,7 @@ public class TerminalRunner implements CommandLineRunner {
         System.out.println(GRAY + "  Model: " + (model == null ? "(server default)" : model) + RESET);
         System.out.println(GRAY + "  Type a prompt and press Enter. " + RESET);
         System.out.println(GRAY + "  Commands: " + GREEN + "/help" + GRAY + "  " + GREEN + "/model [name]"
-                + GRAY + "  " + GREEN + "/exit" + RESET);
+                + GRAY + "  " + GREEN + "/new" + GRAY + "  " + GREEN + "/exit" + RESET);
     }
 
     private void printHelp() {
@@ -167,6 +174,7 @@ public class TerminalRunner implements CommandLineRunner {
         System.out.println("  " + GREEN + "/help" + RESET + "          Show this help");
         System.out.println("  " + GREEN + "/model" + RESET + "         Show the current model");
         System.out.println("  " + GREEN + "/model <name>" + RESET + "  Use a specific model for new prompts");
+        System.out.println("  " + GREEN + "/new" + RESET + "           Start a fresh conversation (clear short-term memory)");
         System.out.println("  " + GREEN + "/exit" + RESET + "          Quit (also /quit, exit, quit, Ctrl-D)");
         System.out.println();
         System.out.println(GRAY + "Anything else is sent to the agent; the answer streams in live." + RESET);

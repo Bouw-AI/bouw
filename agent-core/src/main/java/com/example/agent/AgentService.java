@@ -51,6 +51,7 @@ public class AgentService {
     private final Duration requestTimeout;
     private final String defaultModel;
     private final Optional<MemoryService> memoryService;
+    private final Optional<ConversationMemoryService> conversationMemory;
 
     public AgentService(
             OpenAiClient llmClient,
@@ -59,7 +60,8 @@ public class AgentService {
             ObjectMapper objectMapper,
             @Value("${agent.request-timeout:5m}") Duration requestTimeout,
             @Value("${llm.model:}") String defaultModel,
-            Optional<MemoryService> memoryService) {
+            Optional<MemoryService> memoryService,
+            Optional<ConversationMemoryService> conversationMemory) {
         this.llmClient = llmClient;
         this.toolProvider = toolProvider;
         this.localTools = localTools;
@@ -67,6 +69,7 @@ public class AgentService {
         this.requestTimeout = requestTimeout;
         this.defaultModel = defaultModel;
         this.memoryService = memoryService;
+        this.conversationMemory = conversationMemory;
     }
 
     public AgentResponse chat(AgentRequest request) {
@@ -104,6 +107,8 @@ public class AgentService {
                 messages.add(ChatMessage.system(formatMemories(recalled)));
             }
         });
+        // Replay the recent turns of this session (short-term memory) before the current prompt.
+        conversationMemory.ifPresent(cm -> messages.addAll(cm.history(request.sessionId())));
         messages.add(ChatMessage.user(request.prompt()));
 
         for (int i = 0; i < MAX_ITERATIONS; i++) {
@@ -137,6 +142,7 @@ public class AgentService {
             } else {
                 String answer = assistantMsg.content();
                 memoryService.ifPresent(memory -> memory.remember(request.prompt(), answer));
+                conversationMemory.ifPresent(cm -> cm.record(request.sessionId(), request.prompt(), answer));
                 return new AgentResponse(answer, Collections.unmodifiableList(messages));
             }
         }

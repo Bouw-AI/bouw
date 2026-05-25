@@ -52,14 +52,15 @@ public class AgentClient {
 
     /**
      * Sends {@code prompt} to the agent and streams the response to {@code handler}. Blocks until
-     * the stream completes.
+     * the stream completes. {@code sessionId} scopes short-term conversation memory so the server
+     * recalls the recent turns of this session.
      *
      * @throws IOException          if the server cannot be reached or the connection drops
      * @throws InterruptedException if the calling thread is interrupted while waiting
      */
-    public void streamChat(String prompt, String model, Handler handler)
+    public void streamChat(String prompt, String model, String sessionId, Handler handler)
             throws IOException, InterruptedException {
-        String requestBody = objectMapper.writeValueAsString(new AgentRequest(prompt, model));
+        String requestBody = objectMapper.writeValueAsString(new AgentRequest(prompt, model, sessionId));
 
         HttpRequest request = HttpRequest.newBuilder(URI.create(properties.serverUrl() + "/api/agent/stream"))
                 .header("Content-Type", "application/json")

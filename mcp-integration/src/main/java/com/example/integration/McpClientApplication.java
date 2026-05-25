@@ -1,5 +1,6 @@
 package com.example.integration;
 
+import com.example.agent.ConversationMemoryProperties;
 import com.example.agent.EmbeddingProperties;
 import com.example.agent.LlmProperties;
 import com.example.agent.MemoryProperties;
@@ -11,7 +12,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 
 @SpringBootApplication(scanBasePackages = "com.example")
 @EnableConfigurationProperties({McpProperties.class, LlmProperties.class, LocalToolProperties.class,
-        EmbeddingProperties.class, MemoryProperties.class})
+        EmbeddingProperties.class, MemoryProperties.class, ConversationMemoryProperties.class})
 public class McpClientApplication {
 
     public static void main(String[] args) {

@@ -33,6 +33,7 @@ class AgentServiceTest {
     private static final String MODEL = "test-model";
     private static final String DEFAULT_MODEL = "default-model";
     private static final String PROMPT = "What time is it?";
+    private static final String SESSION_ID = "session-1";
     private static final Duration FIVE_MINUTES = Duration.ofMinutes(5);
     private static final Duration SHORT_TIMEOUT = Duration.ofMillis(1);
 
@@ -55,7 +56,7 @@ class AgentServiceTest {
     void setUp() {
         agentService = new AgentService(
                 llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
-                Optional.empty());
+                Optional.empty(), Optional.empty());
     }
 
     @Test
@@ -171,7 +172,7 @@ class AgentServiceTest {
         // Given: a very short timeout and a tool call that blocks
         var shortTimeoutService = new AgentService(
                 llmClient, toolProvider, registry(), objectMapper, SHORT_TIMEOUT, DEFAULT_MODEL,
-                Optional.empty());
+                Optional.empty(), Optional.empty());
 
         var availableTool = new AvailableTool("slow_tool", "Slow tool",
                 Map.of("type", "object", "properties", Map.of()));
@@ -212,7 +213,7 @@ class AgentServiceTest {
         var recordingTool = new RecordingLocalTool("local_echo", "echoed: ok");
         var localService = new AgentService(
                 llmClient, toolProvider, registry(recordingTool), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
-                Optional.empty());
+                Optional.empty(), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
 
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
@@ -323,7 +324,7 @@ class AgentServiceTest {
                 0.9)));
         var service = new AgentService(
                 llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
-                Optional.of(memory));
+                Optional.of(memory), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithContent("Final answer."));
@@ -353,7 +354,7 @@ class AgentServiceTest {
         when(memory.recall(PROMPT)).thenReturn(List.of());
         var service = new AgentService(
                 llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
-                Optional.of(memory));
+                Optional.of(memory), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithContent("Hi!"));
@@ -364,6 +365,40 @@ class AgentServiceTest {
         // Then: conversation starts directly with the user message, answer still stored
         assertThat(result.response()).isEqualTo("Hi!");
         verify(memory).remember(PROMPT, "Hi!");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void replaysSessionHistoryBeforePromptAndRecordsTurn() {
+        // Given: short-term memory holding one prior exchange for the session
+        ConversationMemoryService conversation = mock(ConversationMemoryService.class);
+        when(conversation.history(SESSION_ID)).thenReturn(List.of(
+                ChatMessage.user("My name is Ada."),
+                ChatMessage.assistant("Nice to meet you, Ada.")));
+        var service = new AgentService(
+                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
+                Optional.empty(), Optional.of(conversation));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent("Your name is Ada."));
+
+        // When
+        AgentResponse result = service.chat(new AgentRequest("What is my name?", MODEL, SESSION_ID));
+
+        // Then: prior turns are replayed before the current prompt, and the new turn is recorded
+        assertThat(result.response()).isEqualTo("Your name is Ada.");
+        verify(conversation).record(SESSION_ID, "What is my name?", "Your name is Ada.");
+
+        // The captured list is the loop's live message buffer; assert the leading messages, which
+        // are the replayed history followed by the current prompt (the assistant reply is appended
+        // by the loop after the call returns).
+        ArgumentCaptor<List<ChatMessage>> captor = ArgumentCaptor.forClass(List.class);
+        verify(llmClient).chat(eq(MODEL), captor.capture(), anyList());
+        List<ChatMessage> sent = captor.getValue();
+        assertThat(sent.get(0).content()).isEqualTo("My name is Ada.");
+        assertThat(sent.get(1).content()).isEqualTo("Nice to meet you, Ada.");
+        assertThat(sent.get(2).role()).isEqualTo("user");
+        assertThat(sent.get(2).content()).isEqualTo("What is my name?");
     }
 
     // ---- helpers ----

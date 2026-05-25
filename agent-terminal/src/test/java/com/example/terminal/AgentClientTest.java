@@ -54,7 +54,7 @@ class AgentClientTest {
         var toolResults = new ArrayList<String>();
         var errors = new ArrayList<String>();
 
-        client.streamChat("hello", null, new AgentClient.Handler() {
+        client.streamChat("hello", null, "session-1", new AgentClient.Handler() {
             @Override public void onToken(String text) {
                 tokens.add(text);
             }
@@ -88,7 +88,7 @@ class AgentClientTest {
         AgentClient client = clientServing(sse);
 
         List<String> errors = new ArrayList<>();
-        client.streamChat("x", null, new AgentClient.Handler() {
+        client.streamChat("x", null, "session-1", new AgentClient.Handler() {
             @Override public void onToken(String text) {}
 
             @Override public void onError(String message) {
