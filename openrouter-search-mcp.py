@@ -15,13 +15,13 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPEN_ROUTER_API_KEY = os.environ.get("OPEN_ROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 SEARCH_MODEL = "perplexity/sonar"
 
 # Fail fast on startup if the API key is missing.
-if not OPENROUTER_API_KEY:
-    print("ERROR: OPENROUTER_API_KEY environment variable is not set", file=sys.stderr)
+if not OPEN_ROUTER_API_KEY:
+    print("ERROR: OPEN_ROUTER_API_KEY environment variable is not set", file=sys.stderr)
     sys.exit(1)
 
 app = Server("openrouter-search")
@@ -47,7 +47,7 @@ def _call_openrouter(query: str) -> str:
         f"{OPENROUTER_BASE_URL}/chat/completions",
         data=payload,
         headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
             "Content-Type": "application/json",
         },
         method="POST",

@@ -5,7 +5,7 @@ services:
       - "8080:8080"
     environment:
       # Required: OpenRouter API key (single key covers LLM, web search, and embeddings)
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY is required}
+      OPEN_ROUTER_API_KEY: ${OPEN_ROUTER_API_KEY:?OPEN_ROUTER_API_KEY is required}
       # Optional: protect /api/agent/** with X-API-Key header authentication
       AGENT_API_KEY: ${AGENT_API_KEY:-}
       # Local tools (file read/write, shell). Disabled by default; enable only when needed
