@@ -6,15 +6,107 @@ on:
   push:
     branches: [master]
 
+# Minimal default permissions — each job grants only what it needs.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
+
       - name: Build and test
         run: mvn --batch-mode --no-transfer-progress clean install
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: '**/target/surefire-reports/'
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Cleanup build artifacts
+        if: always()
+        run: mvn --batch-mode --no-transfer-progress clean
+
+  # Checks new/updated dependencies in the PR against the GitHub Advisory Database.
+  # Fails on high-severity CVEs and posts a summary comment on the PR.
+  dependency-review:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: always
+
+  # Secret detection across all commits in the PR.
+  # For private repos add a GITLEAKS_LICENSE secret; public repos need only GITHUB_TOKEN.
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf /tmp/gitleaks* 2>/dev/null || true
+
+  # CodeQL SAST — analyzes Java source for security vulnerabilities.
+  # Requires GitHub Advanced Security (free for public repos).
+  codeql:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: java
+          queries: security-and-quality
+
+      - name: Build for analysis
+        run: mvn --batch-mode --no-transfer-progress clean install -DskipTests
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:java
+
+      - name: Cleanup build artifacts
+        if: always()
+        run: mvn --batch-mode --no-transfer-progress clean
