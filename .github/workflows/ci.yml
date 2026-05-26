@@ -6,15 +6,128 @@ on:
   push:
     branches: [master]
 
+# Minimal default permissions — each job grants only what it needs.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
+
       - name: Build and test
         run: mvn --batch-mode --no-transfer-progress clean install
+
+      - name: Upload test reports
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: '**/target/surefire-reports/'
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Cleanup build artifacts
+        if: always()
+        continue-on-error: true
+        run: mvn --batch-mode --no-transfer-progress clean
+
+  # Scans Maven dependencies for known critical CVEs using Trivy.
+  # Works for all repos without requiring GitHub Advanced Security.
+  dependency-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Trivy
+        run: |
+          TRIVY_VERSION="0.57.0"
+          wget -q "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            -O /tmp/trivy.tar.gz
+          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
+
+      - name: Scan for critical CVEs
+        run: |
+          /tmp/trivy fs . \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --vuln-type library \
+            --severity CRITICAL \
+            --no-progress
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/trivy.tar.gz /tmp/trivy 2>/dev/null || true
+
+  # Secret detection across all commits in the PR using the gitleaks CLI.
+  # Uses the CLI directly (no action) to avoid any license requirements.
+  secret-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          GITLEAKS_VERSION="8.21.2"
+          wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            -O /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . \
+            --log-opts="${BASE_SHA}..${HEAD_SHA}" \
+            --redact --exit-code 1
+
+  # CodeQL SAST — analyzes Java source for security vulnerabilities.
+  # Requires GitHub Advanced Security (free for public repos).
+  codeql:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: java
+          queries: security-and-quality
+
+      - name: Build for analysis
+        run: mvn --batch-mode --no-transfer-progress clean install -DskipTests
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:java
+
+      - name: Cleanup build artifacts
+        if: always()
+        continue-on-error: true
+        run: mvn --batch-mode --no-transfer-progress clean
