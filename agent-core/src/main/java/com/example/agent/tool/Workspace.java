@@ -2,6 +2,7 @@ package com.example.agent.tool;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -29,6 +30,7 @@ public class Workspace {
     private final Path root;
 
     /** Spring-managed default workspace, rooted at {@code agent.tools.workspace-root}. */
+    @Autowired
     public Workspace(LocalToolProperties properties) {
         this(Path.of(properties.workspaceRoot()).toAbsolutePath().normalize());
         log.info("Local tool workspace root: {}", root);
