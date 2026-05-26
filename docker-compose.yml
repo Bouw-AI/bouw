@@ -1,0 +1,20 @@
+services:
+  server:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      OPEN_ROUTER_API_KEY: ${OPEN_ROUTER_API_KEY:-}
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      AGENT_TOOLS_ENABLED: ${AGENT_TOOLS_ENABLED:-false}
+      MEMORY_ENABLED: ${MEMORY_ENABLED:-false}
+      REDIS_HOST: redis
+    restart: unless-stopped
+
+  # Included only when the "memory" profile is active:
+  #   docker compose --profile memory up
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles:
+      - memory

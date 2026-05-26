@@ -1,0 +1,7 @@
+.git/
+target/
+*/target/
+.idea/
+*.iml
+*.class
+mcp-servers.json
