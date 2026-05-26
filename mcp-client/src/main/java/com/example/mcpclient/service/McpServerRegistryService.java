@@ -201,13 +201,19 @@ public class McpServerRegistryService {
     // -------------------------------------------------------------------------
 
     private void connectServer(String name, McpServerDefinition def) {
+        McpSyncClient client = null;
         try {
-            McpSyncClient client = buildClient(def);
+            client = buildClient(def);
             client.initialize();
             activeClients.put(name, client);
             connectionErrors.remove(name);
             log.info("Connected to MCP server '{}'", name);
         } catch (Exception e) {
+            if (client != null) {
+                try { client.close(); } catch (Exception ex) {
+                    log.debug("Error closing failed client for '{}': {}", name, ex.getMessage());
+                }
+            }
             connectionErrors.put(name, e.getMessage());
             log.warn("Failed to connect to MCP server '{}': {}", name, e.getMessage());
         }
