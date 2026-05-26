@@ -28,10 +28,16 @@ public class Workspace {
 
     private final Path root;
 
+    /** Spring-managed default workspace, rooted at {@code agent.tools.workspace-root}. */
     public Workspace(LocalToolProperties properties) {
-        Path configured = Path.of(properties.workspaceRoot()).toAbsolutePath().normalize();
-        this.root = realPathQuietly(configured);
+        this(Path.of(properties.workspaceRoot()).toAbsolutePath().normalize());
         log.info("Local tool workspace root: {}", root);
+    }
+
+    /** Creates a workspace rooted at an arbitrary directory (used by {@link WorkspaceFactory}). */
+    Workspace(Path root) {
+        Path r = root.isAbsolute() ? root.normalize() : root.toAbsolutePath().normalize();
+        this.root = realPathQuietly(r);
     }
 
     public Path root() {
