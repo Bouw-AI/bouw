@@ -136,7 +136,7 @@ The agent talks to any OpenAI-schema `/chat/completions` endpoint. Providers are
 ```yaml
 llm:
   provider: openrouter              # or "ollama" for a local instance
-  model: deepseek/deepseek-v4-flash # default model for the active provider
+  model: openai/gpt-oss-120b        # default model for the active provider
   providers:
     ollama:
       base-url: http://localhost:11434/v1   # no api-key → no auth header sent
@@ -146,7 +146,7 @@ llm:
 ```
 
 - **Ollama** has no `api-key`, so requests are sent without an `Authorization` header.
-- **OpenRouter** authenticates with an `Authorization: Bearer <api-key>` header ([OpenRouter auth docs](https://openrouter.ai/docs/api/reference/authentication)). Provide the key via the `OPEN_ROUTER_API_KEY` environment variable and set `llm.provider: openrouter` (also pick an OpenRouter `model`, e.g. `deepseek/deepseek-v4-flash`).
+- **OpenRouter** authenticates with an `Authorization: Bearer <api-key>` header ([OpenRouter auth docs](https://openrouter.ai/docs/api/reference/authentication)). Provide the key via the `OPEN_ROUTER_API_KEY` environment variable and set `llm.provider: openrouter` (also pick an OpenRouter `model`, e.g. `openai/gpt-oss-120b`).
 
 To add another OpenAI-compatible provider, add an entry under `llm.providers` with its `base-url` and (optionally) `api-key`, then point `llm.provider` at it.
 
