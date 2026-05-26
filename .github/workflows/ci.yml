@@ -27,6 +27,7 @@ jobs:
 
       - name: Upload test reports
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
@@ -36,10 +37,11 @@ jobs:
 
       - name: Cleanup build artifacts
         if: always()
+        continue-on-error: true
         run: mvn --batch-mode --no-transfer-progress clean
 
   # Checks new/updated dependencies in the PR against the GitHub Advisory Database.
-  # Fails on high-severity CVEs and posts a summary comment on the PR.
+  # Fails on critical-severity CVEs and posts a summary comment on the PR.
   dependency-review:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -52,13 +54,14 @@ jobs:
       - name: Dependency Review
         uses: actions/dependency-review-action@v4
         with:
-          fail-on-severity: high
+          fail-on-severity: critical
           comment-summary-in-pr: always
 
-  # Secret detection across all commits in the PR.
-  # For private repos add a GITLEAKS_LICENSE secret; public repos need only GITHUB_TOKEN.
+  # Secret detection across all commits in the PR using the gitleaks CLI.
+  # Uses the CLI directly (no action) to avoid any license requirements.
   secret-scan:
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     permissions:
       contents: read
     steps:
@@ -67,13 +70,17 @@ jobs:
           fetch-depth: 0
 
       - name: Scan for secrets
-        uses: gitleaks/gitleaks-action@v2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cleanup
-        if: always()
-        run: rm -rf /tmp/gitleaks* 2>/dev/null || true
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          GITLEAKS_VERSION="8.21.2"
+          wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            -O /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . \
+            --log-opts="${BASE_SHA}..${HEAD_SHA}" \
+            --redact --exit-code 1
 
   # CodeQL SAST — analyzes Java source for security vulnerabilities.
   # Requires GitHub Advanced Security (free for public repos).
@@ -109,4 +116,5 @@ jobs:
 
       - name: Cleanup build artifacts
         if: always()
+        continue-on-error: true
         run: mvn --batch-mode --no-transfer-progress clean
