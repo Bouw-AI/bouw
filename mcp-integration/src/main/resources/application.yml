@@ -22,6 +22,18 @@ mcp:
   # Supports absolute paths and ~/... home-relative paths.
   config-file: ../mcp-servers.json
 
+search:
+  # Web search MCP provider registered automatically at startup.
+  # Options:
+  #   openrouter  - uses perplexity/sonar via OpenRouter (requires OPEN_ROUTER_API_KEY,
+  #                 works reliably on cloud/server IPs)
+  #   duckduckgo  - uses duckduckgo-mcp-server via uvx (no API key, but bot detection
+  #                 may block it on cloud IPs)
+  # If a "web-search" entry already exists in mcp-servers.json, this setting is ignored.
+  provider: openrouter
+  # Path to the openrouter-search-mcp.py script (only used when provider=openrouter).
+  openrouter-script: ../openrouter-search-mcp.py
+
 llm:
   # Active LLM provider — must match a key under llm.providers below.
   provider: openrouter

@@ -10,10 +10,6 @@
       "args": ["mcp-server-time"],
       "env": {}
     },
-    "web-search": {
-      "command": "python3",
-      "args": ["<path-to-repo>/openrouter-search-mcp.py"],
-      "env": {}
-    }
   }
 }
+
