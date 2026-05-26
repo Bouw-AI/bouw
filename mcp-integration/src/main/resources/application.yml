@@ -106,6 +106,15 @@ agent:
     # Cap on the size (characters) of any single tool result returned to the model.
     max-output-chars: 30000
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
 logging:
   level:
     com.example: DEBUG
