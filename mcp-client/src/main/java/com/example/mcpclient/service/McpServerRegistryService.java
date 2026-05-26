@@ -105,6 +105,19 @@ public class McpServerRegistryService {
         disconnectServer(name);
     }
 
+    public boolean isConnected(String name) {
+        return activeClients.containsKey(name);
+    }
+
+    /**
+     * Connects a server without persisting it to mcp-servers.json.
+     * Used for servers that are registered programmatically at runtime.
+     */
+    public void connectTransient(String name, McpServerDefinition definition) {
+        disconnectServer(name);
+        connectServer(name, definition);
+    }
+
     public ServerInfo reconnect(String name) {
         McpServersConfig config = loadConfig();
         McpServerDefinition def = config.mcpServers().get(name);

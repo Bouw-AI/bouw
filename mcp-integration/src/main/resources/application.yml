@@ -22,13 +22,25 @@ mcp:
   # Supports absolute paths and ~/... home-relative paths.
   config-file: ../mcp-servers.json
 
+search:
+  # Web search MCP provider registered automatically at startup.
+  # Options:
+  #   openrouter  - uses perplexity/sonar via OpenRouter (requires OPEN_ROUTER_API_KEY,
+  #                 works reliably on cloud/server IPs)
+  #   duckduckgo  - uses duckduckgo-mcp-server via uvx (no API key, but bot detection
+  #                 may block it on cloud IPs)
+  # If a "web-search" entry already exists in mcp-servers.json, this setting is ignored.
+  provider: openrouter
+  # Path to the openrouter-search-mcp.py script (only used when provider=openrouter).
+  openrouter-script: ../openrouter-search-mcp.py
+
 llm:
   # Active LLM provider — must match a key under llm.providers below.
-  provider: ollama
+  provider: openrouter
   # Default model used when a request does not specify one.
   # Must be a model that supports tool calling and be valid for the active provider
   # (e.g. llama3.2 / mistral-nemo for Ollama, deepseek/deepseek-chat for OpenRouter).
-  model: qwen-coder-3:latest
+  model: deepseek/deepseek-v4-flash
   providers:
     # Local Ollama exposing the OpenAI-compatible API — no API key, so no auth header is sent.
     ollama:

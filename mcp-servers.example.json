@@ -9,6 +9,7 @@
       "command": "uvx",
       "args": ["mcp-server-time"],
       "env": {}
-    }
+    },
   }
 }
+
