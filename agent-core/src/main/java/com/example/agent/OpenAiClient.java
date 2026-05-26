@@ -159,15 +159,6 @@ public class OpenAiClient {
             throw new IllegalStateException("Failed to serialize chat request", e);
         }
 
-        var httpRequestBuilder = java.net.http.HttpRequest.newBuilder(endpoint)
-                .header("Content-Type", "application/json")
-                .header("Accept", "text/event-stream")
-                .POST(BodyPublishers.ofString(body, StandardCharsets.UTF_8));
-        if (apiKey != null) {
-            httpRequestBuilder.header("Authorization", "Bearer " + apiKey);
-        }
-
-        var httpRequest = httpRequestBuilder.build();
         Exception lastErr = null;
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             if (attempt > 0) {
@@ -180,9 +171,17 @@ public class OpenAiClient {
                     throw new IllegalStateException("Interrupted during retry backoff", ie);
                 }
             }
+            // Build a fresh request each attempt so the BodyPublisher is not reused across retries.
+            var httpRequestBuilder = java.net.http.HttpRequest.newBuilder(endpoint)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream")
+                    .POST(BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+            if (apiKey != null) {
+                httpRequestBuilder.header("Authorization", "Bearer " + apiKey);
+            }
             try {
                 HttpResponse<InputStream> response = streamingHttpClient.send(
-                        httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+                        httpRequestBuilder.build(), HttpResponse.BodyHandlers.ofInputStream());
 
                 if (response.statusCode() == 429 && attempt < MAX_RETRIES) {
                     String errorBody = new String(response.body().readAllBytes(), StandardCharsets.UTF_8);
