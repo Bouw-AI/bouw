@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-MCP server that provides web search via OpenRouter's Perplexity sonar-pro-search model.
-This is used as a fallback when DuckDuckGo is blocked by bot detection in cloud environments.
+MCP server that provides web search via OpenRouter's Perplexity sonar model.
+Used as a fallback when DuckDuckGo is blocked by bot detection in cloud environments.
 """
 
 import asyncio
@@ -17,19 +17,27 @@ from mcp import types
 
 OPENROUTER_API_KEY = os.environ.get("OPEN_ROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-SEARCH_MODEL = "perplexity/sonar-pro-search"
+SEARCH_MODEL = "perplexity/sonar"
+
+# Fail fast on startup if the API key is missing.
+if not OPENROUTER_API_KEY:
+    print("ERROR: OPEN_ROUTER_API_KEY environment variable is not set", file=sys.stderr)
+    sys.exit(1)
 
 app = Server("openrouter-search")
 
 
 def _call_openrouter(query: str) -> str:
-    """Call OpenRouter with a Perplexity sonar-pro-search model to perform web search."""
+    """Call OpenRouter with a Perplexity sonar model to perform web search."""
     payload = json.dumps({
         "model": SEARCH_MODEL,
         "messages": [
             {
                 "role": "user",
-                "content": f"Search the web and provide the latest information about: {query}\n\nReturn a concise summary of the most relevant and recent results."
+                "content": (
+                    f"Search the web and provide the latest information about: {query}\n\n"
+                    "Return a concise summary of the most relevant and recent results."
+                ),
             }
         ],
         "max_tokens": 1024,
@@ -44,9 +52,15 @@ def _call_openrouter(query: str) -> str:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read().decode("utf-8"))
-    return result["choices"][0]["message"]["content"]
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data["choices"][0]["message"]["content"]
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenRouter API error {e.code}: {body}") from e
+    except (KeyError, IndexError) as e:
+        raise RuntimeError(f"Unexpected OpenRouter response structure: {e}") from e
 
 
 @app.list_tools()
@@ -81,11 +95,11 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if not query:
         raise ValueError("query parameter is required")
 
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPEN_ROUTER_API_KEY environment variable is not set")
-
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _call_openrouter, query)
+    try:
+        result = await loop.run_in_executor(None, _call_openrouter, query)
+    except RuntimeError as e:
+        return [types.TextContent(type="text", text=f"Search failed: {e}")]
 
     return [types.TextContent(type="text", text=result)]
 
