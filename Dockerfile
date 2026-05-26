@@ -8,7 +8,7 @@ COPY agent-core/pom.xml agent-core/
 COPY mcp-client/pom.xml mcp-client/
 COPY mcp-integration/pom.xml mcp-integration/
 COPY agent-terminal/pom.xml agent-terminal/
-RUN mvn -pl mcp-integration -am dependency:go-offline --no-transfer-progress -q || true
+RUN mvn -pl mcp-integration -am dependency:go-offline --no-transfer-progress -q
 
 # Copy sources and package the mcp-integration fat jar.
 COPY agent-core/src agent-core/src
@@ -20,8 +20,9 @@ RUN mvn -pl mcp-integration -am clean package -DskipTests --no-transfer-progress
 # Lean JRE image; Python 3 is added for the OpenRouter web-search MCP server.
 FROM eclipse-temurin:21-jre
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip curl && \
-    pip3 install --no-cache-dir mcp --break-system-packages && \
+        python3 python3-pip python3-venv curl && \
+    python3 -m venv /opt/mcp-venv && \
+    /opt/mcp-venv/bin/pip install --no-cache-dir mcp && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r appuser && useradd -r -g appuser appuser
@@ -34,6 +35,8 @@ USER appuser
 
 EXPOSE 8080
 
+# Add the venv to PATH so subprocesses spawned by the JVM resolve python3 from it.
+ENV PATH="/opt/mcp-venv/bin:$PATH"
 # Override relative paths from application.yml with absolute paths valid inside the container.
 # MCP_CONFIG_FILE: if absent, the server starts with no persisted servers (web-search is auto-registered).
 # SEARCH_OPENROUTER_SCRIPT: points at the copy bundled in the image.
