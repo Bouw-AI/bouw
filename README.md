@@ -44,6 +44,37 @@ Other `mcp-agent` subcommands:
 | `mcp-agent config` | Re-prompt for API key / Redis, restart service |
 | `mcp-agent uninstall` | Remove service + launcher (prompts before deleting `~/.mcp-agent`) |
 
+## jarvis CLI (npm)
+
+After running `./install.sh`, you can optionally install a `jarvis` npm package that wraps the same jars with a more ergonomic subcommand interface — useful if you prefer `jarvis server start` over remembering `mcp-agent` subcommands, or if you want the command available in environments where npm is the primary package manager.
+
+**Requirements:** Node 18+ and a completed `./install.sh` run (the jars must exist in `~/.mcp-agent/bin/`).
+
+```bash
+# Install globally from the repo
+npm install -g ./jarvis
+
+# Then use from anywhere:
+jarvis                    # start server if needed, open terminal chat
+jarvis server start       # start the background service
+jarvis server stop        # stop the background service
+jarvis server restart     # restart the background service
+jarvis server status      # show service status
+jarvis server logs        # stream logs (journalctl -f)
+jarvis server run         # run the server in the foreground (no systemd)
+jarvis terminal           # launch the interactive terminal client
+```
+
+| Command | Description |
+|---|---|
+| `jarvis` | Ensure server is running, then open terminal chat |
+| `jarvis server run` | Run the server in the foreground (no systemd — useful for non-Pi installs) |
+| `jarvis server start / stop / restart / status` | Manage the systemd service |
+| `jarvis server logs` | Stream service logs (`journalctl -f`) |
+| `jarvis terminal` | Launch the terminal client directly |
+
+Set `AGENT_HOME` to override the default install location (`~/.mcp-agent`).
+
 ## Prerequisites
 
 - **Java 21** and **Maven**
