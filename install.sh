@@ -393,130 +393,363 @@ fi
 
 # ── 8. install the jarvis launcher ───────────────────────────────────────────
 info "Installing $LAUNCHER_NAME launcher to $LAUNCHER_PATH..."
-sudo tee "$LAUNCHER_PATH" > /dev/null <<LAUNCHER
+sudo tee "$LAUNCHER_PATH" > /dev/null <<'LAUNCHER_EOF'
 #!/usr/bin/env bash
 # jarvis — Jarvis agent launcher (installed by install.sh)
 #
 # Commands:
-#   jarvis [run]   start service if needed, open terminal chat
-#   jarvis serve   run server in the foreground (no systemd)
+#   jarvis [run]    start service if needed, open terminal chat
+#   jarvis serve    run server in the foreground (no systemd)
 #   jarvis start / stop / restart / status / logs
-#   jarvis config  re-prompt for credentials, restart service
+#   jarvis config   re-prompt for credentials, restart service
+#   jarvis doctor   health-check every subsystem; auto-fix what it can
 #   jarvis uninstall
 set -euo pipefail
 
-JARVIS_HOME="\${JARVIS_HOME:-$JARVIS_HOME}"
-ENV_FILE="\$JARVIS_HOME/jarvis.env"
-CONFIG_YML="\$JARVIS_HOME/config/application.yml"
-SERVICE_NAME="$SERVICE_NAME"
+JARVIS_HOME="${JARVIS_HOME:-__JARVIS_HOME__}"
+ENV_FILE="$JARVIS_HOME/jarvis.env"
+CONFIG_YML="$JARVIS_HOME/config/application.yml"
+SERVICE_NAME="__SERVICE_NAME__"
+LAUNCHER_PATH="__LAUNCHER_PATH__"
 
-info()    { printf '\033[1;34m[jarvis]\033[0m %s\n' "\$*"; }
-success() { printf '\033[1;32m[jarvis]\033[0m %s\n' "\$*"; }
-warn()    { printf '\033[1;33m[jarvis]\033[0m %s\n' "\$*"; }
-die()     { printf '\033[1;31m[jarvis]\033[0m %s\n' "\$*" >&2; exit 1; }
+info()    { printf '\033[1;34m[jarvis]\033[0m %s\n' "$*"; }
+success() { printf '\033[1;32m[jarvis]\033[0m %s\n' "$*"; }
+warn()    { printf '\033[1;33m[jarvis]\033[0m %s\n' "$*"; }
+die()     { printf '\033[1;31m[jarvis]\033[0m %s\n' "$*" >&2; exit 1; }
 
 load_env() {
-  [[ -f "\$ENV_FILE" ]] || return 0
+  [[ -f "$ENV_FILE" ]] || return 0
   # shellcheck disable=SC2046
-  export \$(grep -v '^\s*#' "\$ENV_FILE" | grep -v '^\s*\$' | xargs)
+  export $(grep -v '^\s*#' "$ENV_FILE" | grep -v '^\s*$' | xargs)
 }
 
 wait_for_health() {
-  local max="\${1:-45}" elapsed=0
+  local max="${1:-45}" elapsed=0
   until curl -sf http://localhost:8080/actuator/health >/dev/null 2>&1; do
-    elapsed=\$((elapsed + 1))
-    [[ \$elapsed -ge \$max ]] && { warn "Server did not respond within \${max}s. Try: jarvis logs"; return 1; }
+    elapsed=$((elapsed + 1))
+    [[ $elapsed -ge $max ]] && { warn "Server did not respond within ${max}s. Try: jarvis logs"; return 1; }
     sleep 1
   done
 }
 
 cmd_run() {
   load_env
-  if ! systemctl is-active --quiet "\$SERVICE_NAME" 2>/dev/null; then
-    info "Starting \$SERVICE_NAME service..."
-    sudo systemctl start "\$SERVICE_NAME"
+  if ! systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    info "Starting $SERVICE_NAME service..."
+    sudo systemctl start "$SERVICE_NAME"
   fi
   info "Waiting for agent server..."
   if wait_for_health 45; then
     success "Server ready at http://localhost:8080"
   fi
   export AGENT_SERVER_URL="http://localhost:8080"
-  [[ -n "\${AGENT_API_KEY:-}" ]] && export AGENT_API_KEY
-  exec java -jar "\$JARVIS_HOME/bin/agent-terminal.jar"
+  [[ -n "${AGENT_API_KEY:-}" ]] && export AGENT_API_KEY
+  exec java -jar "$JARVIS_HOME/bin/agent-terminal.jar"
 }
 
 cmd_serve() {
   load_env
-  exec java -jar "\$JARVIS_HOME/bin/mcp-integration.jar" \
-    "--spring.config.additional-location=file:\${CONFIG_YML}"
+  exec java -jar "$JARVIS_HOME/bin/mcp-integration.jar" \
+    "--spring.config.additional-location=file:${CONFIG_YML}"
 }
 
-cmd_start()   { sudo systemctl start   "\$SERVICE_NAME"; }
-cmd_stop()    { sudo systemctl stop    "\$SERVICE_NAME"; }
-cmd_restart() { sudo systemctl restart "\$SERVICE_NAME"; }
-cmd_status()  { systemctl status       "\$SERVICE_NAME"; }
-cmd_logs()    { exec journalctl -u "\$SERVICE_NAME" -f; }
+cmd_start()   { sudo systemctl start   "$SERVICE_NAME"; }
+cmd_stop()    { sudo systemctl stop    "$SERVICE_NAME"; }
+cmd_restart() { sudo systemctl restart "$SERVICE_NAME"; }
+cmd_status()  { systemctl status       "$SERVICE_NAME"; }
+cmd_logs()    { exec journalctl -u "$SERVICE_NAME" -f; }
 
 cmd_config() {
-  [[ -f "\$ENV_FILE" ]] && load_env
+  [[ -f "$ENV_FILE" ]] && load_env
   local new_key=""
-  while [[ -z "\$new_key" ]]; do
+  while [[ -z "$new_key" ]]; do
     printf '\033[1;35m   >\033[0m OpenRouter API key [current hidden, Enter to keep]: '
     read -rsp "" new_key; echo
-    [[ -z "\$new_key" ]] && new_key="\${OPEN_ROUTER_API_KEY:-}"
-    [[ -z "\$new_key" ]] && warn "Key is required."
+    [[ -z "$new_key" ]] && new_key="${OPEN_ROUTER_API_KEY:-}"
+    [[ -z "$new_key" ]] && warn "Key is required."
   done
   printf '\033[1;35m   >\033[0m Redis host for long-term memory (blank to disable): '
   read -r redis_host; echo
   local mem=false rhost="" rport=6379
-  if [[ -n "\$redis_host" ]]; then
+  if [[ -n "$redis_host" ]]; then
     printf '\033[1;35m   >\033[0m Redis port [6379]: '
     read -r rport_in; echo
-    rport="\${rport_in:-6379}"
-    if redis-cli -h "\$redis_host" -p "\$rport" ping >/dev/null 2>&1; then
-      mem=true; rhost="\$redis_host"
+    rport="${rport_in:-6379}"
+    if redis-cli -h "$redis_host" -p "$rport" ping >/dev/null 2>&1; then
+      mem=true; rhost="$redis_host"
       success "Redis reachable — long-term memory enabled."
     else
       warn "Redis not reachable — memory left disabled."
     fi
   fi
-  cat > "\$ENV_FILE" <<ENV
-OPEN_ROUTER_API_KEY=\${new_key}
-LLM_MODEL=\${LLM_MODEL:-openai/gpt-oss-120b}
-AGENT_API_KEY=\${AGENT_API_KEY:-}
-MEMORY_ENABLED=\${mem}
-REDIS_HOST=\${rhost}
-REDIS_PORT=\${rport}
-CLOUD_AGENTS_ENABLED=\${CLOUD_AGENTS_ENABLED:-false}
-GITHUB_TOKEN=\${GITHUB_TOKEN:-}
-AGENT_HOME=\${JARVIS_HOME}
+  cat > "$ENV_FILE" <<ENV
+OPEN_ROUTER_API_KEY=${new_key}
+LLM_MODEL=${LLM_MODEL:-openai/gpt-oss-120b}
+AGENT_API_KEY=${AGENT_API_KEY:-}
+MEMORY_ENABLED=${mem}
+REDIS_HOST=${rhost}
+REDIS_PORT=${rport}
+CLOUD_AGENTS_ENABLED=${CLOUD_AGENTS_ENABLED:-false}
+GITHUB_TOKEN=${GITHUB_TOKEN:-}
+AGENT_HOME=${JARVIS_HOME}
 ENV
-  chmod 600 "\$ENV_FILE"
+  chmod 600 "$ENV_FILE"
   success "jarvis.env updated."
-  if systemctl is-active --quiet "\$SERVICE_NAME" 2>/dev/null; then
+  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
     info "Restarting service..."
-    sudo systemctl restart "\$SERVICE_NAME"
+    sudo systemctl restart "$SERVICE_NAME"
     wait_for_health 45 && success "Service restarted and healthy."
   fi
 }
 
-cmd_uninstall() {
-  info "Stopping and removing \$SERVICE_NAME service..."
-  sudo systemctl disable --now "\$SERVICE_NAME" 2>/dev/null || true
-  sudo rm -f "/etc/systemd/system/\${SERVICE_NAME}.service"
-  sudo systemctl daemon-reload
-  sudo rm -f "$LAUNCHER_PATH"
-  success "Service and launcher removed."
-  if [[ -d "\$JARVIS_HOME" ]]; then
-    printf '\033[1;35m   >\033[0m Delete \$JARVIS_HOME? [y/N] '
-    read -r _c; echo
-    [[ "\${_c,,}" == "y" ]] && rm -rf "\$JARVIS_HOME" && success "\$JARVIS_HOME deleted." || info "Kept \$JARVIS_HOME."
+# ── doctor ────────────────────────────────────────────────────────────────────
+cmd_doctor() {
+  load_env
+
+  local _fixes=0 _fails=0
+
+  # Doctor-scoped helpers (bash dynamic scoping lets these see the locals above)
+  _dr_pass()  { printf '  \033[1;32m✓\033[0m %s\n' "$*"; }
+  _dr_fail()  { printf '  \033[1;31m✗\033[0m %s\n' "$*"; _fails=$((_fails + 1)); }
+  _dr_fixed() { printf '  \033[1;34m→ [fixed]\033[0m %s\n' "$*"; _fixes=$((_fixes + 1)); }
+  _dr_note()  { printf '  \033[1;33m⚠\033[0m %s\n' "$*"; }
+
+  printf '\033[1;34m─── Jarvis Doctor ──────────────────────────────────────────────────────\033[0m\n'
+  echo
+
+  # ── Runtime ──────────────────────────────────────────────────────────────────
+  printf '\033[1;34m[Runtime]\033[0m\n'
+
+  if command -v java >/dev/null 2>&1 && java -version 2>&1 | grep -qE '"(2[1-9]|[3-9][0-9])'; then
+    local _jv; _jv=$(java -version 2>&1 | head -1)
+    _dr_pass "Java 21+  ($_jv)"
+  else
+    _dr_fail "Java 21+ not found — required to run jars; re-run install.sh to install"
+  fi
+
+  if [[ -x "$JARVIS_HOME/venv/bin/python3" ]]; then
+    if "$JARVIS_HOME/venv/bin/python3" -c "import mcp" 2>/dev/null; then
+      _dr_pass "Python venv + mcp package"
+    else
+      _dr_fail "mcp package missing from venv — attempting reinstall"
+      if "$JARVIS_HOME/venv/bin/pip" install --no-cache-dir --quiet mcp 2>/dev/null; then
+        _dr_fixed "mcp package reinstalled in venv"
+      else
+        _dr_fail "Could not reinstall mcp (check internet access)"
+      fi
+    fi
+  else
+    _dr_fail "Python venv missing at $JARVIS_HOME/venv — attempting rebuild"
+    if command -v python3 >/dev/null 2>&1; then
+      if python3 -m venv "$JARVIS_HOME/venv" \
+          && "$JARVIS_HOME/venv/bin/pip" install --no-cache-dir --quiet mcp 2>/dev/null; then
+        _dr_fixed "Python venv rebuilt"
+      else
+        _dr_fail "venv rebuild failed — check python3-venv: sudo apt-get install python3-venv"
+      fi
+    else
+      _dr_fail "python3 not found — run: sudo apt-get install python3 python3-venv"
+    fi
+  fi
+
+  echo
+  # ── Files ────────────────────────────────────────────────────────────────────
+  printf '\033[1;34m[Files]\033[0m\n'
+
+  for _d in bin config venv workspace logs; do
+    if [[ -d "$JARVIS_HOME/$_d" ]]; then
+      _dr_pass "~/.jarvis/$_d/"
+    else
+      mkdir -p "$JARVIS_HOME/$_d"
+      _dr_fixed "Created missing directory ~/.jarvis/$_d/"
+    fi
+  done
+
+  if [[ -f "$ENV_FILE" ]]; then
+    local _perms; _perms=$(stat -c '%a' "$ENV_FILE" 2>/dev/null \
+                           || stat -f '%OLp' "$ENV_FILE" 2>/dev/null \
+                           || echo "unknown")
+    if [[ "$_perms" == "600" ]]; then
+      _dr_pass "jarvis.env (permissions 600)"
+    else
+      chmod 600 "$ENV_FILE"
+      _dr_fixed "Fixed jarvis.env permissions ($_perms → 600)"
+    fi
+    if grep -qE '^OPEN_ROUTER_API_KEY=.+' "$ENV_FILE" 2>/dev/null; then
+      _dr_pass "OPEN_ROUTER_API_KEY is set"
+    else
+      _dr_fail "OPEN_ROUTER_API_KEY is missing or empty — run: jarvis config"
+    fi
+  else
+    _dr_fail "jarvis.env not found at $ENV_FILE — run: jarvis config  or re-run install.sh"
+  fi
+
+  if [[ -f "$CONFIG_YML" ]]; then
+    _dr_pass "config/application.yml"
+  else
+    _dr_fail "config/application.yml not found — re-run install.sh"
+  fi
+
+  if [[ -f "$JARVIS_HOME/config/mcp-servers.json" ]]; then
+    _dr_pass "config/mcp-servers.json"
+  else
+    printf '{"mcpServers":{}}\n' > "$JARVIS_HOME/config/mcp-servers.json"
+    _dr_fixed "Created empty mcp-servers.json"
+  fi
+
+  if [[ -f "$JARVIS_HOME/bin/mcp-integration.jar" ]]; then
+    local _sz; _sz=$(du -sh "$JARVIS_HOME/bin/mcp-integration.jar" | cut -f1)
+    _dr_pass "mcp-integration.jar ($_sz)"
+  else
+    _dr_fail "mcp-integration.jar not found — rebuild: mvn clean package -DskipTests && re-run install.sh"
+  fi
+
+  if [[ -f "$JARVIS_HOME/bin/agent-terminal.jar" ]]; then
+    _dr_pass "agent-terminal.jar"
+  else
+    _dr_fail "agent-terminal.jar not found — rebuild: mvn clean package -DskipTests && re-run install.sh"
+  fi
+
+  if [[ -f "$JARVIS_HOME/bin/openrouter-search-mcp.py" ]]; then
+    _dr_pass "openrouter-search-mcp.py"
+  else
+    _dr_fail "openrouter-search-mcp.py missing — re-run install.sh to restore it"
+  fi
+
+  echo
+  # ── Service ──────────────────────────────────────────────────────────────────
+  printf '\033[1;34m[Service]\033[0m\n'
+
+  if [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
+    _dr_pass "systemd unit file present"
+  else
+    _dr_fail "systemd unit not found at /etc/systemd/system/${SERVICE_NAME}.service — re-run install.sh"
+  fi
+
+  if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+    _dr_pass "service enabled (starts on boot)"
+  else
+    if sudo systemctl enable "$SERVICE_NAME" 2>/dev/null; then
+      _dr_fixed "Enabled $SERVICE_NAME for boot"
+    else
+      _dr_fail "Could not enable service — unit file may be missing"
+    fi
+  fi
+
+  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    _dr_pass "service is running"
+  else
+    info "Service not running — attempting to start..."
+    if sudo systemctl start "$SERVICE_NAME" 2>/dev/null; then
+      sleep 3
+      if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        _dr_fixed "Service started successfully"
+      else
+        _dr_fail "Service started but exited — check: jarvis logs"
+      fi
+    else
+      _dr_fail "Could not start service — check: jarvis logs"
+    fi
+  fi
+
+  echo
+  # ── Network ──────────────────────────────────────────────────────────────────
+  printf '\033[1;34m[Network]\033[0m\n'
+
+  if curl -sf http://localhost:8080/actuator/health >/dev/null 2>&1; then
+    local _hj; _hj=$(curl -s http://localhost:8080/actuator/health \
+                     | grep -o '"status":"[^"]*"' | head -1)
+    _dr_pass "HTTP health endpoint ($_hj)"
+  else
+    local _hw=20 _he=0
+    _dr_note "Health endpoint not yet responding — waiting up to ${_hw}s..."
+    while ! curl -sf http://localhost:8080/actuator/health >/dev/null 2>&1; do
+      _he=$((_he + 1)); [[ $_he -ge $_hw ]] && break; sleep 1
+    done
+    if curl -sf http://localhost:8080/actuator/health >/dev/null 2>&1; then
+      _dr_fixed "Agent server is now healthy"
+    else
+      _dr_fail "Agent server not responding on :8080"
+      # Check for port conflict
+      if command -v ss >/dev/null 2>&1; then
+        local _conflict; _conflict=$(ss -tlnp 2>/dev/null | grep ':8080 ' | head -1 || true)
+        [[ -n "$_conflict" ]] && _dr_fail "Port 8080 in use by another process: $_conflict"
+      fi
+      _dr_note "Tip: inspect with  jarvis logs"
+    fi
+  fi
+
+  echo
+  # ── Memory ───────────────────────────────────────────────────────────────────
+  printf '\033[1;34m[Memory]\033[0m\n'
+
+  if [[ "${MEMORY_ENABLED:-false}" == "true" ]]; then
+    local _rh="${REDIS_HOST:-localhost}" _rp="${REDIS_PORT:-6379}"
+    if command -v redis-cli >/dev/null 2>&1 \
+        && redis-cli -h "$_rh" -p "$_rp" ping >/dev/null 2>&1; then
+      _dr_pass "Redis reachable at $_rh:$_rp  (long-term memory active)"
+    else
+      _dr_fail "Redis not reachable at $_rh:$_rp  (MEMORY_ENABLED=true)"
+      if [[ "$_rh" == "localhost" || "$_rh" == "127.0.0.1" ]]; then
+        if command -v redis-server >/dev/null 2>&1; then
+          if sudo systemctl start redis-server 2>/dev/null; then
+            sleep 1
+            if redis-cli -h "$_rh" -p "$_rp" ping >/dev/null 2>&1; then
+              _dr_fixed "Started local redis-server and confirmed reachable"
+            else
+              _dr_fail "redis-server started but still not responding on $_rh:$_rp"
+            fi
+          else
+            _dr_fail "Could not start redis-server — check: systemctl status redis-server"
+          fi
+        else
+          _dr_fail "redis-server not installed — run: sudo apt-get install redis-server"
+        fi
+      else
+        _dr_fail "Remote Redis at $_rh:$_rp is unreachable — check host, port, and firewall"
+      fi
+    fi
+  else
+    _dr_note "Long-term memory disabled (MEMORY_ENABLED=false) — Redis not checked"
+  fi
+
+  echo
+  # ── Summary ──────────────────────────────────────────────────────────────────
+  printf '\033[1;34m────────────────────────────────────────────────────────────────────────\033[0m\n'
+  if [[ $_fails -eq 0 ]]; then
+    if [[ $_fixes -gt 0 ]]; then
+      success "All checks passed after $_fixes auto-fix(es). Jarvis is healthy."
+    else
+      success "All checks passed. Jarvis is healthy."
+    fi
+  else
+    warn "$_fails check(s) failed, $_fixes item(s) auto-fixed."
+    warn "Address the failures above, then re-run:  jarvis doctor"
+    return 1
   fi
 }
 
-CMD="\${1:-run}"
+cmd_uninstall() {
+  info "Stopping and removing $SERVICE_NAME service..."
+  sudo systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+  sudo rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+  sudo systemctl daemon-reload
+  sudo rm -f "$LAUNCHER_PATH"
+  success "Service and launcher removed."
+  if [[ -d "$JARVIS_HOME" ]]; then
+    printf '\033[1;35m   >\033[0m Delete %s? [y/N] ' "$JARVIS_HOME"
+    read -r _c; echo
+    if [[ "${_c,,}" == "y" ]]; then
+      rm -rf "$JARVIS_HOME"; success "$JARVIS_HOME deleted."
+    else
+      info "Kept $JARVIS_HOME."
+    fi
+  fi
+}
+
+CMD="${1:-run}"
 shift || true
-case "\$CMD" in
+case "$CMD" in
   run)       cmd_run       ;;
   serve)     cmd_serve     ;;
   start)     cmd_start     ;;
@@ -525,6 +758,7 @@ case "\$CMD" in
   status)    cmd_status    ;;
   logs)      cmd_logs      ;;
   config)    cmd_config    ;;
+  doctor)    cmd_doctor    ;;
   uninstall) cmd_uninstall ;;
   *)
     cat <<USAGE
@@ -538,12 +772,20 @@ Usage: jarvis [command]
   status         Show service status
   logs           Stream service logs  (journalctl -f)
   config         Reconfigure credentials, restart service
+  doctor         Check every subsystem; auto-fix what it can
   uninstall      Remove service, launcher, and optionally ~/.jarvis
 USAGE
     exit 1
     ;;
 esac
-LAUNCHER
+LAUNCHER_EOF
+
+# Substitute the install-time paths into the launcher
+sudo sed -i \
+  -e "s|__JARVIS_HOME__|${JARVIS_HOME}|g" \
+  -e "s|__SERVICE_NAME__|${SERVICE_NAME}|g" \
+  -e "s|__LAUNCHER_PATH__|${LAUNCHER_PATH}|g" \
+  "$LAUNCHER_PATH"
 sudo chmod 0755 "$LAUNCHER_PATH"
 success "Launcher installed: $LAUNCHER_PATH"
 
@@ -597,13 +839,14 @@ printf '\033[1;32m  Jarvis is running at http://localhost:8080\033[0m\n'
 printf '\033[1;32m══════════════════════════════════════════════════════════════════\033[0m\n'
 echo
 cat <<MSG
-  Start chatting:      jarvis
+  Start chatting:       jarvis
   Server in foreground: jarvis serve
-  Service status/logs: jarvis status  |  jarvis logs
-  Reconfigure:         jarvis config
-  Workspace:           $JARVIS_HOME/workspace
-  Config:              $JARVIS_HOME/config/
-  Env vars:            $ENV_FILE
-  Uninstall:           jarvis uninstall
+  Service status/logs:  jarvis status  |  jarvis logs
+  Health check:         jarvis doctor
+  Reconfigure:          jarvis config
+  Workspace:            $JARVIS_HOME/workspace
+  Config:               $JARVIS_HOME/config/
+  Env vars:             $ENV_FILE
+  Uninstall:            jarvis uninstall
 MSG
 echo
