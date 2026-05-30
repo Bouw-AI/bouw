@@ -216,63 +216,87 @@ fi
 
 # 3d. Redis for long-term memory (optional)
 echo
-info "Long-term memory requires a running Redis instance."
+info "Long-term memory requires a Redis instance."
 MEMORY_ENABLED=false
 REDIS_HOST_VAL=""
 REDIS_PORT_VAL=6379
 
-_redis_default_hint=""
-[[ -n "$_existing_redis_host" ]] && _redis_default_hint=" [current: ${_existing_redis_host}:${_existing_redis_port}]"
+echo "  1) None   — disable long-term memory"
+echo "  2) Local  — install/start Redis on this machine"
+echo "  3) Host   — connect to an existing Redis host"
+echo
 
-ask "Redis host for long-term memory (leave blank to disable)${_redis_default_hint}: "
-read -r REDIS_HOST_INPUT; echo
-
-if [[ -z "$REDIS_HOST_INPUT" && -n "$_existing_redis_host" ]]; then
-  ask "Keep existing Redis config (${_existing_redis_host}:${_existing_redis_port})? [Y/n] "
-  read -r _keep_redis; echo
-  if [[ "${_keep_redis,,}" != "n" ]]; then
-    REDIS_HOST_INPUT="$_existing_redis_host"
-    REDIS_PORT_VAL="$_existing_redis_port"
+_redis_default_choice=1
+if [[ -n "$_existing_redis_host" ]]; then
+  if [[ "$_existing_redis_host" == "localhost" || "$_existing_redis_host" == "127.0.0.1" ]]; then
+    _redis_default_choice=2
+  else
+    _redis_default_choice=3
   fi
 fi
 
-if [[ -n "$REDIS_HOST_INPUT" ]]; then
-  REDIS_HOST_VAL="$REDIS_HOST_INPUT"
+ask "Redis option [${_redis_default_choice}]: "; read -r _redis_choice; echo
+_redis_choice="${_redis_choice:-${_redis_default_choice}}"
 
-  ask "Redis port [${REDIS_PORT_VAL}]: "
-  read -r _port_input; echo
-  REDIS_PORT_VAL="${_port_input:-$REDIS_PORT_VAL}"
+case "$_redis_choice" in
+  2)
+    # Local Redis
+    REDIS_HOST_VAL="localhost"
+    ask "Redis port [6379]: "; read -r _port_input; echo
+    REDIS_PORT_VAL="${_port_input:-6379}"
 
-  # Install Redis locally if requested for localhost
-  if [[ "$REDIS_HOST_VAL" == "localhost" || "$REDIS_HOST_VAL" == "127.0.0.1" ]]; then
     if ! require_cmd redis-server; then
-      ask "Redis not found locally — install redis-server? [Y/n] "
-      read -r _inst_redis; echo
-      if [[ "${_inst_redis,,}" != "n" ]]; then
-        sudo apt-get install -y redis-server
-        sudo systemctl enable --now redis-server
-        info "Redis installed and started."
-      fi
-    elif ! systemctl is-active --quiet redis-server 2>/dev/null; then
-      info "Redis is installed but not running — starting it."
-      sudo systemctl start redis-server
+      info "Redis not found locally — installing redis-server..."
+      sudo apt-get install -y redis-server
+    fi
+
+    if ! systemctl is-active --quiet redis-server 2>/dev/null; then
+      info "Starting redis-server..."
+      sudo systemctl enable --now redis-server
     else
       info "Local Redis already running."
     fi
-  fi
 
-  # Test connectivity before enabling memory (avoid database conflicts)
-  info "Testing Redis connectivity at ${REDIS_HOST_VAL}:${REDIS_PORT_VAL}..."
-  if require_cmd redis-cli && redis-cli -h "$REDIS_HOST_VAL" -p "$REDIS_PORT_VAL" ping >/dev/null 2>&1; then
-    MEMORY_ENABLED=true
-    success "Redis reachable — long-term memory enabled."
-  else
-    warn "Cannot reach Redis at ${REDIS_HOST_VAL}:${REDIS_PORT_VAL}. Long-term memory will be DISABLED."
-    warn "Fix connectivity and re-run  $LAUNCHER_NAME config  to enable it later."
-    REDIS_HOST_VAL=""
-    MEMORY_ENABLED=false
-  fi
-fi
+    # Test connectivity
+    info "Testing Redis connectivity at ${REDIS_HOST_VAL}:${REDIS_PORT_VAL}..."
+    if require_cmd redis-cli && redis-cli -h "$REDIS_HOST_VAL" -p "$REDIS_PORT_VAL" ping >/dev/null 2>&1; then
+      MEMORY_ENABLED=true
+      success "Local Redis reachable — long-term memory enabled."
+    else
+      warn "Cannot reach local Redis at ${REDIS_HOST_VAL}:${REDIS_PORT_VAL}. Long-term memory will be DISABLED."
+      REDIS_HOST_VAL=""
+      MEMORY_ENABLED=false
+    fi
+    ;;
+  3)
+    # Remote Redis host
+    _redis_host_default="${_existing_redis_host:-}"
+    ask "Redis host${_redis_host_default:+ [current: ${_redis_host_default}]}: "; read -r REDIS_HOST_INPUT; echo
+    REDIS_HOST_VAL="${REDIS_HOST_INPUT:-${_redis_host_default}}"
+
+    ask "Redis port [${_existing_redis_port}]: "; read -r _port_input; echo
+    REDIS_PORT_VAL="${_port_input:-${_existing_redis_port}}"
+
+    if [[ -z "$REDIS_HOST_VAL" ]]; then
+      warn "No host entered — long-term memory disabled."
+    else
+      info "Testing Redis connectivity at ${REDIS_HOST_VAL}:${REDIS_PORT_VAL}..."
+      if require_cmd redis-cli && redis-cli -h "$REDIS_HOST_VAL" -p "$REDIS_PORT_VAL" ping >/dev/null 2>&1; then
+        MEMORY_ENABLED=true
+        success "Redis reachable — long-term memory enabled."
+      else
+        warn "Cannot reach Redis at ${REDIS_HOST_VAL}:${REDIS_PORT_VAL}. Long-term memory will be DISABLED."
+        warn "Fix connectivity and re-run  $LAUNCHER_NAME config  to enable it later."
+        REDIS_HOST_VAL=""
+        MEMORY_ENABLED=false
+      fi
+    fi
+    ;;
+  *)
+    # None (option 1 or anything else)
+    info "Long-term memory disabled."
+    ;;
+esac
 
 # 3e. GitHub token (optional — for cloud-agent repo cloning)
 echo
@@ -468,20 +492,65 @@ cmd_config() {
     [[ -z "$new_key" ]] && new_key="${OPEN_ROUTER_API_KEY:-}"
     [[ -z "$new_key" ]] && warn "Key is required."
   done
-  printf '\033[1;35m   >\033[0m Redis host for long-term memory (blank to disable): '
-  read -r redis_host; echo
-  local mem=false rhost="" rport=6379
-  if [[ -n "$redis_host" ]]; then
-    printf '\033[1;35m   >\033[0m Redis port [6379]: '
-    read -r rport_in; echo
-    rport="${rport_in:-6379}"
-    if redis-cli -h "$redis_host" -p "$rport" ping >/dev/null 2>&1; then
-      mem=true; rhost="$redis_host"
-      success "Redis reachable — long-term memory enabled."
+
+  echo "  1) None   — disable long-term memory"
+  echo "  2) Local  — install/start Redis on this machine"
+  echo "  3) Host   — connect to an existing Redis host"
+  echo
+  local _cur_choice=1
+  if [[ "${MEMORY_ENABLED:-false}" == "true" ]]; then
+    if [[ "${REDIS_HOST:-}" == "localhost" || "${REDIS_HOST:-}" == "127.0.0.1" ]]; then
+      _cur_choice=2
     else
-      warn "Redis not reachable — memory left disabled."
+      _cur_choice=3
     fi
   fi
+  printf '\033[1;35m   >\033[0m Redis option [%s]: ' "$_cur_choice"
+  read -r _redis_choice; echo
+  _redis_choice="${_redis_choice:-${_cur_choice}}"
+
+  local mem=false rhost="" rport=6379
+  case "$_redis_choice" in
+    2)
+      rhost="localhost"
+      printf '\033[1;35m   >\033[0m Redis port [6379]: '
+      read -r rport_in; echo
+      rport="${rport_in:-6379}"
+      if ! command -v redis-server >/dev/null 2>&1; then
+        info "Installing redis-server..."
+        sudo apt-get install -y redis-server
+      fi
+      if ! systemctl is-active --quiet redis-server 2>/dev/null; then
+        sudo systemctl enable --now redis-server
+      fi
+      if command -v redis-cli >/dev/null 2>&1 && redis-cli -h "$rhost" -p "$rport" ping >/dev/null 2>&1; then
+        mem=true
+        success "Local Redis reachable — long-term memory enabled."
+      else
+        warn "Local Redis not reachable — memory left disabled."
+        rhost=""
+      fi
+      ;;
+    3)
+      printf '\033[1;35m   >\033[0m Redis host%s: ' "${REDIS_HOST:+ [current: ${REDIS_HOST}]}"
+      read -r redis_host_in; echo
+      rhost="${redis_host_in:-${REDIS_HOST:-}}"
+      printf '\033[1;35m   >\033[0m Redis port [%s]: ' "${REDIS_PORT:-6379}"
+      read -r rport_in; echo
+      rport="${rport_in:-${REDIS_PORT:-6379}}"
+      if [[ -n "$rhost" ]] && command -v redis-cli >/dev/null 2>&1 \
+          && redis-cli -h "$rhost" -p "$rport" ping >/dev/null 2>&1; then
+        mem=true
+        success "Redis reachable — long-term memory enabled."
+      else
+        warn "Redis not reachable — memory left disabled."
+        rhost=""
+      fi
+      ;;
+    *)
+      info "Long-term memory disabled."
+      ;;
+  esac
   cat > "$ENV_FILE" <<ENV
 OPEN_ROUTER_API_KEY=${new_key}
 LLM_MODEL=${LLM_MODEL:-openai/gpt-oss-120b}
