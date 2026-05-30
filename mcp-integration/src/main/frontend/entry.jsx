@@ -3,7 +3,8 @@ import { createRoot } from "react-dom/client";
 import {
   MessageSquare, Activity, Server, Wrench, Search, Send, Cpu,
   Database, Globe, RefreshCw, Zap, ChevronDown, Terminal,
-  Plug, Clock, FolderTree, CheckCircle2, AlertTriangle, XCircle, Settings, Bird
+  Plug, Clock, FolderTree, CheckCircle2, AlertTriangle, XCircle, Settings, Bird,
+  LogOut, Lock, User, Eye, EyeOff
 } from "lucide-react";
 
 const C = {
@@ -334,10 +335,201 @@ const NAV = [
   { key: "tools",   label: "Tools",   Icon: Wrench },
 ];
 
+// ── Login Screen ──────────────────────────────────────────────────────────────
+
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (e) => {
+    e?.preventDefault();
+    if (!username.trim() || !password) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        onLogin(data.token, data.username);
+      } else {
+        setError("Invalid username or password.");
+      }
+    } catch {
+      setError("Connection error — is the server running?");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fieldStyle = {
+    display: "flex", alignItems: "center", gap: 10,
+    background: C.panel2, border: `1px solid ${C.borderLit}`,
+    borderRadius: 10, padding: "13px 16px",
+  };
+  const inputStyle = {
+    flex: 1, background: "transparent", border: "none", outline: "none",
+    color: C.text, fontFamily: BODY, fontSize: 14,
+  };
+
+  return (
+    <div style={{
+      height: "100vh", background: C.bg, display: "flex", alignItems: "center",
+      justifyContent: "center", fontFamily: BODY,
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@400;500;600&display=swap');
+        @keyframes jpulse { 0%{transform:scale(1);opacity:.5} 100%{transform:scale(2.6);opacity:0} }
+        @keyframes jfade  { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:none} }
+        @keyframes jglow  { 0%,100%{opacity:.6} 50%{opacity:1} }
+        *::-webkit-scrollbar       { width:8px; height:8px }
+        *::-webkit-scrollbar-thumb { background:#222D3D; border-radius:99px }
+        *::-webkit-scrollbar-track { background:transparent }
+      `}</style>
+
+      {/* ambient glow behind the card */}
+      <div style={{
+        position: "fixed", inset: 0, pointerEvents: "none",
+        background: `radial-gradient(ellipse 60% 50% at 50% 45%, ${C.cyan}0D 0%, transparent 70%)`,
+      }} />
+
+      <form onSubmit={submit} style={{
+        position: "relative", width: 420,
+        background: C.panel, border: `1px solid ${C.border}`,
+        borderRadius: 20, padding: "44px 40px 40px",
+        boxShadow: `0 0 80px ${C.cyan}0D, 0 24px 64px #00000060`,
+        animation: "jfade .35s ease",
+      }}>
+        {/* logo */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 36 }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: 16, marginBottom: 18,
+            display: "grid", placeItems: "center",
+            background: `radial-gradient(circle, ${C.cyan}22, transparent 70%)`,
+            border: `1px solid ${C.cyan}44`,
+            boxShadow: `0 0 28px ${C.cyan}33`,
+          }}>
+            <Bird size={28} color={C.cyan} style={{ filter: `drop-shadow(0 0 8px ${C.cyan}bb)`, animation: "jglow 3s ease-in-out infinite" }} />
+          </div>
+          <div style={{ fontFamily: DISP, fontSize: 24, fontWeight: 700, letterSpacing: "0.22em", color: C.text }}>
+            HUGIN
+          </div>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.28em", color: C.mut, marginTop: 5 }}>
+            MCP CONTROL · SIGN IN
+          </div>
+        </div>
+
+        {/* username */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontFamily: DISP, fontSize: 10, letterSpacing: "0.2em", color: C.mut, textTransform: "uppercase", marginBottom: 7 }}>
+            Username
+          </div>
+          <div style={fieldStyle}>
+            <User size={15} color={C.cyanDim} />
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="admin"
+              autoComplete="username"
+              style={inputStyle}
+            />
+          </div>
+        </div>
+
+        {/* password */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontFamily: DISP, fontSize: 10, letterSpacing: "0.2em", color: C.mut, textTransform: "uppercase", marginBottom: 7 }}>
+            Password
+          </div>
+          <div style={fieldStyle}>
+            <Lock size={15} color={C.cyanDim} />
+            <input
+              type={showPw ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              autoComplete="current-password"
+              style={inputStyle}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPw((v) => !v)}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: C.mut, display: "grid", placeItems: "center" }}
+            >
+              {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
+          </div>
+        </div>
+
+        {/* error */}
+        {error && (
+          <div style={{
+            fontFamily: MONO, fontSize: 11.5, color: C.err,
+            background: `${C.err}12`, border: `1px solid ${C.err}33`,
+            borderRadius: 8, padding: "9px 12px", marginBottom: 16,
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <XCircle size={13} /> {error}
+          </div>
+        )}
+
+        {/* submit */}
+        <button
+          type="submit"
+          disabled={loading || !username.trim() || !password}
+          style={{
+            width: "100%", padding: "14px 0", borderRadius: 10, border: "none",
+            background: loading || !username.trim() || !password ? C.panel3 : C.cyan,
+            color: loading || !username.trim() || !password ? C.mut : C.bg,
+            fontFamily: DISP, fontSize: 13, fontWeight: 700, letterSpacing: "0.18em",
+            cursor: loading || !username.trim() || !password ? "default" : "pointer",
+            transition: "all .15s",
+            boxShadow: loading || !username.trim() || !password ? "none" : `0 0 22px ${C.cyan}44`,
+          }}
+        >
+          {loading ? "AUTHENTICATING…" : "SIGN IN"}
+        </button>
+
+        <div style={{ fontFamily: MONO, fontSize: 10, color: C.mut2, textAlign: "center", marginTop: 20, letterSpacing: "0.06em" }}>
+          POST /api/auth/login · JWT Bearer
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+
 function App() {
+  const [token, setToken] = useState(() => localStorage.getItem("hugin_token"));
+  const [authUser, setAuthUser] = useState(() => localStorage.getItem("hugin_username") || "");
   const [view, setView] = useState("chat");
   const [model, setModel] = useState(MODELS[0].id);
   const [modelOpen, setModelOpen] = useState(false);
+
+  const handleLogin = (tok, user) => {
+    localStorage.setItem("hugin_token", tok);
+    localStorage.setItem("hugin_username", user);
+    setToken(tok);
+    setAuthUser(user);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("hugin_token");
+    localStorage.removeItem("hugin_username");
+    setToken(null);
+    setAuthUser("");
+  };
+
+  if (!token) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
 
   return (
     <div style={{ display: "flex", height: "100vh", background: C.bg, color: C.text, fontFamily: BODY, overflow: "hidden" }}>
@@ -403,6 +595,22 @@ function App() {
               )}
             </div>
             <Pill status="up" />
+            {/* user + logout */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.panel2, border: `1px solid ${C.borderLit}`, borderRadius: 9, padding: "8px 13px" }}>
+              <User size={13} color={C.cyanDim} />
+              <span style={{ fontFamily: MONO, fontSize: 12, color: C.text }}>{authUser}</span>
+            </div>
+            <button
+              onClick={handleLogout}
+              title="Sign out"
+              style={{
+                background: C.panel2, border: `1px solid ${C.borderLit}`, borderRadius: 9,
+                width: 36, height: 36, display: "grid", placeItems: "center",
+                cursor: "pointer", color: C.mut, transition: "all .15s",
+              }}
+            >
+              <LogOut size={15} />
+            </button>
           </div>
         </header>
 
