@@ -9,6 +9,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.util.matcher.IpAddressMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -31,10 +32,16 @@ public class SecurityConfig {
         return http.build();
     }
 
+    private static final IpAddressMatcher LOCALHOST_V4 = new IpAddressMatcher("127.0.0.1");
+    private static final IpAddressMatcher LOCALHOST_V6 = new IpAddressMatcher("::1");
+
+    private static boolean isLocalhost(String remoteAddr) {
+        return LOCALHOST_V4.matches(remoteAddr) || LOCALHOST_V6.matches(remoteAddr);
+    }
+
     /**
-     * All /api/** endpoints require a valid JWT Bearer token.
-     * The legacy X-API-Key header is also accepted on /api/agent/** for backward
-     * compatibility with the terminal client (when agent.api-key is configured).
+     * All /api/** endpoints require a valid JWT Bearer token or X-API-Key (when configured).
+     * When no api-key is configured, /api/agent/** is open to localhost only.
      */
     @Bean
     @Order(2)
@@ -44,15 +51,26 @@ public class SecurityConfig {
             @Value("${agent.api-key:}") String apiKey) throws Exception {
 
         var jwtFilter = new JwtAuthenticationFilter(jwtService);
+        boolean apiKeyConfigured = apiKey != null && !apiKey.isBlank();
 
         http.securityMatcher("/api/**")
-                .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                .authorizeHttpRequests(auth -> {
+                    if (apiKeyConfigured) {
+                        auth.anyRequest().authenticated();
+                    } else {
+                        // no api-key: agent endpoints open to localhost, denied externally
+                        auth.requestMatchers(req -> req.getServletPath().startsWith("/api/agent/")
+                                        && isLocalhost(req.getRemoteAddr())).permitAll()
+                                .requestMatchers("/api/agent/**").denyAll()
+                                .anyRequest().authenticated();
+                    }
+                })
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()));
 
-        if (apiKey != null && !apiKey.isBlank()) {
+        if (apiKeyConfigured) {
             var apiKeyFilter = new ApiKeyAuthenticationFilter(apiKey);
             http.addFilterBefore(apiKeyFilter, JwtAuthenticationFilter.class);
         }

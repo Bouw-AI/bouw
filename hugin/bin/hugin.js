@@ -8,13 +8,19 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 
-const AGENT_HOME = process.env.AGENT_HOME ?? path.join(os.homedir(), '.hugin');
-const SERVER_JAR = path.join(AGENT_HOME, 'bin', 'mcp-integration.jar');
+const AGENT_HOME  = process.env.AGENT_HOME ?? path.join(os.homedir(), '.hugin');
+const SERVER_JAR  = path.join(AGENT_HOME, 'bin', 'mcp-integration.jar');
 const TERMINAL_JAR = path.join(AGENT_HOME, 'bin', 'agent-terminal.jar');
-const CONFIG_YML = path.join(AGENT_HOME, 'config', 'application.yml');
+const CONFIG_YML  = path.join(AGENT_HOME, 'config', 'application.yml');
+const LOG_FILE    = path.join(AGENT_HOME, 'logs', 'hugin.log');
 
-const installed = () => existsSync(SERVER_JAR);
-const hasSystemd = () => spawnSync('systemctl', ['--version'], { stdio: 'ignore' }).status === 0;
+const IS_MACOS    = process.platform === 'darwin';
+const PLIST_LABEL = 'com.hugin.agent';
+const PLIST_PATH  = path.join(os.homedir(), 'Library', 'LaunchAgents', `${PLIST_LABEL}.plist`);
+
+const installed       = () => existsSync(SERVER_JAR);
+const hasSystemd      = () => spawnSync('systemctl', ['--version'], { stdio: 'ignore' }).status === 0;
+const hasPlist        = () => existsSync(PLIST_PATH);
 const hasHuginLauncher = () => spawnSync('which', ['hugin'], { stdio: 'ignore' }).status === 0;
 
 function die(msg) {
@@ -36,7 +42,7 @@ function sh(cmd, args = [], opts = {}) {
   process.exit(result.status ?? 1);
 }
 
-// Spawn a long-running process that replaces this process's stdio.
+// Spawn a long-running process that inherits stdio (does not block).
 function exec(cmd, args = []) {
   const child = spawn(cmd, args, { stdio: 'inherit' });
   child.on('exit', code => process.exit(code ?? 0));
@@ -69,6 +75,69 @@ function waitForHealth(timeoutSecs = 30) {
   });
 }
 
+// ── service helpers ───────────────────────────────────────────────────────────
+
+function svcStart() {
+  if (IS_MACOS) {
+    if (!hasPlist()) die(`LaunchAgent plist not found at ${PLIST_PATH}.\n  Run "hugin onboard" first.`);
+    sh('launchctl', ['start', PLIST_LABEL]);
+  } else {
+    if (!hasSystemd()) die('systemd not found. Use "hugin server run" to start in the foreground.');
+    if (!hasHuginLauncher()) die('hugin launcher not found. Run "hugin onboard" first.');
+    sh('sudo', ['systemctl', 'start', 'hugin']);
+  }
+}
+
+function svcStop() {
+  if (IS_MACOS) {
+    spawnSync('launchctl', ['stop', PLIST_LABEL], { stdio: 'inherit' });
+    process.exit(0);
+  } else {
+    if (!hasSystemd()) die('systemd not found.');
+    sh('sudo', ['systemctl', 'stop', 'hugin']);
+  }
+}
+
+function svcRestart() {
+  if (IS_MACOS) {
+    if (!hasPlist()) die(`LaunchAgent plist not found at ${PLIST_PATH}.\n  Run "hugin onboard" first.`);
+    spawnSync('launchctl', ['stop', PLIST_LABEL], { stdio: 'inherit' });
+    spawnSync('sleep', ['1']);
+    sh('launchctl', ['start', PLIST_LABEL]);
+  } else {
+    if (!hasSystemd()) die('systemd not found.');
+    sh('sudo', ['systemctl', 'restart', 'hugin']);
+  }
+}
+
+function svcStatus() {
+  if (IS_MACOS) {
+    sh('launchctl', ['list', PLIST_LABEL]);
+  } else {
+    if (!hasSystemd()) die('systemd not found.');
+    sh('systemctl', ['status', 'hugin']);
+  }
+}
+
+function svcLogs() {
+  if (IS_MACOS) {
+    exec('tail', ['-f', LOG_FILE]);
+  } else {
+    if (!hasSystemd()) die('systemd not found. Check your log file manually.');
+    exec('journalctl', ['-u', 'hugin', '-f']);
+  }
+}
+
+function svcIsActive() {
+  if (IS_MACOS) {
+    return spawnSync('launchctl', ['list', PLIST_LABEL], { stdio: 'pipe' }).status === 0;
+  } else {
+    return spawnSync('systemctl', ['is-active', '--quiet', 'hugin'], { stdio: 'ignore' }).status === 0;
+  }
+}
+
+// ── commands ──────────────────────────────────────────────────────────────────
+
 const program = new Command();
 
 program
@@ -84,12 +153,22 @@ program
   .action(() => {
     const installScript = path.join(__dirname, '..', '..', 'install.sh');
     if (!existsSync(installScript)) {
-      die(
-        `install.sh not found at ${installScript}.\n` +
-        '  Make sure you installed from the repo root: npm install -g .'
-      );
+      die(`install.sh not found at ${installScript}.\n  Make sure you installed from the repo root: npm install -g .`);
     }
     sh('bash', [installScript]);
+  });
+
+// ── update ────────────────────────────────────────────────────────────────────
+
+program
+  .command('update')
+  .description('Rebuild and reinstall jars from source, reusing existing credentials (no prompts)')
+  .action(() => {
+    const installScript = path.join(__dirname, '..', '..', 'install.sh');
+    if (!existsSync(installScript)) {
+      die(`install.sh not found at ${installScript}.\n  Make sure you installed from the repo root: npm install -g .`);
+    }
+    sh('bash', [installScript, '--reinstall']);
   });
 
 // ── server subcommands ────────────────────────────────────────────────────────
@@ -98,48 +177,32 @@ const server = program.command('server').description('Manage the agent server');
 
 server
   .command('start')
-  .description('Start the agent server via systemd')
-  .action(() => {
-    if (!hasSystemd()) die('systemd not found. Use "hugin server run" to start in the foreground.');
-    if (!hasHuginLauncher()) die('hugin launcher not found. Run "hugin onboard" first.');
-    sh('sudo', ['systemctl', 'start', 'hugin']);
-  });
+  .description('Start the agent server service')
+  .action(() => svcStart());
 
 server
   .command('stop')
-  .description('Stop the agent server via systemd')
-  .action(() => {
-    if (!hasSystemd()) die('systemd not found.');
-    sh('sudo', ['systemctl', 'stop', 'hugin']);
-  });
+  .description('Stop the agent server service')
+  .action(() => svcStop());
 
 server
   .command('restart')
-  .description('Restart the agent server via systemd')
-  .action(() => {
-    if (!hasSystemd()) die('systemd not found. Use "hugin server run" to start in the foreground.');
-    sh('sudo', ['systemctl', 'restart', 'hugin']);
-  });
+  .description('Restart the agent server service')
+  .action(() => svcRestart());
 
 server
   .command('status')
   .description('Show agent server service status')
-  .action(() => {
-    if (!hasSystemd()) die('systemd not found.');
-    sh('systemctl', ['status', 'hugin']);
-  });
+  .action(() => svcStatus());
 
 server
   .command('logs')
-  .description('Stream agent server logs (journalctl -f)')
-  .action(() => {
-    if (!hasSystemd()) die('systemd not found. Check your process manager logs manually.');
-    exec('journalctl', ['-u', 'hugin', '-f']);
-  });
+  .description('Stream agent server logs')
+  .action(() => svcLogs());
 
 server
   .command('run')
-  .description('Run the agent server in the foreground (no systemd)')
+  .description('Run the agent server in the foreground (no service manager)')
   .action(() => {
     requireInstalled();
     info(`Starting server from ${SERVER_JAR}`);
@@ -170,14 +233,18 @@ program
 program.action(async () => {
   requireInstalled();
 
-  // Check if server is already healthy; if not, try to start it.
   const alreadyUp = await waitForHealth(2);
   if (!alreadyUp) {
-    if (hasHuginLauncher() && hasSystemd()) {
+    const canStart = IS_MACOS ? hasPlist() : (hasHuginLauncher() && hasSystemd());
+    if (canStart) {
       info('Server not running — starting hugin service...');
-      spawnSync('sudo', ['systemctl', 'start', 'hugin'], { stdio: 'inherit' });
+      if (IS_MACOS) {
+        spawnSync('launchctl', ['start', PLIST_LABEL], { stdio: 'inherit' });
+      } else {
+        spawnSync('sudo', ['systemctl', 'start', 'hugin'], { stdio: 'inherit' });
+      }
     } else {
-      info(`Server not responding. Start it with:\n  hugin server run`);
+      info('Server not responding. Start it with:\n  hugin server run');
       process.exit(1);
     }
 

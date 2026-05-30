@@ -166,6 +166,7 @@ public class TerminalRunner implements CommandLineRunner {
         System.out.println(GRAY + "  Type a prompt and press Enter. " + RESET);
         System.out.println(GRAY + "  Commands: " + GREEN + "/help" + GRAY + "  " + GREEN + "/model [name]"
                 + GRAY + "  " + GREEN + "/new" + GRAY + "  " + GREEN + "/exit" + RESET);
+        System.out.println(GRAY + "  Tip: run " + GREEN + "hugin update" + GRAY + " in a new terminal to pull the latest code and rebuild." + RESET);
     }
 
     private void printHelp() {

@@ -30,6 +30,32 @@ ask()     { printf '\033[1;35m   >\033[0m %s' "$*"; }
 
 require_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+# Run a command that requires sudo, retrying up to 3 times on auth failure.
+# sudo_retry [--reason <description>] <cmd> [args...]
+# Prompts for the system (macOS/Linux login) password with up to 3 retries.
+sudo_retry() {
+  local reason=""
+  if [[ "${1:-}" == "--reason" ]]; then
+    reason="$2"; shift 2
+  fi
+  local attempt=1 max=3
+  if [[ -n "$reason" ]]; then
+    info "sudo required: $reason"
+  fi
+  sudo -k  # clear any cached credentials so the password is always prompted fresh
+  while true; do
+    if sudo "$@"; then
+      return 0
+    fi
+    if [[ $attempt -ge $max ]]; then
+      die "Authentication failed after $max attempts. Aborting."
+    fi
+    warn "Incorrect password — attempt $attempt of $max. Try again."
+    attempt=$((attempt + 1))
+    sudo -k
+  done
+}
+
 # ── OS detection + service/package helpers ────────────────────────────────────
 OS_TYPE="linux"
 if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -69,7 +95,7 @@ if [[ "$OS_TYPE" == "macos" ]]; then
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>source ${ENV_FILE}; export PATH=${HUGIN_HOME}/venv/bin:/usr/local/bin:/usr/bin:/bin; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar --spring.config.additional-location=file:${CONFIG_YML}</string>
+    <string>set -a; source ${ENV_FILE}; set +a; export PATH=${HUGIN_HOME}/venv/bin:/usr/local/bin:/usr/bin:/bin; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar --spring.config.additional-location=file:${CONFIG_YML}</string>
   </array>
   <key>WorkingDirectory</key>  <string>${HUGIN_HOME}</string>
   <key>StandardOutPath</key>   <string>${HUGIN_HOME}/logs/hugin.log</string>
@@ -125,7 +151,7 @@ https://packages.adoptium.net/artifactory/deb ${VERSION_CODENAME} main" \
   pkg_install_redis()   { sudo apt-get install -y redis-server; }
 
   svc_install() {
-    sudo tee "$SERVICE_FILE" > /dev/null <<SERVICE
+    sudo_retry --reason "write systemd service file to /etc/systemd/system/" tee "$SERVICE_FILE" > /dev/null <<SERVICE
 # Hugin agent service — managed by install.sh
 [Unit]
 Description=Hugin MCP Agent Server
@@ -150,7 +176,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 SERVICE
-    sudo systemctl daemon-reload
+    sudo_retry --reason "reload systemd unit definitions" systemctl daemon-reload
   }
 
   svc_uninstall() {
@@ -188,21 +214,30 @@ wait_for_health() {
       warn "Inspect logs:  hugin logs"
       return 1
     fi
+    if (( elapsed % 5 == 0 )); then
+      info "Still waiting... (${elapsed}s elapsed)"
+    fi
     sleep 1
   done
   success "Server healthy at http://localhost:8080"
 }
 
+# ── reinstall (non-interactive) ───────────────────────────────────────────────
+_force_reinstall=false
+if [[ "${1:-}" == "--reinstall" ]]; then
+  _force_reinstall=true
+fi
+
 # ── uninstall ─────────────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--uninstall" ]]; then
   info "Stopping and removing $SERVICE_NAME service..."
   svc_uninstall
-  sudo rm -f "$LAUNCHER_PATH"
+  sudo_retry --reason "remove launcher from $LAUNCHER_PATH" rm -f "$LAUNCHER_PATH"
   success "Service and launcher removed."
 
   if [[ -d "$HUGIN_HOME" ]]; then
     ask "Delete $HUGIN_HOME (config + workspace + logs)? [y/N] "; read -r _confirm; echo
-    if [[ "${_confirm,,}" == "y" ]]; then
+    if [[ "$(echo "$_confirm" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
       rm -rf "$HUGIN_HOME"
       success "$HUGIN_HOME deleted."
     else
@@ -215,21 +250,31 @@ fi
 # ── detect existing install ───────────────────────────────────────────────────
 ALREADY_INSTALLED=false
 SKIP_BUILD=false
+SKIP_CREDENTIALS=false
 
 if [[ -f "$HUGIN_HOME/bin/mcp-integration.jar" ]]; then
   ALREADY_INSTALLED=true
-  warn "Existing Hugin installation detected at $HUGIN_HOME."
-  echo
-  echo "  1) Reconfigure only  (keep existing jars, update env + config, restart service)"
-  echo "  2) Full reinstall    (rebuild jars from source, update everything)"
-  echo
-  ask "Choice [1]: "; read -r _choice; echo
-  _choice="${_choice:-1}"
-  if [[ "$_choice" == "1" ]]; then
-    SKIP_BUILD=true
-    info "Will reconfigure without rebuilding."
+  if [[ "$_force_reinstall" == "true" ]]; then
+    SKIP_CREDENTIALS=true
+    info "Reinstall mode — jars will be rebuilt using existing credentials."
   else
-    info "Full reinstall selected — jars will be rebuilt."
+    warn "Existing Hugin installation detected at $HUGIN_HOME."
+    echo
+    echo "  1) Reconfigure only            (keep existing jars, update env + config, restart service)"
+    echo "  2) Full reinstall              (rebuild jars from source, update everything)"
+    echo "  3) Full reinstall, no prompts  (rebuild jars, reuse existing credentials)"
+    echo
+    ask "Choice [1]: "; read -r _choice; echo
+    _choice="${_choice:-1}"
+    if [[ "$_choice" == "1" ]]; then
+      SKIP_BUILD=true
+      info "Will reconfigure without rebuilding."
+    elif [[ "$_choice" == "3" ]]; then
+      SKIP_CREDENTIALS=true
+      info "Full reinstall selected — jars will be rebuilt using existing credentials."
+    else
+      info "Full reinstall selected — jars will be rebuilt."
+    fi
   fi
 fi
 
@@ -301,9 +346,46 @@ else
 fi
 
 # ── 3. prompts ────────────────────────────────────────────────────────────────
-echo
-printf '\033[1;34m─── Environment Configuration ─────────────────────────────────────────\033[0m\n'
-echo
+
+# Incrementally persist collected values so a mid-run failure doesn't lose them.
+save_env() {
+  mkdir -p "$HUGIN_HOME/db"
+  cat > "$ENV_FILE" <<EOF
+# Hugin environment — sourced by the service and the hugin launcher.
+# Permissions: 600 (owner-read-only).  Do not commit this file.
+
+OPEN_ROUTER_API_KEY=${OPENROUTER_KEY:-}
+LLM_MODEL=${LLM_MODEL:-}
+
+# Secure the /api/agent/** endpoints with an X-API-Key header (leave blank to disable).
+AGENT_API_KEY=${AGENT_API_KEY:-}
+
+# Long-term Redis-backed semantic memory
+MEMORY_ENABLED=${MEMORY_ENABLED:-false}
+REDIS_HOST=${REDIS_HOST_VAL:-}
+REDIS_PORT=${REDIS_PORT_VAL:-6379}
+
+# Cloud-agent feature (POST /api/agents — clone repo, run agent loop)
+CLOUD_AGENTS_ENABLED=${CLOUD_AGENTS_ENABLED:-false}
+GITHUB_TOKEN=${GITHUB_TOKEN:-}
+
+# Hugin home directory (workspace root is $HUGIN_HOME/workspace)
+AGENT_HOME=${HUGIN_HOME}
+
+# H2 database for user accounts (dashboard login)
+DB_URL=jdbc:h2:file:${HUGIN_HOME}/db/hugin
+
+# Dashboard admin account — used only on first startup to create the admin user.
+# After the user is created the password is stored hashed in the database.
+ADMIN_USERNAME=${ADMIN_USERNAME:-}
+ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+
+# JWT secret for signing dashboard session tokens (min 32 chars).
+# Changing this invalidates all existing sessions.
+JWT_SECRET=${JWT_SECRET:-}
+EOF
+  chmod 600 "$ENV_FILE"
+}
 
 # Load existing values so they can be used as defaults on reconfigure
 _existing_key="" _existing_agent_key="" _existing_redis_host="" _existing_redis_port="6379"
@@ -316,6 +398,36 @@ if [[ -f "$ENV_FILE" ]]; then
   _existing_model=$(grep -E '^LLM_MODEL=' "$ENV_FILE" | cut -d= -f2- || true)
   _existing_github_token=$(grep -E '^GITHUB_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
 fi
+
+# Initialise all config vars to empty so save_env can be called at any point.
+OPENROUTER_KEY="" LLM_MODEL="" AGENT_API_KEY="" MEMORY_ENABLED=false
+REDIS_HOST_VAL="" REDIS_PORT_VAL=6379 GITHUB_TOKEN="" CLOUD_AGENTS_ENABLED=false
+ADMIN_USERNAME="" ADMIN_PASSWORD="" JWT_SECRET=""
+
+if [[ "$SKIP_CREDENTIALS" == "true" ]]; then
+  info "Reusing existing credentials from $ENV_FILE — skipping interactive prompts."
+  OPENROUTER_KEY="$_existing_key"
+  LLM_MODEL="${_existing_model:-openai/gpt-oss-120b}"
+  AGENT_API_KEY="$_existing_agent_key"
+  MEMORY_ENABLED=$(grep -E '^MEMORY_ENABLED=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "false")
+  REDIS_HOST_VAL="$_existing_redis_host"
+  REDIS_PORT_VAL="${_existing_redis_port:-6379}"
+  GITHUB_TOKEN="$_existing_github_token"
+  CLOUD_AGENTS_ENABLED=$(grep -E '^CLOUD_AGENTS_ENABLED=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "false")
+  ADMIN_USERNAME=$(grep -E '^ADMIN_USERNAME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "admin")
+  ADMIN_PASSWORD=$(grep -E '^ADMIN_PASSWORD=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "")
+  JWT_SECRET=$(grep -E '^JWT_SECRET=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "")
+  if [[ -z "$JWT_SECRET" ]]; then
+    JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))" 2>/dev/null \
+                 || openssl rand -base64 48 2>/dev/null | tr -d '\n')
+    info "JWT secret auto-generated."
+  fi
+  success "Credentials loaded."
+else
+
+echo
+printf '\033[1;34m─── Environment Configuration ─────────────────────────────────────────\033[0m\n'
+echo
 
 # 3a. OpenRouter API key (required)
 OPENROUTER_KEY=""
@@ -333,6 +445,7 @@ while [[ -z "$OPENROUTER_KEY" ]]; do
   fi
 done
 success "OpenRouter API key set."
+save_env
 
 # 3b. LLM model (optional)
 echo
@@ -341,6 +454,7 @@ ask "LLM model override [press Enter for default${_existing_model:+, current: $_
 read -r LLM_MODEL_INPUT; echo
 LLM_MODEL="${LLM_MODEL_INPUT:-${_existing_model:-openai/gpt-oss-120b}}"
 info "Model: $LLM_MODEL"
+save_env
 
 # 3c. Agent API key (optional — secures /api/agent/** with X-API-Key header)
 echo
@@ -348,7 +462,7 @@ info "Agent API key: if set, all /api/agent/** calls require  X-API-Key: <value>
 if [[ -n "$_existing_agent_key" ]]; then
   ask "Agent API key [current hidden, press Enter to keep, or type 'clear' to remove]: "
   read -rsp "" _agent_key_input; echo
-  if [[ "${_agent_key_input,,}" == "clear" ]]; then
+  if [[ "$(echo "$_agent_key_input" | tr '[:upper:]' '[:lower:]')" == "clear" ]]; then
     AGENT_API_KEY=""
     info "Agent API key cleared — endpoints will be open."
   elif [[ -z "$_agent_key_input" ]]; then
@@ -367,6 +481,7 @@ else
     info "Endpoints will be open (no X-API-Key required)."
   fi
 fi
+save_env
 
 # 3d. Redis for long-term memory (optional)
 echo
@@ -450,6 +565,7 @@ case "$_redis_choice" in
     info "Long-term memory disabled."
     ;;
 esac
+save_env
 
 # 3e. GitHub token (optional — for cloud-agent repo cloning)
 echo
@@ -457,7 +573,7 @@ info "GitHub token enables the cloud-agent feature (/api/agents — repo clone +
 if [[ -n "$_existing_github_token" ]]; then
   ask "GitHub personal-access token [current hidden, press Enter to keep, or 'clear' to remove]: "
   read -rsp "" _gh_token_input; echo
-  if [[ "${_gh_token_input,,}" == "clear" ]]; then
+  if [[ "$(echo "$_gh_token_input" | tr '[:upper:]' '[:lower:]')" == "clear" ]]; then
     GITHUB_TOKEN=""
     info "GitHub token cleared."
   elif [[ -z "$_gh_token_input" ]]; then
@@ -479,6 +595,7 @@ fi
 
 CLOUD_AGENTS_ENABLED=false
 [[ -n "$GITHUB_TOKEN" ]] && CLOUD_AGENTS_ENABLED=true
+save_env
 
 # 3f. Admin username + password (required — creates the dashboard login account)
 echo
@@ -518,6 +635,7 @@ else
   done
 fi
 success "Admin password set."
+save_env
 
 # 3g. JWT secret (auto-generate or enter manually)
 echo
@@ -554,45 +672,10 @@ case "$_jwt_choice" in
     success "JWT secret auto-generated (${#JWT_SECRET} chars)."
     ;;
 esac
+fi  # end SKIP_CREDENTIALS check
 
 # ── 4. write hugin.env ────────────────────────────────────────────────────────
-mkdir -p "$HUGIN_HOME/db"
-
-cat > "$ENV_FILE" <<EOF
-# Hugin environment — sourced by the service and the hugin launcher.
-# Permissions: 600 (owner-read-only).  Do not commit this file.
-
-OPEN_ROUTER_API_KEY=${OPENROUTER_KEY}
-LLM_MODEL=${LLM_MODEL}
-
-# Secure the /api/agent/** endpoints with an X-API-Key header (leave blank to disable).
-AGENT_API_KEY=${AGENT_API_KEY}
-
-# Long-term Redis-backed semantic memory
-MEMORY_ENABLED=${MEMORY_ENABLED}
-REDIS_HOST=${REDIS_HOST_VAL}
-REDIS_PORT=${REDIS_PORT_VAL}
-
-# Cloud-agent feature (POST /api/agents — clone repo, run agent loop)
-CLOUD_AGENTS_ENABLED=${CLOUD_AGENTS_ENABLED}
-GITHUB_TOKEN=${GITHUB_TOKEN}
-
-# Hugin home directory (workspace root is $HUGIN_HOME/workspace)
-AGENT_HOME=${HUGIN_HOME}
-
-# H2 database for user accounts (dashboard login)
-DB_URL=jdbc:h2:file:${HUGIN_HOME}/db/hugin
-
-# Dashboard admin account — used only on first startup to create the admin user.
-# After the user is created the password is stored hashed in the database.
-ADMIN_USERNAME=${ADMIN_USERNAME}
-ADMIN_PASSWORD=${ADMIN_PASSWORD}
-
-# JWT secret for signing dashboard session tokens (min 32 chars).
-# Changing this invalidates all existing sessions.
-JWT_SECRET=${JWT_SECRET}
-EOF
-chmod 600 "$ENV_FILE"
+save_env
 success "Wrote $ENV_FILE (chmod 600)"
 
 # ── 5. write config/application.yml ──────────────────────────────────────────
@@ -661,8 +744,12 @@ else
 fi
 
 # ── 8. install the hugin launcher ────────────────────────────────────────────
+if [[ "$_force_reinstall" == "true" ]]; then
+  info "Skipping launcher reinstall (paths unchanged between updates)."
+else
 info "Installing $LAUNCHER_NAME launcher to $LAUNCHER_PATH..."
-sudo tee "$LAUNCHER_PATH" > /dev/null <<'LAUNCHER_EOF'
+_launcher_tmp=$(mktemp)
+cat > "$_launcher_tmp" <<'LAUNCHER_EOF'
 #!/usr/bin/env bash
 # hugin — Hugin agent launcher (installed by install.sh)
 #
@@ -680,6 +767,7 @@ ENV_FILE="$HUGIN_HOME/hugin.env"
 CONFIG_YML="$HUGIN_HOME/config/application.yml"
 SERVICE_NAME="__SERVICE_NAME__"
 LAUNCHER_PATH="__LAUNCHER_PATH__"
+REPO_DIR="__REPO_DIR__"
 
 info()    { printf '\033[1;34m[hugin]\033[0m %s\n' "$*"; }
 success() { printf '\033[1;32m[hugin]\033[0m %s\n' "$*"; }
@@ -1121,15 +1209,58 @@ cmd_doctor() {
   fi
 }
 
+cmd_update() {
+  if [[ ! -d "$REPO_DIR/.git" ]]; then
+    die "Repo not found at $REPO_DIR — cannot update. Re-run install.sh from the source directory."
+  fi
+
+  info "Pulling latest code from $REPO_DIR..."
+  git -C "$REPO_DIR" pull --ff-only || die "git pull failed — resolve conflicts manually and retry."
+
+  info "Building jars (this may take a minute)..."
+  MAVEN_OPTS="${MAVEN_OPTS:--Xmx512m}" \
+    mvn -f "$REPO_DIR/pom.xml" \
+        -pl mcp-integration,agent-terminal -am \
+        clean package -DskipTests -q \
+    || die "Maven build failed — check output above."
+
+  local was_running=false
+  if svc_is_active 2>/dev/null; then
+    was_running=true
+    info "Stopping service to swap jars..."
+    svc_stop
+    sleep 1
+  fi
+
+  cp "$REPO_DIR"/mcp-integration/target/mcp-integration-*.jar  "$HUGIN_HOME/bin/mcp-integration.jar"
+  cp "$REPO_DIR"/agent-terminal/target/agent-terminal-*.jar     "$HUGIN_HOME/bin/agent-terminal.jar"
+  cp "$REPO_DIR/openrouter-search-mcp.py"                       "$HUGIN_HOME/bin/openrouter-search-mcp.py"
+  success "Jars and scripts updated."
+
+  if [[ "$was_running" == "true" ]]; then
+    info "Restarting service..."
+    svc_start
+    local elapsed=0
+    until curl -sf http://localhost:8080/actuator/health >/dev/null 2>&1; do
+      elapsed=$((elapsed + 1))
+      [[ $elapsed -ge 60 ]] && { warn "Server did not respond within 60s. Try: hugin logs"; return 1; }
+      sleep 1
+    done
+    success "Service restarted and healthy."
+  else
+    info "Service was not running — start it with: hugin start"
+  fi
+}
+
 cmd_uninstall() {
   info "Stopping and removing $SERVICE_NAME service..."
   svc_uninstall
-  sudo rm -f "$LAUNCHER_PATH"
+  sudo_retry --reason "remove launcher from $LAUNCHER_PATH" rm -f "$LAUNCHER_PATH"
   success "Service and launcher removed."
   if [[ -d "$HUGIN_HOME" ]]; then
     printf '\033[1;35m   >\033[0m Delete %s? [y/N] ' "$HUGIN_HOME"
     read -r _c; echo
-    if [[ "${_c,,}" == "y" ]]; then
+    if [[ "$(echo "$_c" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
       rm -rf "$HUGIN_HOME"; success "$HUGIN_HOME deleted."
     else
       info "Kept $HUGIN_HOME."
@@ -1148,6 +1279,7 @@ case "$CMD" in
   status)    cmd_status    ;;
   logs)      cmd_logs      ;;
   config)    cmd_config    ;;
+  update)    cmd_update    ;;
   doctor)    cmd_doctor    ;;
   uninstall) cmd_uninstall ;;
   *)
@@ -1162,6 +1294,7 @@ Usage: hugin [command]
   status         Show service status
   logs           Stream service logs
   config         Reconfigure credentials, restart service
+  update         Pull latest code, rebuild jars, restart service
   doctor         Check every subsystem; auto-fix what it can
   uninstall      Remove service, launcher, and optionally ~/.hugin
 USAGE
@@ -1170,25 +1303,34 @@ USAGE
 esac
 LAUNCHER_EOF
 
-# Substitute the install-time paths into the launcher
+# Substitute the install-time paths into the temp file, then copy to final location
 SED_INPLACE \
   -e "s|__HUGIN_HOME__|${HUGIN_HOME}|g" \
   -e "s|__SERVICE_NAME__|${SERVICE_NAME}|g" \
   -e "s|__LAUNCHER_PATH__|${LAUNCHER_PATH}|g" \
-  "$LAUNCHER_PATH"
-sudo chmod 0755 "$LAUNCHER_PATH"
+  -e "s|__REPO_DIR__|${REPO_DIR}|g" \
+  "$_launcher_tmp"
+sudo_retry --reason "install launcher to $LAUNCHER_PATH" cp "$_launcher_tmp" "$LAUNCHER_PATH"
+rm -f "$_launcher_tmp"
+sudo_retry --reason "make launcher executable" chmod 0755 "$LAUNCHER_PATH"
 success "Launcher installed: $LAUNCHER_PATH"
+fi  # end skip-on-reinstall
 
 # ── 9. install and start service ─────────────────────────────────────────────
-info "Installing $SERVICE_NAME service..."
-svc_install
+if [[ "$_force_reinstall" == "false" ]]; then
+  info "Installing $SERVICE_NAME service..."
+  svc_install
+fi
 
 if svc_is_active 2>/dev/null; then
-  info "Restarting existing $SERVICE_NAME service..."
+  info "Restarting $SERVICE_NAME service..."
   svc_restart
 else
-  svc_enable 2>/dev/null || true
-  info "Service enabled and started."
+  if [[ "$_force_reinstall" == "false" ]]; then
+    svc_enable 2>/dev/null || true
+  fi
+  svc_start 2>/dev/null || true
+  info "Service started."
 fi
 
 # ── 10. health check ──────────────────────────────────────────────────────────
