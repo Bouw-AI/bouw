@@ -1,5 +1,6 @@
 package com.example.integration.config;
 
+import com.example.integration.service.JwtService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,44 +15,57 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
-/**
- * Secures the agent endpoint with an API key (X-API-Key header).
- *
- * <p>Other paths (management, MCP servers CRUD) are left open for now.
- * In production, apply appropriate authentication to all public endpoints.
- */
 @Configuration
 public class SecurityConfig {
 
+    /** Swagger docs and the login endpoint are always public. */
     @Bean
     @Order(1)
-    public SecurityFilterChain swaggerFilterChain(HttpSecurity http) throws Exception {
-        http.securityMatcher("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**")
+    public SecurityFilterChain publicFilterChain(HttpSecurity http) throws Exception {
+        http.securityMatcher(
+                        "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**",
+                        "/api/auth/**",
+                        "/actuator/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 .csrf(csrf -> csrf.disable());
         return http.build();
     }
 
+    /**
+     * All /api/** endpoints require a valid JWT Bearer token.
+     * The legacy X-API-Key header is also accepted on /api/agent/** for backward
+     * compatibility with the terminal client (when agent.api-key is configured).
+     */
     @Bean
     @Order(2)
-    public SecurityFilterChain securityFilterChain(
+    public SecurityFilterChain apiFilterChain(
             HttpSecurity http,
+            JwtService jwtService,
             @Value("${agent.api-key:}") String apiKey) throws Exception {
 
-        if (apiKey == null || apiKey.isBlank()) {
-            // No API key configured — rely on network-level security (e.g. internal network only)
-            http.securityMatcher("/api/agent/**")
-                    .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
-        } else {
+        var jwtFilter = new JwtAuthenticationFilter(jwtService);
+
+        http.securityMatcher("/api/**")
+                .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .csrf(csrf -> csrf.disable())
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()));
+
+        if (apiKey != null && !apiKey.isBlank()) {
             var apiKeyFilter = new ApiKeyAuthenticationFilter(apiKey);
-            http.securityMatcher("/api/agent/**")
-                    .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
-                    .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class);
+            http.addFilterBefore(apiKeyFilter, JwtAuthenticationFilter.class);
         }
 
-        http.sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
-        http.csrf(csrf -> csrf.disable());
-        http.cors(cors -> cors.configurationSource(corsConfigurationSource()));
+        return http.build();
+    }
+
+    /** Static files (index.html, app.js, fonts) are served without authentication. */
+    @Bean
+    @Order(3)
+    public SecurityFilterChain staticFilterChain(HttpSecurity http) throws Exception {
+        http.authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .csrf(csrf -> csrf.disable());
         return http.build();
     }
 

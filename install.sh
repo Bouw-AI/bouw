@@ -327,7 +327,84 @@ fi
 CLOUD_AGENTS_ENABLED=false
 [[ -n "$GITHUB_TOKEN" ]] && CLOUD_AGENTS_ENABLED=true
 
+# 3f. Admin username + password (required — creates the dashboard login account)
+echo
+printf '\033[1;34m─── Dashboard Admin Account ───────────────────────────────────────────\033[0m\n'
+echo
+info "These credentials are used to log in to the Hugin web dashboard."
+
+_existing_admin_user=$(grep -E '^ADMIN_USERNAME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+_existing_admin_pw=$(grep -E '^ADMIN_PASSWORD=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+
+# Username
+if [[ -n "$_existing_admin_user" ]]; then
+  ask "Admin username [current: ${_existing_admin_user}, press Enter to keep]: "
+  read -r _admin_user_input; echo
+  ADMIN_USERNAME="${_admin_user_input:-${_existing_admin_user}}"
+else
+  ask "Admin username [admin]: "
+  read -r _admin_user_input; echo
+  ADMIN_USERNAME="${_admin_user_input:-admin}"
+fi
+info "Admin username: $ADMIN_USERNAME"
+
+# Password
+ADMIN_PASSWORD=""
+if [[ -n "$_existing_admin_pw" ]]; then
+  ask "Admin password [current hidden, press Enter to keep]: "
+  read -rsp "" _admin_pw_input; echo
+  ADMIN_PASSWORD="${_admin_pw_input:-${_existing_admin_pw}}"
+else
+  while [[ -z "$ADMIN_PASSWORD" ]]; do
+    ask "Admin password (min 8 characters): "
+    read -rsp "" ADMIN_PASSWORD; echo
+    if [[ "${#ADMIN_PASSWORD}" -lt 8 ]]; then
+      warn "Password must be at least 8 characters. Try again."
+      ADMIN_PASSWORD=""
+    fi
+  done
+fi
+success "Admin password set."
+
+# 3g. JWT secret (auto-generate or enter manually)
+echo
+printf '\033[1;34m─── JWT Secret ────────────────────────────────────────────────────────\033[0m\n'
+echo
+info "The JWT secret signs dashboard session tokens. A strong random secret is recommended."
+echo "  1) Auto-generate  (recommended — 48-char cryptographically random secret)"
+echo "  2) Enter manually (paste your own 32+ character secret)"
+echo
+
+_existing_jwt_secret=$(grep -E '^JWT_SECRET=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+_jwt_default_choice=1
+[[ -n "$_existing_jwt_secret" ]] && _jwt_default_choice=1   # always offer to regenerate
+
+ask "JWT option [${_jwt_default_choice}]: "; read -r _jwt_choice; echo
+_jwt_choice="${_jwt_choice:-${_jwt_default_choice}}"
+
+JWT_SECRET=""
+case "$_jwt_choice" in
+  2)
+    while [[ "${#JWT_SECRET}" -lt 32 ]]; do
+      ask "JWT secret (min 32 characters): "
+      read -rsp "" JWT_SECRET; echo
+      if [[ "${#JWT_SECRET}" -lt 32 ]]; then
+        warn "Secret must be at least 32 characters. Try again."
+        JWT_SECRET=""
+      fi
+    done
+    success "JWT secret set (${#JWT_SECRET} chars)."
+    ;;
+  *)
+    JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))" 2>/dev/null \
+                 || openssl rand -base64 48 2>/dev/null | tr -d '\n')
+    success "JWT secret auto-generated (${#JWT_SECRET} chars)."
+    ;;
+esac
+
 # ── 4. write hugin.env ────────────────────────────────────────────────────────
+mkdir -p "$HUGIN_HOME/db"
+
 cat > "$ENV_FILE" <<EOF
 # Hugin environment — sourced by the systemd service and the hugin launcher.
 # Permissions: 600 (owner-read-only).  Do not commit this file.
@@ -349,6 +426,18 @@ GITHUB_TOKEN=${GITHUB_TOKEN}
 
 # Hugin home directory (workspace root is $HUGIN_HOME/workspace)
 AGENT_HOME=${HUGIN_HOME}
+
+# H2 database for user accounts (dashboard login)
+DB_URL=jdbc:h2:file:${HUGIN_HOME}/db/hugin
+
+# Dashboard admin account — used only on first startup to create the admin user.
+# After the user is created the password is stored hashed in the database.
+ADMIN_USERNAME=${ADMIN_USERNAME}
+ADMIN_PASSWORD=${ADMIN_PASSWORD}
+
+# JWT secret for signing dashboard session tokens (min 32 chars).
+# Changing this invalidates all existing sessions.
+JWT_SECRET=${JWT_SECRET}
 EOF
 chmod 600 "$ENV_FILE"
 success "Wrote $ENV_FILE (chmod 600)"
@@ -378,6 +467,9 @@ agent:
 logging:
   file:
     name: ${HUGIN_HOME}/logs/hugin.log
+
+# Environment variables DB_URL, ADMIN_USERNAME, ADMIN_PASSWORD, JWT_SECRET
+# are sourced from hugin.env and picked up by application.yml property placeholders.
 EOF
 info "Wrote $CONFIG_YML"
 
@@ -561,6 +653,10 @@ REDIS_PORT=${rport}
 CLOUD_AGENTS_ENABLED=${CLOUD_AGENTS_ENABLED:-false}
 GITHUB_TOKEN=${GITHUB_TOKEN:-}
 AGENT_HOME=${HUGIN_HOME}
+DB_URL=jdbc:h2:file:${HUGIN_HOME}/db/hugin
+ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+JWT_SECRET=${JWT_SECRET:-}
 ENV
   chmod 600 "$ENV_FILE"
   success "hugin.env updated."
