@@ -6,9 +6,9 @@
 
 A Spring Boot AI agent that connects to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and lets an OpenAI-schema LLM use their tools to answer prompts. The LLM backend is pluggable — point it at a local [Ollama](https://ollama.com) instance or a hosted provider such as [OpenRouter](https://openrouter.ai) (see [LLM provider](#llm-provider)).
 
-## Raspberry Pi install (Ollama-style)
+## Install (Ollama-style)
 
-The quickest way to run the agent as a persistent appliance — on a Raspberry Pi or any Debian/Ubuntu machine — is the interactive installer. It mirrors the Ollama experience: one install command, then a single `mcp-agent` command to chat.
+The quickest way to run the agent as a persistent appliance on any Debian/Ubuntu machine is the interactive installer. It mirrors the Ollama experience: one install command, then a single `mcp-agent` command to chat.
 
 ```bash
 # 1. Clone the repo (if you haven't already)
@@ -72,7 +72,7 @@ jarvis terminal           # launch the interactive terminal client
 | Command | Description |
 |---|---|
 | `jarvis` | Ensure server is running, then open terminal chat |
-| `jarvis server run` | Run the server in the foreground (no systemd — useful for non-Pi installs) |
+| `jarvis server run` | Run the server in the foreground (no systemd) |
 | `jarvis server start / stop / restart / status` | Manage the systemd service |
 | `jarvis server logs` | Stream service logs (`journalctl -f`) |
 | `jarvis terminal` | Launch the terminal client directly |
