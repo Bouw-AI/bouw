@@ -1,3 +1,7 @@
+
+
+![mcp-client banner](img/readme_banner.png)
+
 # mcp-client
 
 A Spring Boot AI agent that connects to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and lets an OpenAI-schema LLM use their tools to answer prompts. The LLM backend is pluggable — point it at a local [Ollama](https://ollama.com) instance or a hosted provider such as [OpenRouter](https://openrouter.ai) (see [LLM provider](#llm-provider)).
