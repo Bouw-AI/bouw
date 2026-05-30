@@ -178,11 +178,13 @@ function Chat({ model, token, sessionId, onUnauth }) {
 
         for (const block of blocks) {
           if (!block.trim()) continue;
-          let evtType = "", dataStr = "";
+          let evtType = "";
+          const dataLines = [];
           for (const line of block.split("\n")) {
             if (line.startsWith("event:")) evtType = line.slice(6).trim();
-            else if (line.startsWith("data:")) dataStr = line.slice(5).trim();
+            else if (line.startsWith("data:")) dataLines.push(line.slice(5));
           }
+          const dataStr = dataLines.join("\n").trim();
           if (!evtType) continue;
 
           let data = {};

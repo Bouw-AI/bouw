@@ -15,15 +15,25 @@ import java.util.List;
 public class SystemStatusController {
 
     private final McpServerRegistryService registry;
+    private final String llmProvider;
+    private final String llmModel;
+    private final boolean memoryEnabled;
+    private final String memoryKeyPrefix;
+    private final int memoryTopK;
 
-    @Value("${llm.provider}") private String llmProvider;
-    @Value("${llm.model}") private String llmModel;
-    @Value("${memory.enabled:false}") private boolean memoryEnabled;
-    @Value("${memory.key-prefix:agent:memory}") private String memoryKeyPrefix;
-    @Value("${memory.top-k:3}") private int memoryTopK;
-
-    public SystemStatusController(McpServerRegistryService registry) {
+    public SystemStatusController(
+            McpServerRegistryService registry,
+            @Value("${llm.provider}") String llmProvider,
+            @Value("${llm.model}") String llmModel,
+            @Value("${memory.enabled:false}") boolean memoryEnabled,
+            @Value("${memory.key-prefix:agent:memory}") String memoryKeyPrefix,
+            @Value("${memory.top-k:3}") int memoryTopK) {
         this.registry = registry;
+        this.llmProvider = llmProvider;
+        this.llmModel = llmModel;
+        this.memoryEnabled = memoryEnabled;
+        this.memoryKeyPrefix = memoryKeyPrefix;
+        this.memoryTopK = memoryTopK;
     }
 
     @GetMapping
