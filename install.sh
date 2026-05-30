@@ -19,7 +19,6 @@ INSTALL_USER="$(id -un)"
 ENV_FILE="$HUGIN_HOME/hugin.env"
 CONFIG_YML="$HUGIN_HOME/config/application.yml"
 MCP_JSON="$HUGIN_HOME/config/mcp-servers.json"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 LAUNCHER_PATH="/usr/local/bin/${LAUNCHER_NAME}"
 
 # ── colours ───────────────────────────────────────────────────────────────────
@@ -31,6 +30,153 @@ ask()     { printf '\033[1;35m   >\033[0m %s' "$*"; }
 
 require_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+# ── OS detection + service/package helpers ────────────────────────────────────
+OS_TYPE="linux"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  OS_TYPE="macos"
+fi
+
+if [[ "$OS_TYPE" == "macos" ]]; then
+  PLIST_LABEL="com.hugin.agent"
+  PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
+
+  pkg_update()          { brew update -q; }
+  pkg_install()         { brew install "$@"; }
+  pkg_install_java()    {
+    brew install --cask temurin@21 2>/dev/null \
+      || brew install temurin@21 2>/dev/null \
+      || die "Could not install Temurin 21 via Homebrew. Install manually from https://adoptium.net"
+  }
+  pkg_install_redis()   { brew install redis; }
+
+  svc_install() {
+    # Write a LaunchAgent plist (user-level, no sudo).
+    mkdir -p "$HOME/Library/LaunchAgents"
+    cat > "$PLIST_PATH" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>             <string>${PLIST_LABEL}</string>
+  <key>UserName</key>          <string>${INSTALL_USER}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HUGIN_HOME</key>  <string>${HUGIN_HOME}</string>
+    <key>AGENT_HOME</key>  <string>${HUGIN_HOME}</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>source ${ENV_FILE}; export PATH=${HUGIN_HOME}/venv/bin:/usr/local/bin:/usr/bin:/bin; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar --spring.config.additional-location=file:${CONFIG_YML}</string>
+  </array>
+  <key>WorkingDirectory</key>  <string>${HUGIN_HOME}</string>
+  <key>StandardOutPath</key>   <string>${HUGIN_HOME}/logs/hugin.log</string>
+  <key>StandardErrorPath</key> <string>${HUGIN_HOME}/logs/hugin.log</string>
+  <key>RunAtLoad</key>         <true/>
+  <key>KeepAlive</key>
+  <dict><key>SuccessfulExit</key><false/></dict>
+</dict>
+</plist>
+PLIST
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    launchctl load -w "$PLIST_PATH"
+  }
+
+  svc_uninstall() {
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    rm -f "$PLIST_PATH"
+  }
+
+  svc_start()     { launchctl start "$PLIST_LABEL"; }
+  svc_stop()      { launchctl stop  "$PLIST_LABEL" 2>/dev/null || true; }
+  svc_restart()   { svc_stop; sleep 1; svc_start; }
+  svc_status()    { launchctl list "$PLIST_LABEL" 2>/dev/null || echo "not loaded"; }
+  svc_logs()      { exec tail -f "$HUGIN_HOME/logs/hugin.log"; }
+  svc_is_active() { launchctl list 2>/dev/null | grep -q "$PLIST_LABEL"; }
+  svc_is_enabled(){ [[ -f "$PLIST_PATH" ]]; }
+  svc_enable()    { launchctl load -w "$PLIST_PATH" 2>/dev/null || true; }
+  svc_daemon_reload() { :; }  # no-op on macOS
+
+  svc_start_redis()    { brew services start redis; }
+  svc_is_active_redis(){ brew services list 2>/dev/null | grep -E '^redis\s' | grep -q started; }
+
+  SED_INPLACE() { sed -i '' "$@"; }
+
+else
+  # ── Linux / systemd ──────────────────────────────────────────────────────────
+  SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+  pkg_update()          { sudo apt-get update -qq; }
+  pkg_install()         { sudo apt-get install -y "$@"; }
+  pkg_install_java()    {
+    sudo install -d -m 0755 /etc/apt/keyrings
+    wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public \
+      | sudo gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg
+    # shellcheck source=/dev/null
+    . /etc/os-release
+    echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] \
+https://packages.adoptium.net/artifactory/deb ${VERSION_CODENAME} main" \
+      | sudo tee /etc/apt/sources.list.d/adoptium.list >/dev/null
+    sudo apt-get update -qq
+    sudo apt-get install -y temurin-21-jdk
+  }
+  pkg_install_redis()   { sudo apt-get install -y redis-server; }
+
+  svc_install() {
+    sudo tee "$SERVICE_FILE" > /dev/null <<SERVICE
+# Hugin agent service — managed by install.sh
+[Unit]
+Description=Hugin MCP Agent Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${INSTALL_USER}
+Environment=HUGIN_HOME=${HUGIN_HOME}
+Environment=AGENT_HOME=${HUGIN_HOME}
+EnvironmentFile=${ENV_FILE}
+Environment=PATH=${HUGIN_HOME}/venv/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=${HUGIN_HOME}
+ExecStart=/usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar \
+  --spring.config.additional-location=file:${HUGIN_HOME}/config/application.yml
+StandardOutput=append:${HUGIN_HOME}/logs/hugin.log
+StandardError=append:${HUGIN_HOME}/logs/hugin.log
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+    sudo systemctl daemon-reload
+  }
+
+  svc_uninstall() {
+    sudo systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+    sudo rm -f "$SERVICE_FILE"
+    sudo systemctl daemon-reload
+  }
+
+  svc_start()     { sudo systemctl start   "$SERVICE_NAME"; }
+  svc_stop()      { sudo systemctl stop    "$SERVICE_NAME"; }
+  svc_restart()   { sudo systemctl restart "$SERVICE_NAME"; }
+  svc_status()    { systemctl status       "$SERVICE_NAME"; }
+  svc_logs()      { exec journalctl -u "$SERVICE_NAME" -f; }
+  svc_is_active() { systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; }
+  svc_is_enabled(){ systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; }
+  svc_enable()    { sudo systemctl enable "$SERVICE_NAME"; }
+  svc_daemon_reload() { sudo systemctl daemon-reload; }
+
+  svc_start_redis()    { sudo systemctl enable --now redis-server; }
+  svc_is_active_redis(){ systemctl is-active --quiet redis-server 2>/dev/null; }
+
+  SED_INPLACE() { sed -i "$@"; }
+fi
+
+info "Detected OS: $OS_TYPE"
+
 # ── wait for health ───────────────────────────────────────────────────────────
 wait_for_health() {
   local max="${1:-45}" elapsed=0
@@ -39,7 +185,7 @@ wait_for_health() {
     elapsed=$((elapsed + 1))
     if [[ $elapsed -ge $max ]]; then
       warn "Server did not become healthy within ${max}s."
-      warn "Inspect logs:  sudo journalctl -u $SERVICE_NAME -n 50"
+      warn "Inspect logs:  hugin logs"
       return 1
     fi
     sleep 1
@@ -50,9 +196,7 @@ wait_for_health() {
 # ── uninstall ─────────────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--uninstall" ]]; then
   info "Stopping and removing $SERVICE_NAME service..."
-  sudo systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
-  sudo rm -f "$SERVICE_FILE"
-  sudo systemctl daemon-reload
+  svc_uninstall
   sudo rm -f "$LAUNCHER_PATH"
   success "Service and launcher removed."
 
@@ -104,46 +248,56 @@ mkdir -p \
 info "Directory tree ready at $HUGIN_HOME"
 
 # ── 2. system dependencies ────────────────────────────────────────────────────
-need_apt_update=false
-pkgs_to_install=()
+if [[ "$OS_TYPE" == "macos" ]]; then
+  if ! require_cmd brew; then
+    die "Homebrew is required on macOS. Install it from https://brew.sh and re-run."
+  fi
 
-# Java 21
-java_ok=false
-if require_cmd java && java -version 2>&1 | grep -qE '"(2[1-9]|[3-9][0-9])'; then
-  info "Java 21+ already present."
-  java_ok=true
-fi
+  java_ok=false
+  if require_cmd java && java -version 2>&1 | grep -qE '"(2[1-9]|[3-9][0-9])'; then
+    info "Java 21+ already present."
+    java_ok=true
+  fi
+  if [[ "$java_ok" == "false" ]]; then
+    warn "Java 21 not found — installing Temurin 21 via Homebrew..."
+    pkg_install_java
+  fi
 
-if [[ "$java_ok" == "false" ]]; then
-  warn "Java 21 not found — will install Temurin JDK 21 via Adoptium apt repo."
-  sudo install -d -m 0755 /etc/apt/keyrings
-  wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public \
-    | sudo gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg
-  # shellcheck source=/dev/null
-  . /etc/os-release
-  echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] \
-https://packages.adoptium.net/artifactory/deb ${VERSION_CODENAME} main" \
-    | sudo tee /etc/apt/sources.list.d/adoptium.list >/dev/null
-  need_apt_update=true
-  pkgs_to_install+=(temurin-21-jdk)
-fi
+  require_cmd git     || pkg_install git
+  require_cmd mvn     || pkg_install maven
+  require_cmd python3 || pkg_install python3
+  require_cmd curl    || pkg_install curl
 
-require_cmd git     || pkgs_to_install+=(git)
-require_cmd mvn     || pkgs_to_install+=(maven)
-require_cmd python3 || pkgs_to_install+=(python3)
-require_cmd curl    || pkgs_to_install+=(curl)
+else
+  # Linux: apt-based installs
+  need_apt_update=false
+  pkgs_to_install=()
 
-if ! python3 -c "import venv" 2>/dev/null; then
-  pkgs_to_install+=(python3-venv)
-fi
+  java_ok=false
+  if require_cmd java && java -version 2>&1 | grep -qE '"(2[1-9]|[3-9][0-9])'; then
+    info "Java 21+ already present."
+    java_ok=true
+  fi
 
-if [[ "$need_apt_update" == "true" ]] || [[ ${#pkgs_to_install[@]} -gt 0 ]]; then
-  sudo apt-get update -qq
-fi
+  if [[ "$java_ok" == "false" ]]; then
+    warn "Java 21 not found — will install Temurin JDK 21 via Adoptium apt repo."
+    pkg_install_java
+  fi
 
-if [[ ${#pkgs_to_install[@]} -gt 0 ]]; then
-  info "Installing system packages: ${pkgs_to_install[*]}"
-  sudo apt-get install -y "${pkgs_to_install[@]}"
+  require_cmd git     || pkgs_to_install+=(git)
+  require_cmd mvn     || pkgs_to_install+=(maven)
+  require_cmd python3 || pkgs_to_install+=(python3)
+  require_cmd curl    || pkgs_to_install+=(curl)
+
+  if ! python3 -c "import venv" 2>/dev/null; then
+    pkgs_to_install+=(python3-venv)
+  fi
+
+  if [[ ${#pkgs_to_install[@]} -gt 0 ]]; then
+    info "Installing system packages: ${pkgs_to_install[*]}"
+    pkg_update
+    pkg_install "${pkgs_to_install[@]}"
+  fi
 fi
 
 # ── 3. prompts ────────────────────────────────────────────────────────────────
@@ -246,18 +400,17 @@ case "$_redis_choice" in
     REDIS_PORT_VAL="${_port_input:-6379}"
 
     if ! require_cmd redis-server; then
-      info "Redis not found locally — installing redis-server..."
-      sudo apt-get install -y redis-server
+      info "Redis not found locally — installing..."
+      pkg_install_redis
     fi
 
-    if ! systemctl is-active --quiet redis-server 2>/dev/null; then
-      info "Starting redis-server..."
-      sudo systemctl enable --now redis-server
+    if ! svc_is_active_redis 2>/dev/null; then
+      info "Starting Redis..."
+      svc_start_redis
     else
       info "Local Redis already running."
     fi
 
-    # Test connectivity
     info "Testing Redis connectivity at ${REDIS_HOST_VAL}:${REDIS_PORT_VAL}..."
     if require_cmd redis-cli && redis-cli -h "$REDIS_HOST_VAL" -p "$REDIS_PORT_VAL" ping >/dev/null 2>&1; then
       MEMORY_ENABLED=true
@@ -406,7 +559,7 @@ esac
 mkdir -p "$HUGIN_HOME/db"
 
 cat > "$ENV_FILE" <<EOF
-# Hugin environment — sourced by the systemd service and the hugin launcher.
+# Hugin environment — sourced by the service and the hugin launcher.
 # Permissions: 600 (owner-read-only).  Do not commit this file.
 
 OPEN_ROUTER_API_KEY=${OPENROUTER_KEY}
@@ -515,7 +668,7 @@ sudo tee "$LAUNCHER_PATH" > /dev/null <<'LAUNCHER_EOF'
 #
 # Commands:
 #   hugin [run]    start service if needed, open terminal chat
-#   hugin serve    run server in the foreground (no systemd)
+#   hugin serve    run server in the foreground (no service manager)
 #   hugin start / stop / restart / status / logs
 #   hugin config   re-prompt for credentials, restart service
 #   hugin doctor   health-check every subsystem; auto-fix what it can
@@ -532,6 +685,55 @@ info()    { printf '\033[1;34m[hugin]\033[0m %s\n' "$*"; }
 success() { printf '\033[1;32m[hugin]\033[0m %s\n' "$*"; }
 warn()    { printf '\033[1;33m[hugin]\033[0m %s\n' "$*"; }
 die()     { printf '\033[1;31m[hugin]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# ── OS detection + service helpers ───────────────────────────────────────────
+OS_TYPE="linux"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  OS_TYPE="macos"
+fi
+
+if [[ "$OS_TYPE" == "macos" ]]; then
+  PLIST_LABEL="com.hugin.agent"
+  PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
+
+  svc_start()     { launchctl start "$PLIST_LABEL"; }
+  svc_stop()      { launchctl stop  "$PLIST_LABEL" 2>/dev/null || true; }
+  svc_restart()   { svc_stop; sleep 1; svc_start; }
+  svc_status()    { launchctl list "$PLIST_LABEL" 2>/dev/null || echo "not loaded"; }
+  svc_logs()      { exec tail -f "$HUGIN_HOME/logs/hugin.log"; }
+  svc_is_active() { launchctl list 2>/dev/null | grep -q "$PLIST_LABEL"; }
+  svc_is_enabled(){ [[ -f "$PLIST_PATH" ]]; }
+  svc_enable()    { launchctl load -w "$PLIST_PATH" 2>/dev/null || true; }
+
+  svc_uninstall() {
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    rm -f "$PLIST_PATH"
+  }
+
+  pkg_install_redis()  { brew install redis; }
+  svc_start_redis()    { brew services start redis; }
+  svc_is_active_redis(){ brew services list 2>/dev/null | grep -E '^redis\s' | grep -q started; }
+
+else
+  svc_start()     { sudo systemctl start   "$SERVICE_NAME"; }
+  svc_stop()      { sudo systemctl stop    "$SERVICE_NAME"; }
+  svc_restart()   { sudo systemctl restart "$SERVICE_NAME"; }
+  svc_status()    { systemctl status       "$SERVICE_NAME"; }
+  svc_logs()      { exec journalctl -u "$SERVICE_NAME" -f; }
+  svc_is_active() { systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; }
+  svc_is_enabled(){ systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; }
+  svc_enable()    { sudo systemctl enable "$SERVICE_NAME"; }
+
+  svc_uninstall() {
+    sudo systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+    sudo rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+    sudo systemctl daemon-reload
+  }
+
+  pkg_install_redis()  { sudo apt-get install -y redis-server; }
+  svc_start_redis()    { sudo systemctl enable --now redis-server; }
+  svc_is_active_redis(){ systemctl is-active --quiet redis-server 2>/dev/null; }
+fi
 
 load_env() {
   [[ -f "$ENV_FILE" ]] || return 0
@@ -550,9 +752,9 @@ wait_for_health() {
 
 cmd_run() {
   load_env
-  if ! systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+  if ! svc_is_active 2>/dev/null; then
     info "Starting $SERVICE_NAME service..."
-    sudo systemctl start "$SERVICE_NAME"
+    svc_start
   fi
   info "Waiting for agent server..."
   if wait_for_health 45; then
@@ -569,11 +771,11 @@ cmd_serve() {
     "--spring.config.additional-location=file:${CONFIG_YML}"
 }
 
-cmd_start()   { sudo systemctl start   "$SERVICE_NAME"; }
-cmd_stop()    { sudo systemctl stop    "$SERVICE_NAME"; }
-cmd_restart() { sudo systemctl restart "$SERVICE_NAME"; }
-cmd_status()  { systemctl status       "$SERVICE_NAME"; }
-cmd_logs()    { exec journalctl -u "$SERVICE_NAME" -f; }
+cmd_start()   { svc_start; }
+cmd_stop()    { svc_stop; }
+cmd_restart() { svc_restart; }
+cmd_status()  { svc_status; }
+cmd_logs()    { svc_logs; }
 
 cmd_config() {
   [[ -f "$ENV_FILE" ]] && load_env
@@ -609,11 +811,11 @@ cmd_config() {
       read -r rport_in; echo
       rport="${rport_in:-6379}"
       if ! command -v redis-server >/dev/null 2>&1; then
-        info "Installing redis-server..."
-        sudo apt-get install -y redis-server
+        info "Installing Redis..."
+        pkg_install_redis
       fi
-      if ! systemctl is-active --quiet redis-server 2>/dev/null; then
-        sudo systemctl enable --now redis-server
+      if ! svc_is_active_redis 2>/dev/null; then
+        svc_start_redis
       fi
       if command -v redis-cli >/dev/null 2>&1 && redis-cli -h "$rhost" -p "$rport" ping >/dev/null 2>&1; then
         mem=true
@@ -660,9 +862,9 @@ JWT_SECRET=${JWT_SECRET:-}
 ENV
   chmod 600 "$ENV_FILE"
   success "hugin.env updated."
-  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+  if svc_is_active 2>/dev/null; then
     info "Restarting service..."
-    sudo systemctl restart "$SERVICE_NAME"
+    svc_restart
     wait_for_health 45 && success "Service restarted and healthy."
   fi
 }
@@ -673,7 +875,6 @@ cmd_doctor() {
 
   local _fixes=0 _fails=0
 
-  # Doctor-scoped helpers (bash dynamic scoping lets these see the locals above)
   _dr_pass()  { printf '  \033[1;32m✓\033[0m %s\n' "$*"; }
   _dr_fail()  { printf '  \033[1;31m✗\033[0m %s\n' "$*"; _fails=$((_fails + 1)); }
   _dr_fixed() { printf '  \033[1;34m→ [fixed]\033[0m %s\n' "$*"; _fixes=$((_fixes + 1)); }
@@ -710,10 +911,18 @@ cmd_doctor() {
           && "$HUGIN_HOME/venv/bin/pip" install --no-cache-dir --quiet mcp 2>/dev/null; then
         _dr_fixed "Python venv rebuilt"
       else
-        _dr_fail "venv rebuild failed — check python3-venv: sudo apt-get install python3-venv"
+        if [[ "$OS_TYPE" == "macos" ]]; then
+          _dr_fail "venv rebuild failed — check: brew install python3"
+        else
+          _dr_fail "venv rebuild failed — check python3-venv: sudo apt-get install python3-venv"
+        fi
       fi
     else
-      _dr_fail "python3 not found — run: sudo apt-get install python3 python3-venv"
+      if [[ "$OS_TYPE" == "macos" ]]; then
+        _dr_fail "python3 not found — run: brew install python3"
+      else
+        _dr_fail "python3 not found — run: sudo apt-get install python3 python3-venv"
+      fi
     fi
   fi
 
@@ -785,29 +994,37 @@ cmd_doctor() {
   # ── Service ──────────────────────────────────────────────────────────────────
   printf '\033[1;34m[Service]\033[0m\n'
 
-  if [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
-    _dr_pass "systemd unit file present"
-  else
-    _dr_fail "systemd unit not found at /etc/systemd/system/${SERVICE_NAME}.service — re-run install.sh"
-  fi
-
-  if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
-    _dr_pass "service enabled (starts on boot)"
-  else
-    if sudo systemctl enable "$SERVICE_NAME" 2>/dev/null; then
-      _dr_fixed "Enabled $SERVICE_NAME for boot"
+  if [[ "$OS_TYPE" == "macos" ]]; then
+    if [[ -f "$PLIST_PATH" ]]; then
+      _dr_pass "LaunchAgent plist present ($PLIST_PATH)"
     else
-      _dr_fail "Could not enable service — unit file may be missing"
+      _dr_fail "LaunchAgent plist not found at $PLIST_PATH — re-run install.sh"
+    fi
+  else
+    if [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
+      _dr_pass "systemd unit file present"
+    else
+      _dr_fail "systemd unit not found at /etc/systemd/system/${SERVICE_NAME}.service — re-run install.sh"
+    fi
+
+    if svc_is_enabled 2>/dev/null; then
+      _dr_pass "service enabled (starts on boot)"
+    else
+      if svc_enable 2>/dev/null; then
+        _dr_fixed "Enabled $SERVICE_NAME for boot"
+      else
+        _dr_fail "Could not enable service — unit file may be missing"
+      fi
     fi
   fi
 
-  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+  if svc_is_active 2>/dev/null; then
     _dr_pass "service is running"
   else
     info "Service not running — attempting to start..."
-    if sudo systemctl start "$SERVICE_NAME" 2>/dev/null; then
+    if svc_start 2>/dev/null; then
       sleep 3
-      if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+      if svc_is_active 2>/dev/null; then
         _dr_fixed "Service started successfully"
       else
         _dr_fail "Service started but exited — check: hugin logs"
@@ -835,9 +1052,11 @@ cmd_doctor() {
       _dr_fixed "Agent server is now healthy"
     else
       _dr_fail "Agent server not responding on :8080"
-      # Check for port conflict
       if command -v ss >/dev/null 2>&1; then
         local _conflict; _conflict=$(ss -tlnp 2>/dev/null | grep ':8080 ' | head -1 || true)
+        [[ -n "$_conflict" ]] && _dr_fail "Port 8080 in use by another process: $_conflict"
+      elif command -v lsof >/dev/null 2>&1; then
+        local _conflict; _conflict=$(lsof -iTCP:8080 -sTCP:LISTEN 2>/dev/null | tail -1 || true)
         [[ -n "$_conflict" ]] && _dr_fail "Port 8080 in use by another process: $_conflict"
       fi
       _dr_note "Tip: inspect with  hugin logs"
@@ -857,18 +1076,26 @@ cmd_doctor() {
       _dr_fail "Redis not reachable at $_rh:$_rp  (MEMORY_ENABLED=true)"
       if [[ "$_rh" == "localhost" || "$_rh" == "127.0.0.1" ]]; then
         if command -v redis-server >/dev/null 2>&1; then
-          if sudo systemctl start redis-server 2>/dev/null; then
+          if svc_start_redis 2>/dev/null; then
             sleep 1
             if redis-cli -h "$_rh" -p "$_rp" ping >/dev/null 2>&1; then
-              _dr_fixed "Started local redis-server and confirmed reachable"
+              _dr_fixed "Started local redis and confirmed reachable"
             else
-              _dr_fail "redis-server started but still not responding on $_rh:$_rp"
+              _dr_fail "Redis started but still not responding on $_rh:$_rp"
             fi
           else
-            _dr_fail "Could not start redis-server — check: systemctl status redis-server"
+            if [[ "$OS_TYPE" == "macos" ]]; then
+              _dr_fail "Could not start Redis — check: brew services list"
+            else
+              _dr_fail "Could not start redis-server — check: systemctl status redis-server"
+            fi
           fi
         else
-          _dr_fail "redis-server not installed — run: sudo apt-get install redis-server"
+          if [[ "$OS_TYPE" == "macos" ]]; then
+            _dr_fail "redis-server not installed — run: brew install redis"
+          else
+            _dr_fail "redis-server not installed — run: sudo apt-get install redis-server"
+          fi
         fi
       else
         _dr_fail "Remote Redis at $_rh:$_rp is unreachable — check host, port, and firewall"
@@ -896,9 +1123,7 @@ cmd_doctor() {
 
 cmd_uninstall() {
   info "Stopping and removing $SERVICE_NAME service..."
-  sudo systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
-  sudo rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-  sudo systemctl daemon-reload
+  svc_uninstall
   sudo rm -f "$LAUNCHER_PATH"
   success "Service and launcher removed."
   if [[ -d "$HUGIN_HOME" ]]; then
@@ -930,12 +1155,12 @@ case "$CMD" in
 Usage: hugin [command]
 
   (none) / run   Start service if needed, open terminal chat
-  serve          Run the server in the foreground (no systemd)
+  serve          Run the server in the foreground (no service manager)
   start          Start the background service
   stop           Stop the background service
   restart        Restart the background service
   status         Show service status
-  logs           Stream service logs  (journalctl -f)
+  logs           Stream service logs
   config         Reconfigure credentials, restart service
   doctor         Check every subsystem; auto-fix what it can
   uninstall      Remove service, launcher, and optionally ~/.hugin
@@ -946,7 +1171,7 @@ esac
 LAUNCHER_EOF
 
 # Substitute the install-time paths into the launcher
-sudo sed -i \
+SED_INPLACE \
   -e "s|__HUGIN_HOME__|${HUGIN_HOME}|g" \
   -e "s|__SERVICE_NAME__|${SERVICE_NAME}|g" \
   -e "s|__LAUNCHER_PATH__|${LAUNCHER_PATH}|g" \
@@ -954,43 +1179,15 @@ sudo sed -i \
 sudo chmod 0755 "$LAUNCHER_PATH"
 success "Launcher installed: $LAUNCHER_PATH"
 
-# ── 9. install systemd service ────────────────────────────────────────────────
-info "Installing systemd service $SERVICE_NAME..."
-sudo tee "$SERVICE_FILE" > /dev/null <<SERVICE
-# Hugin agent service — managed by install.sh
-[Unit]
-Description=Hugin MCP Agent Server
-After=network-online.target
-Wants=network-online.target
+# ── 9. install and start service ─────────────────────────────────────────────
+info "Installing $SERVICE_NAME service..."
+svc_install
 
-[Service]
-Type=simple
-User=${INSTALL_USER}
-Environment=HUGIN_HOME=${HUGIN_HOME}
-Environment=AGENT_HOME=${HUGIN_HOME}
-EnvironmentFile=${ENV_FILE}
-# Prepend the venv so the web-search MCP subprocess finds python3 + mcp package.
-Environment=PATH=${HUGIN_HOME}/venv/bin:/usr/local/bin:/usr/bin:/bin
-WorkingDirectory=${HUGIN_HOME}
-ExecStart=/usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar \
-  --spring.config.additional-location=file:${HUGIN_HOME}/config/application.yml
-StandardOutput=append:${HUGIN_HOME}/logs/hugin.log
-StandardError=append:${HUGIN_HOME}/logs/hugin.log
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-sudo systemctl daemon-reload
-
-# Stop any previous incarnation cleanly before (re)starting
-if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+if svc_is_active 2>/dev/null; then
   info "Restarting existing $SERVICE_NAME service..."
-  sudo systemctl restart "$SERVICE_NAME"
+  svc_restart
 else
-  sudo systemctl enable --now "$SERVICE_NAME"
+  svc_enable 2>/dev/null || true
   info "Service enabled and started."
 fi
 
