@@ -44,7 +44,9 @@ import static org.mockito.Mockito.when;
         // Non-existent config file → no real MCP servers started during tests
         "mcp.config-file=./nonexistent-test-servers.json",
         // Disable the search MCP subprocess so no external processes are spawned during tests
-        "search.provider=none"
+        "search.provider=none",
+        // Use in-memory H2 so tests are isolated and never corrupt a shared file
+        "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE"
 })
 class McpIntegrationApplicationTests {
 
