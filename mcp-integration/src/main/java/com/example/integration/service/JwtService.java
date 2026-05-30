@@ -17,6 +17,7 @@ import java.util.Date;
 public class JwtService {
 
     private static final Logger log = LoggerFactory.getLogger(JwtService.class);
+    private static final SecureRandom RNG = new SecureRandom();
 
     private final SecretKey key;
     private final long expirationMs;
@@ -27,7 +28,7 @@ public class JwtService {
         this.expirationMs = expirationMs;
         if (secret == null || secret.isBlank()) {
             byte[] bytes = new byte[48];
-            new SecureRandom().nextBytes(bytes);
+            RNG.nextBytes(bytes);
             this.key = Keys.hmacShaKeyFor(bytes);
             log.warn("JWT_SECRET is not configured — using a random key. Tokens will be invalidated on restart. " +
                      "Set JWT_SECRET in hugin.env for persistent sessions.");
