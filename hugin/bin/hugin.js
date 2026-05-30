@@ -212,6 +212,13 @@ server
     ]);
   });
 
+// ── logs ──────────────────────────────────────────────────────────────────────
+
+program
+  .command('logs')
+  .description('Stream agent server logs')
+  .action(() => svcLogs());
+
 // ── terminal ──────────────────────────────────────────────────────────────────
 
 program

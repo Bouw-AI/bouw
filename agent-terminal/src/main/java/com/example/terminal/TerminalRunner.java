@@ -117,6 +117,23 @@ public class TerminalRunner implements CommandLineRunner {
         }
 
         @Override
+        public void onToolResult(String name, String result) {
+            if (result == null || result.isBlank()) {
+                return;
+            }
+            String[] lines = result.split("\n", -1);
+            int maxLines = 30;
+            int shown = Math.min(lines.length, maxLines);
+            for (int i = 0; i < shown; i++) {
+                System.out.println(GRAY + "    " + lines[i] + RESET);
+            }
+            if (lines.length > maxLines) {
+                System.out.println(GRAY + "    … (" + (lines.length - maxLines) + " more lines)" + RESET);
+            }
+            atLineStart = true;
+        }
+
+        @Override
         public void onError(String message) {
             newlineIfNeeded();
             System.out.println(YELLOW + "  ! " + message + RESET);

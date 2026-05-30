@@ -1343,11 +1343,13 @@ printf '\033[1;32m  Hugin is running at http://localhost:8080\033[0m\n'
 printf '\033[1;32m══════════════════════════════════════════════════════════════════\033[0m\n'
 echo
 cat <<MSG
+  Dashboard:            http://localhost:8080
   Start chatting:       hugin
   Server in foreground: hugin serve
   Service status/logs:  hugin status  |  hugin logs
   Health check:         hugin doctor
   Reconfigure:          hugin config
+  Update (rebuild):     hugin update
   Workspace:            $HUGIN_HOME/workspace
   Config:               $HUGIN_HOME/config/
   Env vars:             $ENV_FILE

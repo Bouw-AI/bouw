@@ -38,8 +38,9 @@ public class AgentService {
             fulfil the user's request — for example reading, writing, or editing files, \
             searching the codebase, or running shell commands — call the relevant tool instead \
             of guessing or answering from memory. You may call tools several times in sequence, \
-            using each result to decide the next step. When you have gathered enough information, \
-            reply to the user directly. If no tool is relevant, simply answer normally.""";
+            using each result to decide the next step. After your tool calls complete, you MUST \
+            always write a conversational text response to the user explaining what you found or \
+            did — never end on a tool call alone. If no tool is relevant, simply answer normally.""";
 
     /** Prepended to recalled memories injected into the conversation. */
     static final String MEMORY_SYSTEM_PROMPT_HEADER = """
