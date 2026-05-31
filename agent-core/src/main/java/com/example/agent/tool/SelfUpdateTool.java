@@ -1,6 +1,8 @@
 package com.example.agent.tool;
 
 import com.example.agent.StartupAnnouncementService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -24,6 +26,8 @@ import java.util.regex.Pattern;
  */
 @Component
 public class SelfUpdateTool implements LocalTool {
+
+    private static final Logger log = LoggerFactory.getLogger(SelfUpdateTool.class);
 
     private final Workspace workspace;
     private final Duration timeout;
@@ -107,7 +111,7 @@ public class SelfUpdateTool implements LocalTool {
         return "Self-update completed successfully. Now running version: " + version;
     }
 
-    private static String resolveVersion(Path root) {
+    static String resolveVersion(Path root) {
         // Prefer a human-readable git description (tag + offset + hash).
         try {
             Process p = new ProcessBuilder("git", "describe", "--tags", "--always")
@@ -116,25 +120,34 @@ public class SelfUpdateTool implements LocalTool {
                     .start();
             if (!p.waitFor(2, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
+                log.debug("git describe timed out in {}", root);
             } else {
                 String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
                 if (p.exitValue() == 0 && !out.isBlank()) {
                     return out;
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.debug("git describe failed: {}", e.getMessage());
+        }
 
-        // Fall back to the <version> element from the root pom.xml.
+        // Fall back to the project's own <version> in the root pom.xml.
+        // Start the search after </parent> so we skip the parent POM's version and any
+        // inherited <version> that comes before the project's own declaration.
         try {
             Path pom = root.resolve("pom.xml");
             if (Files.exists(pom)) {
                 String xml = Files.readString(pom);
-                Matcher m = Pattern.compile("<version>([^<]+)</version>").matcher(xml);
+                int parentEnd = xml.indexOf("</parent>");
+                String searchIn = parentEnd >= 0 ? xml.substring(parentEnd) : xml;
+                Matcher m = Pattern.compile("<version>([^<]+)</version>").matcher(searchIn);
                 if (m.find()) {
-                    return m.group(1);
+                    return m.group(1).strip();
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.debug("Could not read pom.xml for version: {}", e.getMessage());
+        }
 
         return "unknown";
     }

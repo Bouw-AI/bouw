@@ -181,6 +181,37 @@ class LocalToolsTest {
     }
 
     @Test
+    void resolveVersionExtractsProjectVersionSkippingParent() throws Exception {
+        Files.writeString(tmp.resolve("pom.xml"),
+                "<project>\n"
+                + "  <parent><version>3.5.0</version></parent>\n"
+                + "  <groupId>com.example</groupId>\n"
+                + "  <artifactId>my-app</artifactId>\n"
+                + "  <version>1.2.3</version>\n"
+                + "</project>");
+
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("1.2.3");
+    }
+
+    @Test
+    void resolveVersionUsesFirstVersionWhenNoParentElement() throws Exception {
+        Files.writeString(tmp.resolve("pom.xml"),
+                "<project>\n"
+                + "  <groupId>com.example</groupId>\n"
+                + "  <artifactId>my-app</artifactId>\n"
+                + "  <version>2.0.0</version>\n"
+                + "</project>");
+
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("2.0.0");
+    }
+
+    @Test
+    void resolveVersionReturnsUnknownWhenNoPomAndNoGit() {
+        // tmp is an empty directory with no pom.xml and no git repo
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("unknown");
+    }
+
+    @Test
     void addCronJobSchemaRequiresScheduleAndScriptPath() {
         var cron = new AddCronJobTool(properties);
 
