@@ -110,14 +110,27 @@ class LocalToolsExtendedTest {
     }
 
     @Test
-    void readDirectoryReturnsError() throws Exception {
-        Files.createDirectories(tmp.resolve("adir"));
+    void readDirectoryListsContents() throws Exception {
+        Path adir = tmp.resolve("adir");
+        Files.createDirectories(adir);
+        Files.writeString(adir.resolve("file.txt"), "hi");
+        Files.createDirectories(adir.resolve("sub"));
         var read = new ReadFileTool(workspace, properties, noDenyList);
 
         String result = read.execute(Map.of("path", "adir"));
 
-        assertThat(result).startsWith("Error: path is a directory, not a file:");
-        assertThat(result).contains("adir");
+        assertThat(result).contains("file.txt");
+        assertThat(result).contains("sub/");
+    }
+
+    @Test
+    void readEmptyDirectoryReturnsPlaceholder() throws Exception {
+        Files.createDirectories(tmp.resolve("emptydir"));
+        var read = new ReadFileTool(workspace, properties, noDenyList);
+
+        String result = read.execute(Map.of("path", "emptydir"));
+
+        assertThat(result).isEqualTo("(empty directory)");
     }
 
     @Test

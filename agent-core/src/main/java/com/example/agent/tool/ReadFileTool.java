@@ -5,8 +5,10 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /** Reads the contents of a text file within the workspace. */
 @Component
@@ -64,7 +66,7 @@ public class ReadFileTool implements LocalTool {
             return "Error: file does not exist: " + requested;
         }
         if (Files.isDirectory(file)) {
-            return "Error: path is a directory, not a file: " + requested;
+            return listDirectory(file);
         }
 
         String content = Files.readString(file);
@@ -76,5 +78,18 @@ public class ReadFileTool implements LocalTool {
                     + "\n... [truncated " + (content.length() - maxChars) + " characters]";
         }
         return content;
+    }
+
+    private static String listDirectory(Path dir) throws IOException {
+        List<String> entries;
+        try (Stream<Path> stream = Files.list(dir)) {
+            entries = stream.sorted(Comparator.comparing(Path::toString))
+                    .map(p -> {
+                        String name = dir.relativize(p).toString();
+                        return Files.isDirectory(p) ? name + "/" : name;
+                    })
+                    .toList();
+        }
+        return entries.isEmpty() ? "(empty directory)" : String.join("\n", entries);
     }
 }
