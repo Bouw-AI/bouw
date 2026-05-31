@@ -36,6 +36,14 @@ discord:
   api-key: ${AGENT_API_KEY:}
   model: ${AGENT_MODEL:}
 
+  # -----------------------------------------------------------------------
+  # GitHub issue reporting (for the "Report Bug" button on agent responses).
+  # Both must be set for the button to create issues; otherwise the button
+  # still appears but the action is a no-op (logged as a warning).
+  # -----------------------------------------------------------------------
+  github-token: ${GITHUB_TOKEN:}
+  github-repo: ${GITHUB_REPO:}
+
 logging:
   level:
     root: INFO

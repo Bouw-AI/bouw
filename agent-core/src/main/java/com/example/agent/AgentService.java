@@ -31,8 +31,7 @@ import java.util.*;
 public class AgentService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
-    static final int MAX_ITERATIONS = 10;
-
+    private final int maxIterations;
 
     private final OpenAiClient llmClient;
     private final McpToolProvider toolProvider;
@@ -53,6 +52,7 @@ public class AgentService {
             ObjectMapper objectMapper,
             @Value("${agent.request-timeout:5m}") Duration requestTimeout,
             @Value("${llm.model:}") String defaultModel,
+            @Value("${agent.max-iterations:10}") int maxIterations,
             WorkspaceRegistry workspaceRegistry,
             Optional<MemoryService> memoryService,
             Optional<ConversationMemoryService> conversationMemory,
@@ -64,6 +64,7 @@ public class AgentService {
         this.objectMapper = objectMapper;
         this.requestTimeout = requestTimeout;
         this.defaultModel = defaultModel;
+        this.maxIterations = maxIterations;
         this.workspaceRegistry = workspaceRegistry;
         this.memoryService = memoryService;
         this.conversationMemory = conversationMemory;
@@ -141,7 +142,7 @@ public class AgentService {
 
         String lastAssistantContent = null;
 
-        for (int i = 0; i < MAX_ITERATIONS; i++) {
+        for (int i = 0; i < maxIterations; i++) {
             if (Instant.now().isAfter(deadline)) {
                 log.warn("Agent request timed out after {}", requestTimeout);
                 return new AgentResponse(
@@ -197,7 +198,7 @@ public class AgentService {
             }
         }
 
-        log.warn("Agent reached max iterations ({}) without a final answer", MAX_ITERATIONS);
+        log.warn("Agent reached max iterations ({}) without a final answer", maxIterations);
         return new AgentResponse(
                 "Reached the maximum number of tool-call iterations without a final answer.",
                 Collections.unmodifiableList(messages));

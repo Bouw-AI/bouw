@@ -1,20 +1,35 @@
 package com.example.discord;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.entities.channel.ChannelType;
+import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.exceptions.InvalidTokenException;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.interactions.components.buttons.Button;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Manages the JDA bot lifecycle and routes incoming Discord messages to the agent server.
@@ -28,6 +43,9 @@ import java.util.List;
  * <p>Session IDs are scoped per-channel (guild channels) or per-user (DMs) so the agent server's
  * short-term conversation memory is maintained across turns.
  *
+ * <p>Each response includes a "Report Bug" button. When clicked, the conversation log for that
+ * session is posted as a GitHub issue.
+ *
  * <p><b>Required in the Discord Developer Portal (Applications → Bot → Privileged Gateway
  * Intents):</b> enable <b>Message Content Intent</b> or the bot will see empty message text.
  */
@@ -39,11 +57,25 @@ public class DiscordBotService implements DisposableBean {
 
     private final DiscordProperties properties;
     private final DiscordAgentClient agentClient;
+    private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
     private JDA jda;
 
-    public DiscordBotService(DiscordProperties properties, DiscordAgentClient agentClient) {
+    /**
+     * Per-session conversation logs. Each entry is a single turn: "User: ..." or "Agent: ...".
+     * Guarded by ConcurrentHashMap and LinkedList is not thread-safe, but each session is only
+     * accessed from one virtual thread at a time (serialised per-message within a session).
+     */
+    private final ConcurrentHashMap<String, LinkedList<String>> conversationLogs = new ConcurrentHashMap<>();
+
+    public DiscordBotService(DiscordProperties properties, DiscordAgentClient agentClient,
+                             ObjectMapper objectMapper) {
         this.properties = properties;
         this.agentClient = agentClient;
+        this.objectMapper = objectMapper;
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
     }
 
     @PostConstruct
@@ -55,7 +87,7 @@ public class DiscordBotService implements DisposableBean {
                             GatewayIntent.DIRECT_MESSAGES,
                             GatewayIntent.MESSAGE_CONTENT
                     )
-                    .addEventListeners(new MessageListener())
+                    .addEventListeners(new MessageListener(), new ButtonListener())
                     .build();
             jda.awaitReady();
             log.info("Discord bot connected as {}", jda.getSelfUser().getName());
@@ -69,6 +101,11 @@ public class DiscordBotService implements DisposableBean {
             if (properties.isRespondToDms()) {
                 log.info("DM responses enabled");
             }
+            if (properties.getGithubToken() != null && properties.getGithubRepo() != null) {
+                log.info("GitHub issue reporting enabled for {}", properties.getGithubRepo());
+            } else {
+                log.info("GitHub issue reporting disabled — set discord.github-token and discord.github-repo");
+            }
         } catch (InvalidTokenException e) {
             throw new RuntimeException("Invalid Discord bot token — check discord.bot-token", e);
         }
@@ -81,6 +118,79 @@ public class DiscordBotService implements DisposableBean {
             jda.shutdown();
         }
     }
+
+    // ---- Conversation log helpers ----
+
+    private void logUserMessage(String sessionId, String author, String content) {
+        conversationLogs.computeIfAbsent(sessionId, k -> new LinkedList<>())
+                .add("[**" + author + "**] " + content);
+    }
+
+    private void logAgentResponse(String sessionId, String response) {
+        LinkedList<String> log = conversationLogs.get(sessionId);
+        if (log != null) {
+            log.add("[**Hugin**] " + response);
+        }
+    }
+
+    private String buildIssueBody(String sessionId, String authorMention) {
+        LinkedList<String> log = conversationLogs.get(sessionId);
+        StringBuilder body = new StringBuilder();
+        body.append("## Bug Report\n\n");
+        body.append("**Session:** `").append(sessionId).append("`\n");
+        body.append("**Reported by:** ").append(authorMention).append("\n");
+        body.append("**Time:** ")
+                .append(DateTimeFormatter.ISO_LOCAL_DATE_TIME.withZone(ZoneId.systemDefault())
+                        .format(Instant.now()))
+                .append("\n\n");
+        body.append("## Conversation Log\n\n");
+        if (log == null || log.isEmpty()) {
+            body.append("*(No conversation history available)*\n");
+        } else {
+            for (String entry : log) {
+                body.append("- ").append(entry).append("\n");
+            }
+        }
+        return body.toString();
+    }
+
+    // ---- GitHub issue creation ----
+
+    private void createGitHubIssue(String title, String body) {
+        if (properties.getGithubToken() == null || properties.getGithubToken().isBlank()
+                || properties.getGithubRepo() == null || properties.getGithubRepo().isBlank()) {
+            log.warn("GitHub issue not created — discord.github-token or discord.github-repo not configured");
+            return;
+        }
+
+        try {
+            String json = objectMapper.writeValueAsString(Map.of(
+                    "title", title,
+                    "body", body
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder(
+                    URI.create("https://api.github.com/repos/" + properties.getGithubRepo() + "/issues"))
+                    .header("Authorization", "Bearer " + properties.getGithubToken())
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/vnd.github.v3+json")
+                    .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                log.info("GitHub issue created: {}", response.body());
+            } else {
+                log.error("Failed to create GitHub issue — HTTP {}: {}", response.statusCode(), response.body());
+            }
+        } catch (Exception e) {
+            log.error("Failed to create GitHub issue", e);
+        }
+    }
+
+    // ---- Message listener ----
 
     private class MessageListener extends ListenerAdapter {
 
@@ -109,11 +219,34 @@ public class DiscordBotService implements DisposableBean {
                     ? "discord-dm-" + event.getAuthor().getId()
                     : "discord-channel-" + event.getChannel().getId();
 
+            logUserMessage(sessionId, event.getAuthor().getEffectiveName(), content);
             event.getChannel().sendTyping().queue();
 
             Thread.ofVirtual().start(() -> handleMessage(event, content, sessionId));
         }
     }
+
+    // ---- Button interaction listener ----
+
+    private class ButtonListener extends ListenerAdapter {
+        @Override
+        public void onButtonInteraction(ButtonInteractionEvent event) {
+            String customId = event.getComponentId();
+            if (!customId.startsWith("report_bug:")) return;
+
+            // Disable the button immediately so it can't be clicked again
+            event.editButton(Button.danger(customId, "Report Bug").asDisabled()).queue();
+
+            String sessionId = customId.substring("report_bug:".length());
+            String authorMention = event.getUser().getEffectiveName();
+            String issueBody = buildIssueBody(sessionId, authorMention);
+            String title = "Bug Report — " + sessionId;
+
+            createGitHubIssue(title, issueBody);
+        }
+    }
+
+    // ---- Message handling ----
 
     private void handleMessage(MessageReceivedEvent event, String content, String sessionId) {
         log.debug("Agent request — session={} author={}", sessionId, event.getAuthor().getName());
@@ -151,10 +284,16 @@ public class DiscordBotService implements DisposableBean {
         String text = response.toString().strip();
         if (text.isBlank()) text = "(no response)";
 
+        logAgentResponse(sessionId, text);
+
         List<String> chunks = splitMessage(text, DISCORD_MSG_LIMIT);
+        Button reportButton = Button.danger("report_bug:" + sessionId, "Report Bug");
+
         for (int i = 0; i < chunks.size(); i++) {
             if (i == 0) {
-                event.getMessage().reply(chunks.get(i)).queue();
+                event.getMessage().reply(chunks.get(i))
+                        .addActionRow(reportButton)
+                        .queue();
             } else {
                 event.getChannel().sendMessage(chunks.get(i)).queue();
             }
