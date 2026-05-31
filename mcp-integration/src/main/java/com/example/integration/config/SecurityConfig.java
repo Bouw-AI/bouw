@@ -1,6 +1,5 @@
 package com.example.integration.config;
 
-import com.example.integration.service.JwtService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,13 +18,11 @@ import java.util.List;
 @Configuration
 public class SecurityConfig {
 
-    /** Swagger docs and the login endpoint are always public. */
     @Bean
     @Order(1)
     public SecurityFilterChain publicFilterChain(HttpSecurity http) throws Exception {
         http.securityMatcher(
                         "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**",
-                        "/api/auth/**",
                         "/actuator/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 .csrf(csrf -> csrf.disable());
@@ -40,17 +37,15 @@ public class SecurityConfig {
     }
 
     /**
-     * All /api/** endpoints require a valid JWT Bearer token or X-API-Key (when configured).
+     * All /api/** endpoints require X-API-Key when configured.
      * When no api-key is configured, /api/agent/** is open to localhost only.
      */
     @Bean
     @Order(2)
     public SecurityFilterChain apiFilterChain(
             HttpSecurity http,
-            JwtService jwtService,
             @Value("${agent.api-key:}") String apiKey) throws Exception {
 
-        var jwtFilter = new JwtAuthenticationFilter(jwtService);
         boolean apiKeyConfigured = apiKey != null && !apiKey.isBlank();
 
         http.securityMatcher("/api/**")
@@ -58,30 +53,27 @@ public class SecurityConfig {
                     if (apiKeyConfigured) {
                         auth.anyRequest().authenticated();
                     } else {
-                        // no api-key: agent endpoints open to localhost, denied externally
                         auth.requestMatchers(req -> req.getServletPath().startsWith("/api/agent/")
                                         && isLocalhost(req.getRemoteAddr())).permitAll()
                                 .requestMatchers("/api/agent/**").denyAll()
-                                .anyRequest().authenticated();
+                                .anyRequest().denyAll();
                     }
                 })
-                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()));
 
         if (apiKeyConfigured) {
             var apiKeyFilter = new ApiKeyAuthenticationFilter(apiKey);
-            http.addFilterBefore(apiKeyFilter, JwtAuthenticationFilter.class);
+            http.addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class);
         }
 
         return http.build();
     }
 
-    /** Static files (index.html, app.js, fonts) are served without authentication. */
     @Bean
     @Order(3)
-    public SecurityFilterChain staticFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain defaultFilterChain(HttpSecurity http) throws Exception {
         http.authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 .csrf(csrf -> csrf.disable());
         return http.build();
