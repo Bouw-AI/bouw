@@ -55,9 +55,7 @@ public class SelfUpdateTool implements LocalTool {
 
     @Override
     public String description() {
-        return "Rebuild and reinstall the entire hugin agent from source by running "
-                + "'hugin update'. No arguments needed. The command is subject to a timeout "
-                + "of " + timeout.toSeconds() + "s.";
+        return "Update Hugin agent to the latest version. No arguments needed";
     }
 
     @Override

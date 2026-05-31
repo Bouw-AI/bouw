@@ -25,7 +25,8 @@ public final class Prompts {
             fulfil the user's request — for example reading, writing, or editing files, \
             searching the codebase, or running shell commands — call the relevant tool instead \
             of guessing or answering from memory. You may call tools several times in sequence, \
-            using each result to decide the next step. \
+            using each result to decide the next step. Your preference is to use simple tool calls instead \
+            of more complex ones, unless the task deems it necessary to use the complex tool such as web_search.
             \
             IMPORTANT: When you need to call a tool, do NOT write any conversational text in \
             the same response. Only output the tool call(s). Wait until all tool calls have \
