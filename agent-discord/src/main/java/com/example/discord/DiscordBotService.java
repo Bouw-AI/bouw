@@ -16,6 +16,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -156,38 +159,51 @@ public class DiscordBotService implements DisposableBean {
 
     // ---- GitHub issue creation ----
 
-    private void createGitHubIssue(String title, String body) {
+    /**
+     * Creates a GitHub issue and returns its HTML URL.
+     *
+     * @throws IllegalStateException if GitHub reporting is not configured
+     * @throws IOException           if the API call fails or returns a non-2xx status
+     */
+    private String createGitHubIssue(String title, String body) throws IOException, InterruptedException {
         if (properties.getGithubToken() == null || properties.getGithubToken().isBlank()
                 || properties.getGithubRepo() == null || properties.getGithubRepo().isBlank()) {
-            log.warn("GitHub issue not created — discord.github-token or discord.github-repo not configured");
-            return;
+            throw new IllegalStateException(
+                    "GitHub issue reporting is not configured — set discord.github-token and discord.github-repo");
         }
 
-        try {
-            String json = objectMapper.writeValueAsString(Map.of(
-                    "title", title,
-                    "body", body
-            ));
+        String json = objectMapper.writeValueAsString(Map.of(
+                "title", title,
+                "body", body
+        ));
 
-            HttpRequest request = HttpRequest.newBuilder(
-                    URI.create("https://api.github.com/repos/" + properties.getGithubRepo() + "/issues"))
-                    .header("Authorization", "Bearer " + properties.getGithubToken())
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/vnd.github.v3+json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
-                    .build();
+        HttpRequest request = HttpRequest.newBuilder(
+                URI.create("https://api.github.com/repos/" + properties.getGithubRepo() + "/issues"))
+                .header("Authorization", "Bearer " + properties.getGithubToken())
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/vnd.github.v3+json")
+                .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                .build();
 
-            HttpResponse<String> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> response = httpClient.send(request,
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                log.info("GitHub issue created: {}", response.body());
-            } else {
-                log.error("Failed to create GitHub issue — HTTP {}: {}", response.statusCode(), response.body());
-            }
-        } catch (Exception e) {
-            log.error("Failed to create GitHub issue", e);
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("GitHub API returned HTTP " + response.statusCode() + ": " + response.body());
         }
+
+        log.info("GitHub issue created: {}", response.body());
+        String url = objectMapper.readTree(response.body()).path("html_url").asText(null);
+        if (url == null || url.isBlank()) {
+            throw new IOException("GitHub API response did not include an issue URL: " + response.body());
+        }
+        return url;
+    }
+
+    private static String stackTraceOf(Throwable t) {
+        StringWriter sw = new StringWriter();
+        t.printStackTrace(new PrintWriter(sw));
+        return sw.toString();
     }
 
     // ---- Message listener ----
@@ -242,7 +258,20 @@ public class DiscordBotService implements DisposableBean {
             String issueBody = buildIssueBody(sessionId, authorMention);
             String title = "Bug Report — " + sessionId;
 
-            createGitHubIssue(title, issueBody);
+            try {
+                String url = createGitHubIssue(title, issueBody);
+                event.getChannel().sendMessage("🐛 Bug report created: " + url).queue();
+            } catch (Exception e) {
+                log.error("Failed to create GitHub issue for session {}", sessionId, e);
+                String stackTrace = stackTraceOf(e);
+                // Discord caps messages at 2000 chars; keep the trace inside a fenced block.
+                String trace = stackTrace.length() > DISCORD_MSG_LIMIT - 200
+                        ? stackTrace.substring(0, DISCORD_MSG_LIMIT - 200) + "\n...(truncated)"
+                        : stackTrace;
+                event.getChannel().sendMessage(
+                        "❌ Failed to create bug report: " + e.getMessage()
+                                + "\n```\n" + trace + "\n```").queue();
+            }
         }
     }
 

@@ -7,6 +7,7 @@ const { existsSync } = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const { version } = require('../../package.json');
 
 const AGENT_HOME  = process.env.AGENT_HOME ?? path.join(os.homedir(), '.hugin');
 const SERVER_JAR  = path.join(AGENT_HOME, 'bin', 'mcp-integration.jar');
@@ -143,7 +144,7 @@ const program = new Command();
 program
   .name('hugin')
   .description('Hugin AI personal assistant CLI')
-  .version('0.1.0');
+  .version(version);
 
 // ── onboard ───────────────────────────────────────────────────────────────────
 
