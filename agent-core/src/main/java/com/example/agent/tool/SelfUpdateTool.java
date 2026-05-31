@@ -114,9 +114,13 @@ public class SelfUpdateTool implements LocalTool {
                     .directory(root.toFile())
                     .redirectErrorStream(true)
                     .start();
-            String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
-            if (p.waitFor() == 0 && !out.isBlank()) {
-                return out;
+            if (!p.waitFor(2, TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+            } else {
+                String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+                if (p.exitValue() == 0 && !out.isBlank()) {
+                    return out;
+                }
             }
         } catch (Exception ignored) {}
 

@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -171,7 +172,7 @@ class LocalToolsTest {
 
     @Test
     void selfUpdateInputSchemaHasNoRequiredArgs() {
-        var update = new SelfUpdateTool(workspace, properties);
+        var update = new SelfUpdateTool(workspace, properties, Optional.empty());
 
         var schema = update.inputSchema();
 
