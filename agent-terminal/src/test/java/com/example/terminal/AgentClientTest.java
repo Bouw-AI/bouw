@@ -112,7 +112,7 @@ class AgentClientTest {
         server.start();
 
         int port = server.getAddress().getPort();
-        var properties = new TerminalProperties("http://localhost:" + port, null, null);
+        var properties = new TerminalProperties("http://localhost:" + port, null, null, null);
         return new AgentClient(properties, new ObjectMapper());
     }
 }

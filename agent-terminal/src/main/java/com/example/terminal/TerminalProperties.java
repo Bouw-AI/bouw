@@ -5,13 +5,15 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * Settings for the terminal front-end.
  *
- * @param serverUrl base URL of the running mcp-integration server (without a trailing path)
- * @param apiKey    optional value for the {@code X-API-Key} header; required only when the server
- *                  has {@code agent.api-key} configured
- * @param model     optional default model name; when blank the server falls back to {@code llm.model}
+ * @param serverUrl  base URL of the running mcp-integration server (without a trailing path)
+ * @param apiKey     optional value for the {@code X-API-Key} header; required only when the server
+ *                   has {@code agent.api-key} configured
+ * @param model      optional default model name; when blank the server falls back to {@code llm.model}
+ * @param githubRepo {@code owner/repo} slug used when creating bug-report issues; requires
+ *                   {@code GITHUB_TOKEN} in the environment
  */
 @ConfigurationProperties("terminal")
-public record TerminalProperties(String serverUrl, String apiKey, String model) {
+public record TerminalProperties(String serverUrl, String apiKey, String model, String githubRepo) {
 
     public TerminalProperties {
         if (serverUrl == null || serverUrl.isBlank()) {

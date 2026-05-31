@@ -14,28 +14,32 @@ import java.util.UUID;
  * Interactive read-eval-print loop. Prints a welcome banner, then reads prompts from stdin and
  * streams each answer from the agent server in real time — much like the Claude Code terminal.
  *
- * <p>Built-in commands: {@code /help}, {@code /model [name]}, and {@code /exit} (also {@code /quit},
- * {@code exit}, {@code quit}, or Ctrl-D).
+ * <p>Built-in commands: {@code /help}, {@code /model [name]}, {@code /new}, {@code /bug [desc]},
+ * and {@code /exit} (also {@code /quit}, {@code exit}, {@code quit}, or Ctrl-D).
  */
 @Component
 public class TerminalRunner implements CommandLineRunner {
 
-    private static final String RESET = "[0m";
-    private static final String BOLD = "[1m";
-    private static final String CYAN = "[36m";
-    private static final String GREEN = "[32m";
-    private static final String YELLOW = "[33m";
-    private static final String GRAY = "[90m";
+    private static final String RESET = "[0m";
+    private static final String BOLD = "[1m";
+    private static final String CYAN = "[36m";
+    private static final String GREEN = "[32m";
+    private static final String YELLOW = "[33m";
+    private static final String GRAY = "[90m";
 
     private final AgentClient client;
     private final TerminalProperties properties;
+    private final GitHubIssueReporter bugReporter;
+    private final ConversationLog conversationLog = new ConversationLog();
 
     private String model;
     private String sessionId = UUID.randomUUID().toString();
 
-    public TerminalRunner(AgentClient client, TerminalProperties properties) {
+    public TerminalRunner(AgentClient client, TerminalProperties properties,
+            GitHubIssueReporter bugReporter) {
         this.client = client;
         this.properties = properties;
+        this.bugReporter = bugReporter;
         this.model = blankToNull(properties.model());
     }
 
@@ -69,7 +73,12 @@ public class TerminalRunner implements CommandLineRunner {
             }
             if (line.equals("/new")) {
                 sessionId = UUID.randomUUID().toString();
+                conversationLog.clear();
                 System.out.println(GRAY + "Started a new conversation." + RESET);
+                continue;
+            }
+            if (line.equals("/bug") || line.startsWith("/bug ")) {
+                handleBugCommand(line);
                 continue;
             }
             ask(line);
@@ -79,10 +88,35 @@ public class TerminalRunner implements CommandLineRunner {
     }
 
     private void ask(String prompt) {
+        conversationLog.recordUserPrompt(prompt);
         System.out.println();
         StreamPrinter printer = new StreamPrinter();
         try {
-            client.streamChat(prompt, model, sessionId, printer);
+            client.streamChat(prompt, model, sessionId, new AgentClient.Handler() {
+                @Override
+                public void onToken(String text) {
+                    printer.onToken(text);
+                    conversationLog.appendToken(text);
+                }
+
+                @Override
+                public void onToolCall(String name, String args) {
+                    conversationLog.flushAssistantMessage();
+                    printer.onToolCall(name, args);
+                    conversationLog.recordToolCall(name, args);
+                }
+
+                @Override
+                public void onToolResult(String name, String result) {
+                    printer.onToolResult(name, result);
+                    conversationLog.recordToolResult(name, result);
+                }
+
+                @Override
+                public void onError(String message) {
+                    printer.onError(message);
+                }
+            });
         } catch (ConnectException e) {
             System.out.println(YELLOW + "Cannot reach the agent server at " + properties.serverUrl()
                     + ".\nStart it with:  mvn -pl mcp-integration spring-boot:run" + RESET);
@@ -93,6 +127,44 @@ public class TerminalRunner implements CommandLineRunner {
             System.out.println(YELLOW + "Interrupted." + RESET);
         }
         printer.finishLine();
+        conversationLog.flushAssistantMessage();
+    }
+
+    private void handleBugCommand(String line) {
+        String description = line.length() > "/bug".length() ? line.substring("/bug".length()).strip() : "";
+
+        if (conversationLog.isEmpty()) {
+            System.out.println(GRAY + "Nothing to report yet — start a conversation first." + RESET);
+            return;
+        }
+
+        if (!bugReporter.isConfigured()) {
+            System.out.println(YELLOW + "Cannot create issue: set GITHUB_TOKEN and terminal.github-repo." + RESET);
+            return;
+        }
+
+        String title = description.isEmpty() ? "Bug report from terminal session" : description;
+        String body = buildIssueBody(description);
+
+        System.out.print(GRAY + "Creating GitHub issue…" + RESET);
+        System.out.flush();
+
+        try {
+            String url = bugReporter.createIssue(title, body);
+            System.out.println("\r" + GREEN + "Issue created: " + url + RESET);
+        } catch (Exception e) {
+            System.out.println("\r" + YELLOW + "Failed to create issue: " + e.getMessage() + RESET);
+        }
+    }
+
+    private String buildIssueBody(String description) {
+        StringBuilder sb = new StringBuilder();
+        if (!description.isEmpty()) {
+            sb.append("## Description\n\n").append(description).append("\n\n");
+        }
+        sb.append("## Conversation Log\n\n");
+        sb.append(conversationLog.formatMarkdown());
+        return sb.toString();
     }
 
     /** Renders streamed events, tracking whether output is mid-line so separators look right. */
@@ -182,7 +254,8 @@ public class TerminalRunner implements CommandLineRunner {
         System.out.println(GRAY + "  Model: " + (model == null ? "(server default)" : model) + RESET);
         System.out.println(GRAY + "  Type a prompt and press Enter. " + RESET);
         System.out.println(GRAY + "  Commands: " + GREEN + "/help" + GRAY + "  " + GREEN + "/model [name]"
-                + GRAY + "  " + GREEN + "/new" + GRAY + "  " + GREEN + "/exit" + RESET);
+                + GRAY + "  " + GREEN + "/new" + GRAY + "  " + GREEN + "/bug [desc]"
+                + GRAY + "  " + GREEN + "/exit" + RESET);
         System.out.println(GRAY + "  Tip: run " + GREEN + "hugin update" + GRAY + " in a new terminal to pull the latest code and rebuild." + RESET);
     }
 
@@ -193,6 +266,8 @@ public class TerminalRunner implements CommandLineRunner {
         System.out.println("  " + GREEN + "/model" + RESET + "         Show the current model");
         System.out.println("  " + GREEN + "/model <name>" + RESET + "  Use a specific model for new prompts");
         System.out.println("  " + GREEN + "/new" + RESET + "           Start a fresh conversation (clear short-term memory)");
+        System.out.println("  " + GREEN + "/bug" + RESET + "           Create a GitHub issue with the conversation log");
+        System.out.println("  " + GREEN + "/bug <desc>" + RESET + "    Create a bug report with a description");
         System.out.println("  " + GREEN + "/exit" + RESET + "          Quit (also /quit, exit, quit, Ctrl-D)");
         System.out.println();
         System.out.println(GRAY + "Anything else is sent to the agent; the answer streams in live." + RESET);
