@@ -28,9 +28,10 @@ public class HttpLoggingFilter extends OncePerRequestFilter {
 
         // SSE responses are written asynchronously on a background thread, after the filter chain
         // has already returned. Wrapping them with ContentCachingResponseWrapper would buffer the
-        // async events and prevent them from reaching the client. Detect SSE requests upfront via
-        // the Accept header and bypass response caching entirely for those requests.
-        boolean isSse = MediaType.TEXT_EVENT_STREAM_VALUE.equals(request.getHeader(HttpHeaders.ACCEPT));
+        // async events and prevent them from reaching the client. Detect SSE requests upfront and
+        // bypass response caching entirely for those requests.
+        boolean isSse = MediaType.TEXT_EVENT_STREAM_VALUE.equals(request.getHeader(HttpHeaders.ACCEPT))
+                || request.getRequestURI().endsWith("/stream");
         if (isSse) {
             filterChain.doFilter(wrappedRequest, response);
             logRequest(wrappedRequest);

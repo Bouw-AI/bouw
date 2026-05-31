@@ -125,6 +125,63 @@ PLIST
   svc_enable()    { launchctl load -w "$PLIST_PATH" 2>/dev/null || true; }
   svc_daemon_reload() { :; }  # no-op on macOS
 
+  DISCORD_PLIST_LABEL="com.hugin.discord"
+  DISCORD_PLIST_PATH="$HOME/Library/LaunchAgents/${DISCORD_PLIST_LABEL}.plist"
+
+  discord_has_token() { grep -qE '^DISCORD_BOT_TOKEN=.+' "${ENV_FILE:-$HUGIN_HOME/hugin.env}" 2>/dev/null; }
+
+  discord_svc_install() {
+    if ! discord_has_token; then
+      info "DISCORD_BOT_TOKEN not set in $ENV_FILE — skipping Discord bot service."
+      return
+    fi
+    if [[ ! -f "$HUGIN_HOME/bin/agent-discord.jar" ]]; then
+      info "agent-discord.jar not found — skipping Discord bot service."
+      return
+    fi
+    mkdir -p "$HOME/Library/LaunchAgents"
+    cat > "$DISCORD_PLIST_PATH" <<DISCORD_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>             <string>${DISCORD_PLIST_LABEL}</string>
+  <key>UserName</key>          <string>${INSTALL_USER}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HUGIN_HOME</key>  <string>${HUGIN_HOME}</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>set -a; source ${ENV_FILE}; set +a; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/agent-discord.jar</string>
+  </array>
+  <key>WorkingDirectory</key>  <string>${HUGIN_HOME}</string>
+  <key>StandardOutPath</key>   <string>${HUGIN_HOME}/logs/discord.log</string>
+  <key>StandardErrorPath</key> <string>${HUGIN_HOME}/logs/discord.log</string>
+  <key>RunAtLoad</key>         <true/>
+  <key>KeepAlive</key>
+  <dict><key>SuccessfulExit</key><false/></dict>
+</dict>
+</plist>
+DISCORD_PLIST
+    launchctl unload "$DISCORD_PLIST_PATH" 2>/dev/null || true
+    launchctl load -w "$DISCORD_PLIST_PATH"
+    success "Discord bot service installed."
+  }
+
+  discord_svc_uninstall() {
+    launchctl unload "$DISCORD_PLIST_PATH" 2>/dev/null || true
+    rm -f "$DISCORD_PLIST_PATH"
+  }
+
+  discord_svc_start()     { discord_has_token && launchctl start "$DISCORD_PLIST_LABEL" 2>/dev/null || true; }
+  discord_svc_stop()      { launchctl stop "$DISCORD_PLIST_LABEL" 2>/dev/null || true; }
+  discord_svc_restart()   { discord_svc_stop; sleep 1; discord_svc_start; }
+  discord_svc_is_active() { launchctl list 2>/dev/null | grep -q "$DISCORD_PLIST_LABEL"; }
+
   svc_start_redis()    { brew services start redis; }
   svc_is_active_redis(){ brew services list 2>/dev/null | grep -E '^redis\s' | grep -q started; }
 
@@ -148,6 +205,57 @@ https://packages.adoptium.net/artifactory/deb ${VERSION_CODENAME} main" \
     sudo apt-get update -qq
     sudo apt-get install -y temurin-21-jdk
   }
+  DISCORD_SERVICE_FILE="/etc/systemd/system/hugin-discord.service"
+
+  discord_has_token() { grep -qE '^DISCORD_BOT_TOKEN=.+' "${ENV_FILE:-$HUGIN_HOME/hugin.env}" 2>/dev/null; }
+
+  discord_svc_install() {
+    if ! discord_has_token; then
+      info "DISCORD_BOT_TOKEN not set in $ENV_FILE — skipping Discord bot service."
+      return
+    fi
+    if [[ ! -f "$HUGIN_HOME/bin/agent-discord.jar" ]]; then
+      info "agent-discord.jar not found — skipping Discord bot service."
+      return
+    fi
+    sudo_retry --reason "write Discord systemd service file" tee "$DISCORD_SERVICE_FILE" > /dev/null <<DISCORD_SERVICE
+# Hugin Discord bot service — managed by install.sh
+[Unit]
+Description=Hugin Discord Bot
+After=network-online.target hugin.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${INSTALL_USER}
+Environment=HUGIN_HOME=${HUGIN_HOME}
+EnvironmentFile=${ENV_FILE}
+WorkingDirectory=${HUGIN_HOME}
+ExecStart=/usr/bin/java -jar ${HUGIN_HOME}/bin/agent-discord.jar
+StandardOutput=append:${HUGIN_HOME}/logs/discord.log
+StandardError=append:${HUGIN_HOME}/logs/discord.log
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+DISCORD_SERVICE
+    sudo_retry --reason "reload systemd for Discord service" systemctl daemon-reload
+    sudo systemctl enable hugin-discord
+    success "Discord bot service installed."
+  }
+
+  discord_svc_uninstall() {
+    sudo systemctl disable --now hugin-discord 2>/dev/null || true
+    sudo rm -f "$DISCORD_SERVICE_FILE"
+    sudo systemctl daemon-reload
+  }
+
+  discord_svc_start()     { discord_has_token && sudo systemctl start hugin-discord 2>/dev/null || true; }
+  discord_svc_stop()      { sudo systemctl stop hugin-discord 2>/dev/null || true; }
+  discord_svc_restart()   { sudo systemctl restart hugin-discord 2>/dev/null || true; }
+  discord_svc_is_active() { systemctl is-active --quiet hugin-discord 2>/dev/null; }
+
   pkg_install_redis()   { sudo apt-get install -y redis-server; }
 
   svc_install() {
@@ -360,6 +468,9 @@ LLM_MODEL=${LLM_MODEL:-}
 # Secure the /api/agent/** endpoints with an X-API-Key header (leave blank to disable).
 AGENT_API_KEY=${AGENT_API_KEY:-}
 
+# Discord bot (optional — leave blank to disable)
+DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+
 # Long-term Redis-backed semantic memory
 MEMORY_ENABLED=${MEMORY_ENABLED:-false}
 REDIS_HOST=${REDIS_HOST_VAL:-}
@@ -389,7 +500,7 @@ EOF
 
 # Load existing values so they can be used as defaults on reconfigure
 _existing_key="" _existing_agent_key="" _existing_redis_host="" _existing_redis_port="6379"
-_existing_model="" _existing_github_token=""
+_existing_model="" _existing_github_token="" _existing_discord_token=""
 if [[ -f "$ENV_FILE" ]]; then
   _existing_key=$(grep -E '^OPEN_ROUTER_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
   _existing_agent_key=$(grep -E '^AGENT_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
@@ -397,12 +508,13 @@ if [[ -f "$ENV_FILE" ]]; then
   _existing_redis_port=$(grep -E '^REDIS_PORT=' "$ENV_FILE" | cut -d= -f2- || echo "6379")
   _existing_model=$(grep -E '^LLM_MODEL=' "$ENV_FILE" | cut -d= -f2- || true)
   _existing_github_token=$(grep -E '^GITHUB_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
+  _existing_discord_token=$(grep -E '^DISCORD_BOT_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
 fi
 
 # Initialise all config vars to empty so save_env can be called at any point.
 OPENROUTER_KEY="" LLM_MODEL="" AGENT_API_KEY="" MEMORY_ENABLED=false
 REDIS_HOST_VAL="" REDIS_PORT_VAL=6379 GITHUB_TOKEN="" CLOUD_AGENTS_ENABLED=false
-ADMIN_USERNAME="" ADMIN_PASSWORD="" JWT_SECRET=""
+ADMIN_USERNAME="" ADMIN_PASSWORD="" JWT_SECRET="" DISCORD_BOT_TOKEN=""
 
 if [[ "$SKIP_CREDENTIALS" == "true" ]]; then
   info "Reusing existing credentials from $ENV_FILE — skipping interactive prompts."
@@ -422,6 +534,8 @@ if [[ "$SKIP_CREDENTIALS" == "true" ]]; then
                  || openssl rand -base64 48 2>/dev/null | tr -d '\n')
     info "JWT secret auto-generated."
   fi
+  # Prefer existing env file value, fall back to shell env var (handles first-run after manual token setup)
+  DISCORD_BOT_TOKEN="${_existing_discord_token:-${DISCORD_BOT_TOKEN:-}}"
   success "Credentials loaded."
 else
 
@@ -736,10 +850,11 @@ else
   info "Building fat jars — this may take a few minutes..."
   MAVEN_OPTS="${MAVEN_OPTS:--Xmx512m}" \
     mvn -f "$REPO_DIR/pom.xml" \
-        -pl mcp-integration,agent-terminal -am \
+        -pl mcp-integration,agent-terminal,agent-discord -am \
         clean package -DskipTests -q
   cp "$REPO_DIR"/mcp-integration/target/mcp-integration-*.jar  "$HUGIN_HOME/bin/mcp-integration.jar"
   cp "$REPO_DIR"/agent-terminal/target/agent-terminal-*.jar     "$HUGIN_HOME/bin/agent-terminal.jar"
+  cp "$REPO_DIR"/agent-discord/target/agent-discord-*.jar       "$HUGIN_HOME/bin/agent-discord.jar"
   success "Jars built and copied to $HUGIN_HOME/bin/"
 fi
 
@@ -798,6 +913,15 @@ if [[ "$OS_TYPE" == "macos" ]]; then
     rm -f "$PLIST_PATH"
   }
 
+  DISCORD_PLIST_LABEL="com.hugin.discord"
+  DISCORD_PLIST_PATH="$HOME/Library/LaunchAgents/${DISCORD_PLIST_LABEL}.plist"
+
+  discord_has_token() { grep -qE '^DISCORD_BOT_TOKEN=.+' "${ENV_FILE:-$HUGIN_HOME/hugin.env}" 2>/dev/null; }
+  discord_svc_is_active() { launchctl list 2>/dev/null | grep -q "$DISCORD_PLIST_LABEL"; }
+  discord_svc_stop()      { launchctl stop "$DISCORD_PLIST_LABEL" 2>/dev/null || true; }
+  discord_svc_start()     { discord_has_token && launchctl start "$DISCORD_PLIST_LABEL" 2>/dev/null || true; }
+  discord_svc_restart()   { discord_svc_stop; sleep 1; discord_svc_start; }
+
   pkg_install_redis()  { brew install redis; }
   svc_start_redis()    { brew services start redis; }
   svc_is_active_redis(){ brew services list 2>/dev/null | grep -E '^redis\s' | grep -q started; }
@@ -817,6 +941,12 @@ else
     sudo rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
     sudo systemctl daemon-reload
   }
+
+  discord_has_token() { grep -qE '^DISCORD_BOT_TOKEN=.+' "${ENV_FILE:-$HUGIN_HOME/hugin.env}" 2>/dev/null; }
+  discord_svc_is_active() { systemctl is-active --quiet hugin-discord 2>/dev/null; }
+  discord_svc_stop()      { sudo systemctl stop hugin-discord 2>/dev/null || true; }
+  discord_svc_start()     { discord_has_token && sudo systemctl start hugin-discord 2>/dev/null || true; }
+  discord_svc_restart()   { sudo systemctl restart hugin-discord 2>/dev/null || true; }
 
   pkg_install_redis()  { sudo apt-get install -y redis-server; }
   svc_start_redis()    { sudo systemctl enable --now redis-server; }
@@ -1220,7 +1350,7 @@ cmd_update() {
   info "Building jars (this may take a minute)..."
   MAVEN_OPTS="${MAVEN_OPTS:--Xmx512m}" \
     mvn -f "$REPO_DIR/pom.xml" \
-        -pl mcp-integration,agent-terminal -am \
+        -pl mcp-integration,agent-terminal,agent-discord -am \
         clean package -DskipTests -q \
     || die "Maven build failed — check output above."
 
@@ -1232,8 +1362,17 @@ cmd_update() {
     sleep 1
   fi
 
+  local discord_was_running=false
+  if discord_svc_is_active 2>/dev/null; then
+    discord_was_running=true
+    info "Stopping Discord bot service to swap jar..."
+    discord_svc_stop
+    sleep 1
+  fi
+
   cp "$REPO_DIR"/mcp-integration/target/mcp-integration-*.jar  "$HUGIN_HOME/bin/mcp-integration.jar"
   cp "$REPO_DIR"/agent-terminal/target/agent-terminal-*.jar     "$HUGIN_HOME/bin/agent-terminal.jar"
+  cp "$REPO_DIR"/agent-discord/target/agent-discord-*.jar       "$HUGIN_HOME/bin/agent-discord.jar" 2>/dev/null || true
   cp "$REPO_DIR/openrouter-search-mcp.py"                       "$HUGIN_HOME/bin/openrouter-search-mcp.py"
   success "Jars and scripts updated."
 
@@ -1249,6 +1388,14 @@ cmd_update() {
     success "Service restarted and healthy."
   else
     info "Service was not running — start it with: hugin start"
+  fi
+
+  if [[ "$discord_was_running" == "true" ]]; then
+    info "Restarting Discord bot service..."
+    discord_svc_start
+    success "Discord bot service restarted."
+  elif discord_has_token && [[ -f "$HUGIN_HOME/bin/agent-discord.jar" ]]; then
+    info "Discord bot was not running — start it with: hugin discord start"
   fi
 }
 
@@ -1332,6 +1479,10 @@ else
   svc_start 2>/dev/null || true
   info "Service started."
 fi
+
+# ── 9b. Discord bot service ───────────────────────────────────────────────────
+info "Setting up Discord bot service..."
+discord_svc_install
 
 # ── 10. health check ──────────────────────────────────────────────────────────
 wait_for_health 60

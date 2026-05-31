@@ -1,6 +1,7 @@
 package com.example.agent;
 
 import com.example.agent.model.*;
+import com.example.agent.prompts.Prompts;
 import com.example.agent.tool.LocalTool;
 import com.example.agent.tool.LocalToolProperties;
 import com.example.agent.tool.LocalToolRegistry;
@@ -253,7 +254,7 @@ class AgentServiceTest {
         ArgumentCaptor<List<ChatMessage>> captor = ArgumentCaptor.forClass(List.class);
         verify(llmClient).chat(eq(MODEL), captor.capture(), anyList());
         assertThat(captor.getValue().get(0).role()).isEqualTo("system");
-        assertThat(captor.getValue().get(0).content()).isEqualTo(AgentService.TOOL_SYSTEM_PROMPT);
+        assertThat(captor.getValue().get(0).content()).isEqualTo(Prompts.TOOL_USE);
     }
 
     @Test

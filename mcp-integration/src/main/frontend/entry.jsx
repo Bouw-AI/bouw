@@ -19,6 +19,7 @@ const DISP = "'Chakra Petch', sans-serif";
 const BODY = "'Sora', system-ui, sans-serif";
 
 const MODELS = [
+  { id: "deepseek/deepseek-v4-flash", provider: "OpenRouter" },
   { id: "openai/gpt-oss-120b", provider: "OpenRouter" },
   { id: "deepseek/deepseek-chat", provider: "OpenRouter" },
   { id: "llama3.2", provider: "Ollama" },
@@ -100,7 +101,17 @@ function Bubble({ m }) {
         <div style={{ display: "flex", alignItems: "center", gap: 7, color: C.gold, fontWeight: 600, marginBottom: 5 }}>
           <Wrench size={13} /> tool call · {m.tool}
         </div>
-        <div style={{ color: C.mut }}>{m.args}</div>
+        <div style={{ color: C.mut, whiteSpace: "pre-wrap" }}>{m.args}</div>
+      </div>
+    );
+  }
+  if (m.role === "tool_result") {
+    return (
+      <div style={{ alignSelf: "flex-start", maxWidth: "80%", background: `${C.ok}0A`, border: `1px solid ${C.ok}33`, borderRadius: 10, padding: "10px 12px", fontFamily: MONO, fontSize: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, color: C.ok, fontWeight: 600, marginBottom: 5 }}>
+          <CheckCircle2 size={13} /> result · {m.tool}
+        </div>
+        <div style={{ color: C.mut, whiteSpace: "pre-wrap", maxHeight: 180, overflowY: "auto" }}>{m.result}</div>
       </div>
     );
   }
@@ -158,6 +169,7 @@ function Chat({ model, token, sessionId, onUnauth }) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Accept": "text/event-stream",
           "Authorization": `Bearer ${token}`,
         },
         body: JSON.stringify({ prompt: userText, model, sessionId }),
@@ -212,6 +224,8 @@ function Chat({ model, token, sessionId, onUnauth }) {
           } else if (evtType === "tool") {
             currentAssistantId = null;
             setMsgs(m => [...m, { role: "tool", tool: data.name, args: data.args ?? "" }]);
+          } else if (evtType === "tool_result") {
+            setMsgs(m => [...m, { role: "tool_result", tool: data.name, result: data.result ?? "" }]);
           } else if (evtType === "done") {
             break outer;
           } else if (evtType === "error") {
@@ -298,16 +312,15 @@ function Stat({ label, value, accent }) {
   );
 }
 
-function ServicesView({ services, servers }) {
+function ServicesView({ services, servers, tools }) {
   const connectedCount = servers.filter(s => s.connected).length;
-  const totalTools = servers.reduce((n, s) => n + (s.tools?.length ?? 0), 0);
   const upCount = services.filter(s => s.status === "up").length;
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 20 }}>
         <Stat label="Services Online" value={`${upCount}/${services.length || 4}`} accent={C.ok} />
         <Stat label="MCP Servers" value={`${connectedCount}/${servers.length}`} accent={C.cyan} />
-        <Stat label="Tools Available" value={totalTools} accent={C.gold} />
+        <Stat label="Tools Available" value={tools.length} accent={C.gold} />
       </div>
       <Panel>
         <SectionLabel>System Vitals</SectionLabel>
@@ -570,23 +583,27 @@ function ToolsView({ tools }) {
         <span style={{ fontFamily: MONO, fontSize: 11, color: C.mut2 }}>{list.length} of {tools.length}</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-        {list.map((t, i) => (
-          <Panel key={i} pad={14} style={{ display: "flex", alignItems: "flex-start", gap: 11 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: `${C.cyan}12`, border: `1px solid ${C.cyan}28`, display: "grid", placeItems: "center", flexShrink: 0 }}>
-              <Wrench size={14} color={C.cyan} />
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: MONO, fontSize: 12.5, color: C.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.name}</div>
-              <div style={{ fontFamily: MONO, fontSize: 10, color: C.mut, marginTop: 2 }}>{t.server} · {t.transport}</div>
-              {t.description && (
-                <div style={{ fontFamily: BODY, fontSize: 11, color: C.mut2, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{t.description}</div>
-              )}
-            </div>
-          </Panel>
-        ))}
+        {list.map((t, i) => {
+          const isLocal = t.transport === "built-in";
+          const accent = isLocal ? C.gold : C.cyan;
+          return (
+            <Panel key={i} pad={14} style={{ display: "flex", alignItems: "flex-start", gap: 11 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: `${accent}12`, border: `1px solid ${accent}28`, display: "grid", placeItems: "center", flexShrink: 0 }}>
+                {isLocal ? <Terminal size={14} color={accent} /> : <Wrench size={14} color={accent} />}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontFamily: MONO, fontSize: 12.5, color: C.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.name}</div>
+                <div style={{ fontFamily: MONO, fontSize: 10, color: C.mut, marginTop: 2 }}>{t.server} · {t.transport}</div>
+                {t.description && (
+                  <div style={{ fontFamily: BODY, fontSize: 11, color: C.mut2, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{t.description}</div>
+                )}
+              </div>
+            </Panel>
+          );
+        })}
         {list.length === 0 && (
           <div style={{ gridColumn: "1 / -1", textAlign: "center", color: C.mut, fontFamily: MONO, fontSize: 12, padding: 40 }}>
-            {tools.length === 0 ? "No tools available — connect MCP servers first." : `No tools match "${q}".`}
+            {tools.length === 0 ? "Loading tools…" : `No tools match "${q}".`}
           </div>
         )}
       </div>
@@ -713,6 +730,7 @@ function App() {
   const [modelOpen, setModelOpen] = useState(false);
   const [servers, setServers] = useState([]);
   const [services, setServices] = useState([]);
+  const [tools, setTools] = useState([]);
 
   const sessionId = useRef(
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -727,6 +745,7 @@ function App() {
     setAuthUser("");
     setServers([]);
     setServices([]);
+    setTools([]);
   }, []);
 
   const fetchServers = useCallback(async (tok) => {
@@ -749,10 +768,21 @@ function App() {
     } catch (e) { console.error("fetchStatus failed:", e); }
   }, [token, handleLogout]);
 
+  const fetchTools = useCallback(async (tok) => {
+    const t = tok ?? token;
+    if (!t) return;
+    try {
+      const res = await fetch("/api/agent/tools", { headers: { "Authorization": `Bearer ${t}` } });
+      if (res.status === 401) { handleLogout(); return; }
+      if (res.ok) setTools(await res.json());
+    } catch (e) { console.error("fetchTools failed:", e); }
+  }, [token, handleLogout]);
+
   useEffect(() => {
     if (token) {
       fetchServers();
       fetchStatus();
+      fetchTools();
     }
   }, [token]);
 
@@ -764,15 +794,6 @@ function App() {
   };
 
   if (!token) return <LoginScreen onLogin={handleLogin} />;
-
-  const allTools = servers.flatMap(s =>
-    (s.tools ?? []).map(t => ({
-      name: t.name,
-      description: t.description,
-      server: s.name,
-      transport: s.definition?.url ? "sse" : "stdio",
-    }))
-  );
 
   return (
     <div style={{ display: "flex", height: "100vh", background: C.bg, color: C.text, fontFamily: BODY, overflow: "hidden" }}>
@@ -895,9 +916,9 @@ function App() {
               </div>
             </div>
           )}
-          {view === "status"  && <ServicesView services={services} servers={servers} />}
+          {view === "status"  && <ServicesView services={services} servers={servers} tools={tools} />}
           {view === "servers" && <ServersView servers={servers} token={token} onRefresh={fetchServers} onUnauth={handleLogout} />}
-          {view === "tools"   && <ToolsView tools={allTools} />}
+          {view === "tools"   && <ToolsView tools={tools} />}
         </main>
       </div>
     </div>

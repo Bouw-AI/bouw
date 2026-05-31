@@ -239,13 +239,30 @@ public class McpServerRegistryService {
     private McpSyncClient buildStdioClient(McpServerDefinition def) {
         if (def.command() == null || def.command().isBlank())
             throw new IllegalArgumentException("'command' is required for stdio servers");
-        ServerParameters.Builder builder = ServerParameters.builder(def.command());
+        String command = resolveCommandPath(def.command());
+        ServerParameters.Builder builder = ServerParameters.builder(command);
         if (def.args() != null && !def.args().isEmpty()) builder.args(def.args());
         if (def.env()  != null && !def.env().isEmpty())  builder.env(def.env());
         return McpClient.sync(new StdioClientTransport(builder.build(), mcpJsonMapper))
                 .clientInfo(CLIENT_INFO)
                 .initializationTimeout(Duration.ofSeconds(120))
                 .build();
+    }
+
+    private String resolveCommandPath(String command) {
+        if (command.contains("/")) {
+            return command;
+        }
+        String pathEnv = System.getenv("PATH");
+        if (pathEnv == null) return command;
+        for (String dir : pathEnv.split(":")) {
+            Path candidate = Path.of(dir).resolve(command);
+            if (Files.isExecutable(candidate)) {
+                log.debug("Resolved command '{}' to '{}'", command, candidate);
+                return candidate.toString();
+            }
+        }
+        return command;
     }
 
     private McpSyncClient buildSseClient(McpServerDefinition def) {

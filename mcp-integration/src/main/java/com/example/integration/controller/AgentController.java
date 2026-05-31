@@ -16,6 +16,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
@@ -52,6 +53,11 @@ public class AgentController {
         this.streamExecutor = agentStreamExecutor;
         // Allow a margin beyond the agent's own deadline before the SSE connection is torn down.
         this.streamTimeoutMillis = requestTimeout.plusSeconds(60).toMillis();
+    }
+
+    @GetMapping("/tools")
+    public List<AgentService.ToolSummary> listTools() {
+        return agentService.availableTools();
     }
 
     @PostMapping("/chat")

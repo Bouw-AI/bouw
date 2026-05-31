@@ -1,6 +1,7 @@
 package com.example.agent;
 
 import com.example.agent.model.*;
+import com.example.agent.prompts.Prompts;
 import com.example.agent.tool.LocalTool;
 import com.example.agent.tool.LocalToolRegistry;
 import com.example.agent.tool.ToolContext;
@@ -32,20 +33,6 @@ public class AgentService {
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
     static final int MAX_ITERATIONS = 10;
 
-    /** Prepended when any tools are advertised, to nudge models toward using them. */
-    static final String TOOL_SYSTEM_PROMPT = """
-            You are a helpful assistant with access to external tools. When a tool can help \
-            fulfil the user's request — for example reading, writing, or editing files, \
-            searching the codebase, or running shell commands — call the relevant tool instead \
-            of guessing or answering from memory. You may call tools several times in sequence, \
-            using each result to decide the next step. After your tool calls complete, you MUST \
-            always write a conversational text response to the user explaining what you found or \
-            did — never end on a tool call alone. If no tool is relevant, simply answer normally.""";
-
-    /** Prepended to recalled memories injected into the conversation. */
-    static final String MEMORY_SYSTEM_PROMPT_HEADER = """
-            Relevant context recalled from long-term memory of past conversations. \
-            Use it if it helps answer the user; ignore it if it is not relevant:""";
 
     private final OpenAiClient llmClient;
     private final McpToolProvider toolProvider;
@@ -81,6 +68,25 @@ public class AgentService {
         this.systemFactsService = systemFactsService;
     }
 
+    public record ToolSummary(String name, String description, String server, String transport) {}
+
+    /** Returns a flat list of all tools currently available to the agent (local + MCP). */
+    public List<ToolSummary> availableTools() {
+        List<ToolSummary> result = new ArrayList<>();
+        for (LocalTool tool : localTools.tools()) {
+            result.add(new ToolSummary(tool.name(), tool.description(), "local", "built-in"));
+        }
+        toolProvider.getAllToolsByServer().forEach((serverName, tools) ->
+            tools.forEach(t -> result.add(new ToolSummary(
+                t.name(),
+                t.description() != null ? t.description() : "",
+                serverName,
+                "mcp"
+            )))
+        );
+        return result;
+    }
+
     public AgentResponse chat(AgentRequest request) {
         return runLoop(request, NO_OP_LISTENER, false);
     }
@@ -114,7 +120,7 @@ public class AgentService {
             }
         });
         if (!toolDefinitions.isEmpty()) {
-            messages.add(ChatMessage.system(TOOL_SYSTEM_PROMPT));
+            messages.add(ChatMessage.system(Prompts.TOOL_USE));
         }
         memoryService.ifPresent(memory -> {
             List<MemoryStore.ScoredMemory> recalled = memory.recall(request.prompt());
@@ -195,7 +201,7 @@ public class AgentService {
     }
 
     private static String formatMemories(List<MemoryStore.ScoredMemory> memories) {
-        StringBuilder sb = new StringBuilder(MEMORY_SYSTEM_PROMPT_HEADER);
+        StringBuilder sb = new StringBuilder(Prompts.MEMORY_HEADER);
         int n = 1;
         for (MemoryStore.ScoredMemory memory : memories) {
             sb.append("\n\n").append(n++).append(". ").append(memory.record().text());
