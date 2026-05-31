@@ -22,9 +22,10 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Runs {@code hugin update} from the workspace root to rebuild and reinstall the agent
- * from source, reusing existing credentials. The agent can use this tool to update its
- * own code and restart when the update completes.
+ * Installs the latest published {@code hugin-agent} npm package and then runs
+ * {@code hugin update} to rebuild and reinstall the agent from the freshly pulled
+ * source, reusing existing credentials. The agent can use this tool to update its
+ * own code to the latest release and restart when the update completes.
  */
 @Component
 public class SelfUpdateTool implements LocalTool {
@@ -78,7 +79,11 @@ public class SelfUpdateTool implements LocalTool {
         String currentPath = System.getenv("PATH") != null ? System.getenv("PATH") : "";
         String extendedPath = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:" + currentPath;
 
-        ProcessBuilder builder = new ProcessBuilder("/bin/bash", "-c", "npm update hugin-agent; hugin update");
+        // Pull the latest published hugin-agent from npm (globally), then rebuild from the
+        // updated source. Using `@latest` ignores any semver range so it always lands on the
+        // newest release; `hugin update` then rebuilds the jars from that source.
+        ProcessBuilder builder = new ProcessBuilder(
+                "/bin/bash", "-c", "npm install -g hugin-agent@latest; hugin update");
         builder.directory(ctx.workspace().root().toFile());
         builder.environment().put("PATH", extendedPath);
         builder.redirectErrorStream(true);
