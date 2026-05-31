@@ -51,7 +51,7 @@ Note: tool calls are handled whenever `tool_calls` are present **regardless of `
 - Config file path comes from the `mcp` config prefix; supports `~/`-relative paths.
 
 ### Built-in local tools (`agent-core/.../tool/`)
-- In-process tools the agent can call directly, with **no MCP-SDK dependency** so they live in `agent-core`: `read_file`, `write_file`, `edit_file`, `list_files`, `grep_search`, `run_bash`. Each implements `LocalTool` (discovered as Spring beans) and is collected by `LocalToolRegistry`.
+- In-process tools the agent can call directly, with **no MCP-SDK dependency** so they live in `agent-core`: `read_file`, `write_file`, `edit_file`, `list_files`, `find_files`, `grep_search`, `run_bash`. Each implements `LocalTool` (discovered as Spring beans) and is collected by `LocalToolRegistry`.
 - Gated by `agent.tools.enabled` (master switch). When false the registry is empty — no local tools advertised or executable.
 - **All file/shell access is confined to a single workspace root** by `Workspace`: paths resolve relative to the root or absolute, but the symlink-resolved path must stay inside the root (blocks `../` traversal and symlink escapes). The root is also the working dir for `run_bash`. Configure via `agent.tools.workspace-root` (relative/`~` are NOT expanded — pin an absolute path). These tools grant filesystem + shell access; scope or disable them when that's a concern.
 
