@@ -14,6 +14,8 @@ terminal:
   api-key: ${AGENT_API_KEY:}
   # Optional default model; blank lets the server fall back to llm.model.
   model: ${AGENT_MODEL:}
+  # owner/repo slug for /bug issue creation; also requires GITHUB_TOKEN in the environment.
+  github-repo: ${GITHUB_REPO:jeremyunck/hugin}
 
 logging:
   level:

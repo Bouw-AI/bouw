@@ -14,9 +14,11 @@ import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -57,9 +59,14 @@ class TerminalRunnerTest {
     }
 
     private TerminalRunner runnerWithInput(String input, AgentClient client) {
+        return runnerWithInput(input, client, mock(GitHubIssueReporter.class));
+    }
+
+    private TerminalRunner runnerWithInput(String input, AgentClient client,
+            GitHubIssueReporter bugReporter) {
         System.setIn(new ByteArrayInputStream(input.getBytes(StandardCharsets.UTF_8)));
-        var properties = new TerminalProperties("http://localhost:8080", null, null);
-        return new TerminalRunner(client, properties);
+        var properties = new TerminalProperties("http://localhost:8080", null, null, "owner/repo");
+        return new TerminalRunner(client, properties, bugReporter);
     }
 
     private String output() {
@@ -323,10 +330,120 @@ class TerminalRunnerTest {
     void modelFromPropertiesIsPassedToClient() throws Exception {
         AgentClient client = mock(AgentClient.class);
         System.setIn(new ByteArrayInputStream("ask something\nexit\n".getBytes(StandardCharsets.UTF_8)));
-        var props = new TerminalProperties("http://localhost:8080", null, "claude-3");
-        var runner = new TerminalRunner(client, props);
+        var props = new TerminalProperties("http://localhost:8080", null, "claude-3", null);
+        var runner = new TerminalRunner(client, props, mock(GitHubIssueReporter.class));
         runner.run();
         verify(client).streamChat(eq("ask something"), eq("claude-3"), any(), any());
+    }
+
+    // ------------------------------------------------------------------
+    // /bug
+    // ------------------------------------------------------------------
+
+    @Test
+    void bugCommandWithNoConversationPrintsNothing() throws Exception {
+        runnerWithInput("/bug\nexit\n").run();
+        assertThat(output()).containsIgnoringCase("nothing to report");
+    }
+
+    @Test
+    void bugCommandWhenNotConfiguredPrintsWarning() throws Exception {
+        AgentClient client = mock(AgentClient.class);
+        GitHubIssueReporter bugReporter = mock(GitHubIssueReporter.class);
+        doReturn(false).when(bugReporter).isConfigured();
+
+        // First send a prompt so the log is non-empty
+        doAnswer((Answer<Void>) inv -> {
+            AgentClient.Handler h = inv.getArgument(3);
+            h.onToken("ok");
+            return null;
+        }).when(client).streamChat(any(), any(), any(), any());
+
+        runnerWithInput("hello\n/bug\nexit\n", client, bugReporter).run();
+        assertThat(output()).containsIgnoringCase("GITHUB_TOKEN");
+    }
+
+    @Test
+    void bugCommandCreatesIssueAndPrintsUrl() throws Exception {
+        AgentClient client = mock(AgentClient.class);
+        GitHubIssueReporter bugReporter = mock(GitHubIssueReporter.class);
+        doReturn(true).when(bugReporter).isConfigured();
+        doReturn("https://github.com/owner/repo/issues/1")
+                .when(bugReporter).createIssue(anyString(), anyString());
+
+        doAnswer((Answer<Void>) inv -> {
+            AgentClient.Handler h = inv.getArgument(3);
+            h.onToken("answer");
+            return null;
+        }).when(client).streamChat(any(), any(), any(), any());
+
+        runnerWithInput("hello\n/bug describe problem\nexit\n", client, bugReporter).run();
+        assertThat(output()).contains("https://github.com/owner/repo/issues/1");
+        verify(bugReporter).createIssue(eq("describe problem"), anyString());
+    }
+
+    @Test
+    void bugCommandIssueBodyContainsUserPromptAndResponse() throws Exception {
+        AgentClient client = mock(AgentClient.class);
+        GitHubIssueReporter bugReporter = mock(GitHubIssueReporter.class);
+        doReturn(true).when(bugReporter).isConfigured();
+        doReturn("https://github.com/owner/repo/issues/2")
+                .when(bugReporter).createIssue(anyString(), anyString());
+
+        doAnswer((Answer<Void>) inv -> {
+            AgentClient.Handler h = inv.getArgument(3);
+            h.onToken("the response text");
+            return null;
+        }).when(client).streamChat(any(), any(), any(), any());
+
+        runnerWithInput("my question\n/bug\nexit\n", client, bugReporter).run();
+
+        var bodyCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(bugReporter).createIssue(anyString(), bodyCaptor.capture());
+        String body = bodyCaptor.getValue();
+        assertThat(body).contains("my question");
+        assertThat(body).contains("the response text");
+    }
+
+    @Test
+    void bugCommandIssueBodyContainsToolCallAndResult() throws Exception {
+        AgentClient client = mock(AgentClient.class);
+        GitHubIssueReporter bugReporter = mock(GitHubIssueReporter.class);
+        doReturn(true).when(bugReporter).isConfigured();
+        doReturn("https://github.com/owner/repo/issues/3")
+                .when(bugReporter).createIssue(anyString(), anyString());
+
+        doAnswer((Answer<Void>) inv -> {
+            AgentClient.Handler h = inv.getArgument(3);
+            h.onToolCall("read_file", "{\"path\":\"foo.txt\"}");
+            h.onToolResult("read_file", "file contents here");
+            return null;
+        }).when(client).streamChat(any(), any(), any(), any());
+
+        runnerWithInput("use a tool\n/bug\nexit\n", client, bugReporter).run();
+
+        var bodyCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(bugReporter).createIssue(anyString(), bodyCaptor.capture());
+        String body = bodyCaptor.getValue();
+        assertThat(body).contains("read_file");
+        assertThat(body).contains("file contents here");
+    }
+
+    @Test
+    void newCommandClearsConversationLogSoBugReportsEmpty() throws Exception {
+        AgentClient client = mock(AgentClient.class);
+        GitHubIssueReporter bugReporter = mock(GitHubIssueReporter.class);
+        doReturn(true).when(bugReporter).isConfigured();
+
+        doAnswer((Answer<Void>) inv -> {
+            AgentClient.Handler h = inv.getArgument(3);
+            h.onToken("answer");
+            return null;
+        }).when(client).streamChat(any(), any(), any(), any());
+
+        runnerWithInput("hello\n/new\n/bug\nexit\n", client, bugReporter).run();
+        assertThat(output()).containsIgnoringCase("nothing to report");
+        verify(bugReporter, never()).createIssue(anyString(), anyString());
     }
 
     // ------------------------------------------------------------------
