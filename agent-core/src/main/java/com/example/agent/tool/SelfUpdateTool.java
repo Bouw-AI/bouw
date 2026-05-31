@@ -5,19 +5,21 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import org.w3c.dom.Document;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Runs {@code hugin update} from the workspace root to rebuild and reinstall the agent
@@ -132,21 +134,28 @@ public class SelfUpdateTool implements LocalTool {
         }
 
         // Fall back to the project's own <version> in the root pom.xml.
-        // Start the search after </parent> so we skip the parent POM's version and any
-        // inherited <version> that comes before the project's own declaration.
+        // Parse with DOM and look for <version> as a direct child of <project> so
+        // dependency, plugin, and parent versions nested at deeper levels are ignored.
         try {
             Path pom = root.resolve("pom.xml");
-            if (Files.exists(pom)) {
-                String xml = Files.readString(pom);
-                int parentEnd = xml.indexOf("</parent>");
-                String searchIn = parentEnd >= 0 ? xml.substring(parentEnd) : xml;
-                Matcher m = Pattern.compile("<version>([^<]+)</version>").matcher(searchIn);
-                if (m.find()) {
-                    return m.group(1).strip();
+            if (pom.toFile().exists()) {
+                DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+                factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+                Document doc = factory.newDocumentBuilder().parse(pom.toFile());
+                NodeList children = doc.getDocumentElement().getChildNodes();
+                for (int i = 0; i < children.getLength(); i++) {
+                    Node child = children.item(i);
+                    if (child.getNodeType() == Node.ELEMENT_NODE
+                            && "version".equals(child.getNodeName())) {
+                        String v = child.getTextContent().trim();
+                        if (!v.isBlank()) {
+                            return v;
+                        }
+                    }
                 }
             }
         } catch (Exception e) {
-            log.debug("Could not read pom.xml for version: {}", e.getMessage());
+            log.debug("Could not parse pom.xml for version: {}", e.getMessage());
         }
 
         return "unknown";

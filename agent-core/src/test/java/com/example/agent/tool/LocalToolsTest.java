@@ -206,6 +206,22 @@ class LocalToolsTest {
     }
 
     @Test
+    void resolveVersionIgnoresDependencyAndPluginVersions() throws Exception {
+        Files.writeString(tmp.resolve("pom.xml"),
+                "<project>\n"
+                + "  <parent><version>3.5.0</version></parent>\n"
+                + "  <artifactId>my-app</artifactId>\n"
+                + "  <version>4.0.0</version>\n"
+                + "  <dependencies>\n"
+                + "    <dependency><groupId>org.foo</groupId><version>9.9.9</version></dependency>\n"
+                + "  </dependencies>\n"
+                + "  <build><plugins><plugin><version>1.0</version></plugin></plugins></build>\n"
+                + "</project>");
+
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("4.0.0");
+    }
+
+    @Test
     void resolveVersionReturnsUnknownWhenNoPomAndNoGit() {
         // tmp is an empty directory with no pom.xml and no git repo
         assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("unknown");
