@@ -1,29 +1,44 @@
 package com.example.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Retrieves the version of the hugin CLI. */
 @Component
 public class HuginVersionTool implements LocalTool {
 
     private static final String COMMON_PATH_PREFIX = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin";
+    private static final List<Path> COMMON_LAUNCHERS = List.of(
+            Path.of("/usr/local/bin/hugin"),
+            Path.of("/opt/homebrew/bin/hugin"));
+    private static final Pattern VERSION_ASSIGNMENT = Pattern.compile("(?m)^HUGIN_VERSION=\"([^\"]+)\"");
+    private static final Pattern REPO_DIR_ASSIGNMENT = Pattern.compile("(?m)^REPO_DIR=\"([^\"]+)\"");
 
+    private final Workspace workspace;
     private final Duration timeout;
     private final int maxChars;
+    private final ObjectMapper objectMapper;
 
-    public HuginVersionTool(LocalToolProperties properties) {
+    public HuginVersionTool(Workspace workspace, LocalToolProperties properties, ObjectMapper objectMapper) {
+        this.workspace = workspace;
         this.timeout = properties.bashTimeout();
         this.maxChars = properties.maxOutputChars();
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -46,14 +61,29 @@ public class HuginVersionTool implements LocalTool {
 
     @Override
     public String execute(Map<String, Object> arguments) throws IOException, InterruptedException {
+        return execute(arguments, new ToolContext(workspace));
+    }
+
+    @Override
+    public String execute(Map<String, Object> arguments, ToolContext ctx) throws IOException, InterruptedException {
+        Optional<String> metadataVersion = resolveMetadataVersion(ctx.workspace().root());
+        if (metadataVersion.isPresent()) {
+            return metadataVersion.get();
+        }
+
         List<List<String>> commands = List.of(
                 List.of("hugin", "--version"),
-                List.of("hugin", "version"),
-                List.of("npm", "list", "-g", "hugin-agent", "--depth=0"));
+                List.of("hugin", "version"));
 
         List<String> failures = new ArrayList<>();
         for (List<String> command : commands) {
-            CommandResult result = run(command);
+            CommandResult result;
+            try {
+                result = run(command);
+            } catch (IOException e) {
+                failures.add(String.join(" ", command) + " failed: " + e.getMessage());
+                continue;
+            }
             String version = extractVersion(result.output());
             if (result.exitCode() == 0 && version != null) {
                 return version;
@@ -63,6 +93,102 @@ public class HuginVersionTool implements LocalTool {
         }
 
         return "Error: could not determine hugin version.\n" + String.join("\n\n", failures);
+    }
+
+    private Optional<String> resolveMetadataVersion(Path workspaceRoot) {
+        String envVersion = System.getenv("HUGIN_VERSION");
+        if (isVersion(envVersion)) {
+            return Optional.of(envVersion.strip());
+        }
+
+        List<Path> packageJsonCandidates = new ArrayList<>();
+        addPackageJsonCandidate(packageJsonCandidates, System.getenv("HUGIN_REPO_DIR"));
+        addPackageJsonCandidate(packageJsonCandidates, System.getenv("REPO_DIR"));
+        packageJsonCandidates.add(workspaceRoot.resolve("package.json"));
+        addLauncherPackageJsonCandidates(packageJsonCandidates);
+
+        Optional<LauncherMetadata> launcher = readLauncherMetadata();
+        launcher.flatMap(LauncherMetadata::repoDir)
+                .ifPresent(path -> packageJsonCandidates.add(path.resolve("package.json")));
+
+        for (Path candidate : packageJsonCandidates) {
+            Optional<String> version = readPackageJsonVersion(candidate);
+            if (version.isPresent()) {
+                return version;
+            }
+        }
+
+        return launcher.flatMap(LauncherMetadata::version);
+    }
+
+    private static void addPackageJsonCandidate(List<Path> candidates, String directory) {
+        if (directory != null && !directory.isBlank()) {
+            candidates.add(Path.of(directory).resolve("package.json"));
+        }
+    }
+
+    private static void addLauncherPackageJsonCandidates(List<Path> candidates) {
+        List<Path> launchers = new ArrayList<>();
+        String configuredLauncher = System.getenv("HUGIN_LAUNCHER_PATH");
+        if (configuredLauncher != null && !configuredLauncher.isBlank()) {
+            launchers.add(Path.of(configuredLauncher));
+        }
+        launchers.addAll(COMMON_LAUNCHERS);
+
+        for (Path launcher : launchers) {
+            try {
+                if (!Files.exists(launcher)) {
+                    continue;
+                }
+                Path path = launcher.toRealPath();
+                Path dir = Files.isDirectory(path) ? path : path.getParent();
+                for (int i = 0; i < 6 && dir != null; i++) {
+                    candidates.add(dir.resolve("package.json"));
+                    dir = dir.getParent();
+                }
+            } catch (IOException ignored) {
+                // try the next launcher path
+            }
+        }
+    }
+
+    private Optional<String> readPackageJsonVersion(Path packageJson) {
+        try {
+            if (!Files.isRegularFile(packageJson)) {
+                return Optional.empty();
+            }
+            String version = objectMapper.readTree(packageJson.toFile()).path("version").asText(null);
+            return isVersion(version) ? Optional.of(version.strip()) : Optional.empty();
+        } catch (Exception ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private static Optional<LauncherMetadata> readLauncherMetadata() {
+        for (Path launcher : COMMON_LAUNCHERS) {
+            try {
+                if (!Files.isRegularFile(launcher)) {
+                    continue;
+                }
+                String content = Files.readString(launcher, StandardCharsets.UTF_8);
+                Optional<String> version = extractAssignment(content, VERSION_ASSIGNMENT)
+                        .filter(HuginVersionTool::isVersion);
+                Optional<Path> repoDir = extractAssignment(content, REPO_DIR_ASSIGNMENT)
+                        .filter(value -> !value.isBlank())
+                        .map(Path::of);
+                if (version.isPresent() || repoDir.isPresent()) {
+                    return Optional.of(new LauncherMetadata(version, repoDir));
+                }
+            } catch (IOException ignored) {
+                // try the next common launcher path
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<String> extractAssignment(String content, Pattern pattern) {
+        Matcher matcher = pattern.matcher(content);
+        return matcher.find() ? Optional.of(matcher.group(1).strip()) : Optional.empty();
     }
 
     private CommandResult run(List<String> command) throws IOException, InterruptedException {
@@ -141,5 +267,10 @@ public class HuginVersionTool implements LocalTool {
         return null;
     }
 
+    private static boolean isVersion(String value) {
+        return value != null && value.strip().matches("v?\\d+\\.\\d+\\.\\d+.*");
+    }
+
     private record CommandResult(int exitCode, String output) {}
+    private record LauncherMetadata(Optional<String> version, Optional<Path> repoDir) {}
 }

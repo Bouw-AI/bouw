@@ -11,7 +11,6 @@ const { version } = require('../../package.json');
 
 const AGENT_HOME  = process.env.AGENT_HOME ?? path.join(os.homedir(), '.hugin');
 const SERVER_JAR  = path.join(AGENT_HOME, 'bin', 'mcp-integration.jar');
-const TERMINAL_JAR = path.join(AGENT_HOME, 'bin', 'agent-terminal.jar');
 const CONFIG_YML  = path.join(AGENT_HOME, 'config', 'application.yml');
 const LOG_FILE    = path.join(AGENT_HOME, 'logs', 'hugin.log');
 
@@ -226,23 +225,8 @@ program
   .description('Stream agent server logs')
   .action(() => svcLogs());
 
-// ── terminal ──────────────────────────────────────────────────────────────────
-
-program
-  .command('terminal')
-  .description('Launch the interactive terminal client')
-  .option('--server-url <url>', 'Agent server URL', process.env.AGENT_SERVER_URL ?? 'http://localhost:8080')
-  .action(opts => {
-    requireInstalled();
-    info('Launching terminal client...');
-    exec('java', [
-      `-Dterminal.server-url=${opts.serverUrl}`,
-      '-jar', TERMINAL_JAR,
-    ]);
-  });
-
 // ── default: smart start ──────────────────────────────────────────────────────
-// "hugin" with no subcommand: ensure the server is up, then open the terminal.
+// "hugin" with no subcommand: ensure the server is up.
 
 program.action(async () => {
   requireInstalled();
@@ -270,10 +254,7 @@ program.action(async () => {
     success('Server is ready on http://localhost:8080');
   }
 
-  exec('java', [
-    `-Dterminal.server-url=${process.env.AGENT_SERVER_URL ?? 'http://localhost:8080'}`,
-    '-jar', TERMINAL_JAR,
-  ]);
+  success('Server is ready on http://localhost:8080');
 });
 
 program.parse(process.argv);

@@ -1,5 +1,6 @@
 package com.example.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -195,6 +196,21 @@ class LocalToolsTest {
     void huginVersionIgnoresLauncherUsageOutput() {
         assertThat(HuginVersionTool.extractVersion("Usage: hugin [command]\n\n  logs Stream service logs\n"))
                 .isNull();
+    }
+
+    @Test
+    void huginVersionReadsPackageJsonFromWorkspace() throws Exception {
+        Files.writeString(tmp.resolve("package.json"), """
+                {
+                  "name": "hugin-agent",
+                  "version": "9.8.7"
+                }
+                """);
+        var tool = new HuginVersionTool(workspace, properties, new ObjectMapper());
+
+        String result = tool.execute(Map.of());
+
+        assertThat(result).isEqualTo("9.8.7");
     }
 
     @Test
