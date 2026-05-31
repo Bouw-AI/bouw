@@ -104,6 +104,53 @@ class LocalToolsTest {
     }
 
     @Test
+    void findFilesMatchesByNameRecursively() throws Exception {
+        Files.createDirectories(tmp.resolve("src/main"));
+        Files.writeString(tmp.resolve("src/main/App.java"), "x");
+        Files.writeString(tmp.resolve("README.md"), "x");
+        var find = new FindFilesTool(workspace);
+
+        String result = find.execute(Map.of("pattern", "*.java"));
+
+        assertThat(result).contains("src/main/App.java");
+        assertThat(result).doesNotContain("README.md");
+    }
+
+    @Test
+    void findFilesMatchesByPathGlob() throws Exception {
+        Files.createDirectories(tmp.resolve("src/config"));
+        Files.writeString(tmp.resolve("src/config/app.yml"), "x");
+        Files.writeString(tmp.resolve("top.yml"), "x");
+        var find = new FindFilesTool(workspace);
+
+        String result = find.execute(Map.of("pattern", "src/**/*.yml"));
+
+        assertThat(result).contains("src/config/app.yml");
+        assertThat(result).doesNotContain("top.yml");
+    }
+
+    @Test
+    void findFilesSkipsIgnoredDirectories() throws Exception {
+        Files.createDirectories(tmp.resolve("target/classes"));
+        Files.writeString(tmp.resolve("target/classes/Generated.java"), "x");
+        Files.writeString(tmp.resolve("Real.java"), "x");
+        var find = new FindFilesTool(workspace);
+
+        String result = find.execute(Map.of("pattern", "*.java"));
+
+        assertThat(result).contains("Real.java");
+        assertThat(result).doesNotContain("Generated.java");
+    }
+
+    @Test
+    void findFilesReturnsMessageWhenNoneMatch() throws Exception {
+        Files.writeString(tmp.resolve("a.txt"), "x");
+        var find = new FindFilesTool(workspace);
+
+        assertThat(find.execute(Map.of("pattern", "*.java"))).isEqualTo("No files found.");
+    }
+
+    @Test
     void runBashReturnsExitCodeAndOutput() throws Exception {
         var bash = new BashCommandTool(workspace, properties);
 

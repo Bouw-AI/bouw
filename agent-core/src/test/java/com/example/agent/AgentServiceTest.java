@@ -201,6 +201,48 @@ class AgentServiceTest {
     }
 
     @Test
+    void handlesEmptyChoicesGracefully() {
+        // Given: the provider returns a body with no choices (e.g. an upstream hiccup)
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(new ChatResponse("id", List.of()));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: the loop degrades to a graceful answer instead of throwing
+        assertThat(result.response()).contains("empty response");
+    }
+
+    @Test
+    void handlesNullChoicesGracefully() {
+        // Given: a malformed response whose choices field is null
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(new ChatResponse("id", null));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then
+        assertThat(result.response()).contains("empty response");
+    }
+
+    @Test
+    void handlesBlankFinalAnswerGracefully() {
+        // Given: the model finishes with neither content nor tool calls
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent(""));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: a clear placeholder is returned rather than null/blank
+        assertThat(result.response()).contains("without producing a text answer");
+    }
+
+    @Test
     void shouldReturnDirectAnswerWithNoTools() {
         // Given: no tools available, model responds directly
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());

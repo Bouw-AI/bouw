@@ -145,7 +145,17 @@ public class AgentService {
             ChatResponse response = stream
                     ? llmClient.chatStream(model, messages, toolDefinitions, listener::onContent)
                     : llmClient.chat(model, messages, toolDefinitions);
-            ChatResponse.Choice choice = response.choices().get(0);
+
+            // Guard against malformed/empty responses (null body, no choices, no message) so a
+            // provider hiccup degrades to a graceful answer instead of an NPE/IndexOutOfBounds.
+            ChatResponse.Choice choice = firstChoice(response);
+            if (choice == null || choice.message() == null) {
+                log.warn("LLM returned no usable choice on iteration {} (model={})", i, model);
+                String answer = (lastAssistantContent != null && !lastAssistantContent.isBlank())
+                        ? lastAssistantContent
+                        : "The language model returned an empty response.";
+                return new AgentResponse(answer, Collections.unmodifiableList(messages));
+            }
             ChatMessage assistantMsg = choice.message();
             messages.add(assistantMsg);
 
@@ -169,6 +179,9 @@ public class AgentService {
                 String answer = assistantMsg.content();
                 if (answer == null || answer.isBlank()) {
                     answer = lastAssistantContent;
+                }
+                if (answer == null || answer.isBlank()) {
+                    answer = "The agent finished without producing a text answer.";
                 }
                 final String finalAnswer = answer;
                 memoryService.ifPresent(memory -> memory.remember(request.prompt(), finalAnswer));
@@ -207,6 +220,14 @@ public class AgentService {
                 })
         );
         return toolDefinitions;
+    }
+
+    /** First choice of a chat response, or {@code null} if the response carries none. */
+    private static ChatResponse.Choice firstChoice(ChatResponse response) {
+        if (response == null || response.choices() == null || response.choices().isEmpty()) {
+            return null;
+        }
+        return response.choices().get(0);
     }
 
     private static String formatMemories(List<MemoryStore.ScoredMemory> memories) {
