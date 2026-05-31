@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Persists a one-shot announcement message across JVM restarts.
@@ -25,7 +26,7 @@ public class StartupAnnouncementService {
     private static final Logger log = LoggerFactory.getLogger(StartupAnnouncementService.class);
 
     private final Path file;
-    private volatile String pending;
+    private final AtomicReference<String> pending = new AtomicReference<>();
 
     public StartupAnnouncementService(
             @Value("${agent.startup-announcement-file:${user.home}/.hugin/startup-announcement}") String path) {
@@ -36,10 +37,11 @@ public class StartupAnnouncementService {
     void load() {
         if (!Files.exists(file)) return;
         try {
-            pending = Files.readString(file).trim();
+            String msg = Files.readString(file).trim();
             Files.deleteIfExists(file);
-            if (!pending.isBlank()) {
-                log.info("Startup announcement loaded: {}", pending);
+            if (!msg.isBlank()) {
+                pending.set(msg);
+                log.info("Startup announcement loaded: {}", msg);
             }
         } catch (IOException e) {
             log.warn("Could not read startup announcement from {}: {}", file, e.getMessage());
@@ -64,8 +66,7 @@ public class StartupAnnouncementService {
      * Returns empty if no announcement is pending.
      */
     public Optional<String> consume() {
-        String msg = pending;
-        pending = null;
+        String msg = pending.getAndSet(null);
         return (msg != null && !msg.isBlank()) ? Optional.of(msg) : Optional.empty();
     }
 }
