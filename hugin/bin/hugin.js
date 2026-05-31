@@ -163,11 +163,17 @@ program
 
 program
   .command('update')
-  .description('Rebuild and reinstall jars from source, reusing existing credentials (no prompts)')
+  .description('Pull the latest hugin-agent from npm then rebuild and reinstall jars (no prompts)')
   .action(() => {
+    info('Fetching latest hugin-agent from npm...');
+    const npmResult = spawnSync('npm', ['install', '-g', 'hugin-agent@latest'], { stdio: 'inherit' });
+    if (npmResult.status !== 0) {
+      die('npm install failed — aborting update');
+    }
+    // install.sh is resolved after the npm update so we get the freshly installed copy.
     const installScript = path.join(__dirname, '..', '..', 'install.sh');
     if (!existsSync(installScript)) {
-      die(`install.sh not found at ${installScript}.\n  Make sure you installed from the repo root: npm install -g .`);
+      die(`install.sh not found at ${installScript}`);
     }
     sh('bash', [installScript, '--reinstall']);
   });
