@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -171,12 +172,59 @@ class LocalToolsTest {
 
     @Test
     void selfUpdateInputSchemaHasNoRequiredArgs() {
-        var update = new SelfUpdateTool(workspace, properties);
+        var update = new SelfUpdateTool(workspace, properties, Optional.empty());
 
         var schema = update.inputSchema();
 
         assertThat(schema.get("type")).isEqualTo("object");
         assertThat(schema.get("required")).asList().isEmpty();
+    }
+
+    @Test
+    void resolveVersionExtractsProjectVersionSkippingParent() throws Exception {
+        Files.writeString(tmp.resolve("pom.xml"),
+                "<project>\n"
+                + "  <parent><version>3.5.0</version></parent>\n"
+                + "  <groupId>com.example</groupId>\n"
+                + "  <artifactId>my-app</artifactId>\n"
+                + "  <version>1.2.3</version>\n"
+                + "</project>");
+
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("1.2.3");
+    }
+
+    @Test
+    void resolveVersionUsesFirstVersionWhenNoParentElement() throws Exception {
+        Files.writeString(tmp.resolve("pom.xml"),
+                "<project>\n"
+                + "  <groupId>com.example</groupId>\n"
+                + "  <artifactId>my-app</artifactId>\n"
+                + "  <version>2.0.0</version>\n"
+                + "</project>");
+
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("2.0.0");
+    }
+
+    @Test
+    void resolveVersionIgnoresDependencyAndPluginVersions() throws Exception {
+        Files.writeString(tmp.resolve("pom.xml"),
+                "<project>\n"
+                + "  <parent><version>3.5.0</version></parent>\n"
+                + "  <artifactId>my-app</artifactId>\n"
+                + "  <version>4.0.0</version>\n"
+                + "  <dependencies>\n"
+                + "    <dependency><groupId>org.foo</groupId><version>9.9.9</version></dependency>\n"
+                + "  </dependencies>\n"
+                + "  <build><plugins><plugin><version>1.0</version></plugin></plugins></build>\n"
+                + "</project>");
+
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("4.0.0");
+    }
+
+    @Test
+    void resolveVersionReturnsUnknownWhenNoPomAndNoGit() {
+        // tmp is an empty directory with no pom.xml and no git repo
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("unknown");
     }
 
     @Test
