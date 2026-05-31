@@ -30,6 +30,15 @@ ask()     { printf '\033[1;35m   >\033[0m %s' "$*"; }
 
 require_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+resolve_hugin_version() {
+  local package_json="$REPO_DIR/package.json"
+  local version=""
+  if [[ -f "$package_json" ]]; then
+    version=$(grep -m1 '"version"' "$package_json" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || true)
+  fi
+  [[ -n "$version" ]] && echo "$version" || echo "unknown"
+}
+
 # Run a command that requires sudo, retrying up to 3 times on auth failure.
 # sudo_retry [--reason <description>] <cmd> [args...]
 # Prompts for the system (macOS/Linux login) password with up to 3 retries.
@@ -458,6 +467,7 @@ fi
 # Incrementally persist collected values so a mid-run failure doesn't lose them.
 save_env() {
   mkdir -p "$HUGIN_HOME/db"
+  local current_hugin_version="${HUGIN_VERSION:-$(resolve_hugin_version)}"
   cat > "$ENV_FILE" <<EOF
 # Hugin environment — sourced by the service and the hugin launcher.
 # Permissions: 600 (owner-read-only).  Do not commit this file.
@@ -486,6 +496,10 @@ NEW_RELIC_ENABLED=${NEW_RELIC_ENABLED:-false}
 
 # Hugin home directory (workspace root is $HUGIN_HOME/workspace)
 AGENT_HOME=${HUGIN_HOME}
+HUGIN_HOME=${HUGIN_HOME}
+HUGIN_VERSION=${current_hugin_version}
+HUGIN_REPO_DIR=${REPO_DIR}
+HUGIN_LAUNCHER_PATH=${LAUNCHER_PATH}
 
 # H2 database for user accounts (dashboard login)
 DB_URL=jdbc:h2:file:${HUGIN_HOME}/db/hugin
@@ -896,10 +910,9 @@ else
   info "Building fat jars — this may take a few minutes..."
   MAVEN_OPTS="${MAVEN_OPTS:--Xmx512m}" \
     mvn -f "$REPO_DIR/pom.xml" \
-        -pl mcp-integration,agent-terminal,agent-discord -am \
+        -pl mcp-integration,agent-discord -am \
         clean package -DskipTests -q
   cp "$REPO_DIR"/mcp-integration/target/mcp-integration-*.jar  "$HUGIN_HOME/bin/mcp-integration.jar"
-  cp "$REPO_DIR"/agent-terminal/target/agent-terminal-*.jar     "$HUGIN_HOME/bin/agent-terminal.jar"
   cp "$REPO_DIR"/agent-discord/target/agent-discord-*.jar       "$HUGIN_HOME/bin/agent-discord.jar"
   success "Jars built and copied to $HUGIN_HOME/bin/"
 fi
@@ -909,14 +922,14 @@ if [[ "$_force_reinstall" == "true" ]]; then
   info "Skipping launcher reinstall (paths unchanged between updates)."
 else
 info "Installing $LAUNCHER_NAME launcher to $LAUNCHER_PATH..."
-HUGIN_VERSION="$(node -p "require('${REPO_DIR}/package.json').version" 2>/dev/null || grep -m1 '"version"' "$REPO_DIR/package.json" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+HUGIN_VERSION="$(resolve_hugin_version)"
 _launcher_tmp=$(mktemp)
 cat > "$_launcher_tmp" <<'LAUNCHER_EOF'
 #!/usr/bin/env bash
 # hugin — Hugin agent launcher (installed by install.sh)
 #
 # Commands:
-#   hugin [run]    start service if needed, open terminal chat
+#   hugin [run]    start service if needed
 #   hugin serve    run server in the foreground (no service manager)
 #   hugin start / stop / restart / status / logs
 #   hugin version  print the installed Hugin version
@@ -1027,9 +1040,6 @@ cmd_run() {
   if wait_for_health 45; then
     success "Server ready at http://localhost:8080"
   fi
-  export AGENT_SERVER_URL="http://localhost:8080"
-  [[ -n "${AGENT_API_KEY:-}" ]] && export AGENT_API_KEY
-  exec java -jar "$HUGIN_HOME/bin/agent-terminal.jar"
 }
 
 cmd_serve() {
@@ -1043,7 +1053,15 @@ cmd_stop()    { svc_stop; }
 cmd_restart() { svc_restart; }
 cmd_status()  { svc_status; }
 cmd_logs()    { svc_logs; }
-cmd_version() { echo "$HUGIN_VERSION"; }
+resolve_installed_version() {
+  local package_json="$REPO_DIR/package.json"
+  local version=""
+  if [[ -f "$package_json" ]]; then
+    version=$(grep -m1 '"version"' "$package_json" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || true)
+  fi
+  [[ -n "$version" ]] && echo "$version" || echo "$HUGIN_VERSION"
+}
+cmd_version() { resolve_installed_version; }
 
 cmd_config() {
   [[ -f "$ENV_FILE" ]] && load_env
@@ -1248,12 +1266,6 @@ cmd_doctor() {
     _dr_fail "mcp-integration.jar not found — rebuild: mvn clean package -DskipTests && re-run install.sh"
   fi
 
-  if [[ -f "$HUGIN_HOME/bin/agent-terminal.jar" ]]; then
-    _dr_pass "agent-terminal.jar"
-  else
-    _dr_fail "agent-terminal.jar not found — rebuild: mvn clean package -DskipTests && re-run install.sh"
-  fi
-
   if [[ -f "$HUGIN_HOME/bin/openrouter-search-mcp.py" ]]; then
     _dr_pass "openrouter-search-mcp.py"
   else
@@ -1402,7 +1414,7 @@ cmd_update() {
   info "Building jars (this may take a minute)..."
   MAVEN_OPTS="${MAVEN_OPTS:--Xmx512m}" \
     mvn -f "$REPO_DIR/pom.xml" \
-        -pl mcp-integration,agent-terminal,agent-discord -am \
+        -pl mcp-integration,agent-discord -am \
         clean package -DskipTests -q \
     || die "Maven build failed — check output above."
 
@@ -1423,9 +1435,23 @@ cmd_update() {
   fi
 
   cp "$REPO_DIR"/mcp-integration/target/mcp-integration-*.jar  "$HUGIN_HOME/bin/mcp-integration.jar"
-  cp "$REPO_DIR"/agent-terminal/target/agent-terminal-*.jar     "$HUGIN_HOME/bin/agent-terminal.jar"
   cp "$REPO_DIR"/agent-discord/target/agent-discord-*.jar       "$HUGIN_HOME/bin/agent-discord.jar" 2>/dev/null || true
   cp "$REPO_DIR/openrouter-search-mcp.py"                       "$HUGIN_HOME/bin/openrouter-search-mcp.py"
+  local new_version
+  new_version="$(resolve_installed_version)"
+  if [[ -f "$ENV_FILE" ]]; then
+    if grep -q '^HUGIN_VERSION=' "$ENV_FILE"; then
+      sed -i.bak -E "s|^HUGIN_VERSION=.*|HUGIN_VERSION=${new_version}|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+    else
+      printf '\nHUGIN_VERSION=%s\n' "$new_version" >> "$ENV_FILE"
+    fi
+    if ! grep -q '^HUGIN_REPO_DIR=' "$ENV_FILE"; then
+      printf 'HUGIN_REPO_DIR=%s\n' "$REPO_DIR" >> "$ENV_FILE"
+    fi
+    if ! grep -q '^HUGIN_LAUNCHER_PATH=' "$ENV_FILE"; then
+      printf 'HUGIN_LAUNCHER_PATH=%s\n' "$LAUNCHER_PATH" >> "$ENV_FILE"
+    fi
+  fi
   success "Jars and scripts updated."
 
   if [[ "$was_running" == "true" ]]; then
@@ -1486,7 +1512,7 @@ case "$CMD" in
     cat <<USAGE
 Usage: hugin [command]
 
-  (none) / run   Start service if needed, open terminal chat
+  (none) / run   Start service if needed
   serve          Run the server in the foreground (no service manager)
   start          Start the background service
   stop           Stop the background service
