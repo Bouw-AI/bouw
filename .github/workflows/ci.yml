@@ -29,6 +29,16 @@ jobs:
       - name: Build and test
         run: mvn --batch-mode --no-transfer-progress clean install
 
+      # SpotBugs SAST runs on the already-compiled bytecode — no recompile needed.
+      - name: Run SpotBugs SAST
+        if: github.event_name == 'pull_request'
+        run: |
+          mvn --batch-mode --no-transfer-progress \
+            com.github.spotbugs:spotbugs-maven-plugin:4.8.6.4:check \
+            -Dspotbugs.effort=Default \
+            -Dspotbugs.threshold=High \
+            -Dspotbugs.failOnError=true
+
       - name: Upload test reports
         if: always()
         continue-on-error: true
@@ -40,7 +50,7 @@ jobs:
           if-no-files-found: ignore
 
   # Scans Maven dependencies for known critical CVEs using Trivy.
-  # Uses the official install script so the correct binary is always fetched.
+  # The official action caches the vulnerability DB across runs.
   dependency-scan:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -49,22 +59,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Trivy
-        run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
-
       - name: Scan for critical CVEs
-        run: |
-          trivy fs . \
-            --exit-code 1 \
-            --ignore-unfixed \
-            --vuln-type library \
-            --severity CRITICAL \
-            --quiet
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: library
+          severity: CRITICAL
+          format: table
 
   # Secret detection across all commits in the PR using the gitleaks CLI.
-  # Uses the CLI directly (no action) to avoid any license requirements.
   secret-scan:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -87,34 +93,3 @@ jobs:
           /tmp/gitleaks detect --source . \
             --log-opts="${BASE_SHA}..${HEAD_SHA}" \
             --redact --exit-code 1
-
-  # SpotBugs SAST — analyzes compiled Java bytecode for security vulnerabilities.
-  # Uses the Maven plugin directly; no GitHub Advanced Security license required.
-  sast:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Build project
-        run: mvn --batch-mode --no-transfer-progress clean install -DskipTests
-
-      - name: Run SpotBugs SAST
-        run: |
-          mvn --batch-mode --no-transfer-progress \
-            com.github.spotbugs:spotbugs-maven-plugin:4.8.6.4:check \
-            -Dspotbugs.effort=Default \
-            -Dspotbugs.threshold=High \
-            -Dspotbugs.failOnError=true
