@@ -120,7 +120,7 @@ public class SelfUpdateTool implements LocalTool {
                     .directory(root.toFile())
                     .redirectErrorStream(true)
                     .start();
-            if (!p.waitFor(2, TimeUnit.SECONDS)) {
+            if (!p.waitFor(5, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
                 log.debug("git describe timed out in {}", root);
             } else {
