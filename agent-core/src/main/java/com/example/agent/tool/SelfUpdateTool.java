@@ -141,6 +141,9 @@ public class SelfUpdateTool implements LocalTool {
             if (pom.toFile().exists()) {
                 DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
                 factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+                factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+                factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+                factory.setExpandEntityReferences(false);
                 Document doc = factory.newDocumentBuilder().parse(pom.toFile());
                 NodeList children = doc.getDocumentElement().getChildNodes();
                 for (int i = 0; i < children.getLength(); i++) {

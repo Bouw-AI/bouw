@@ -38,13 +38,21 @@ public class StartupAnnouncementService {
         if (!Files.exists(file)) return;
         try {
             String msg = Files.readString(file).trim();
-            Files.deleteIfExists(file);
             if (!msg.isBlank()) {
                 pending.set(msg);
                 log.info("Startup announcement loaded: {}", msg);
             }
         } catch (IOException e) {
             log.warn("Could not read startup announcement from {}: {}", file, e.getMessage());
+            return;
+        }
+        // Delete after setting pending so a deletion failure doesn't lose the message.
+        // Log a warning because if the file survives it will be re-delivered on the next restart.
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            log.warn("Could not delete startup announcement file {}, it may be re-delivered on next restart: {}",
+                    file, e.getMessage());
         }
     }
 
