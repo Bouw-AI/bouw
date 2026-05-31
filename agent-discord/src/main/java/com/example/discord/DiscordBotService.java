@@ -4,12 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
+import net.dv8tion.jda.api.components.actionrow.ActionRow;
+import net.dv8tion.jda.api.components.buttons.Button;
 import net.dv8tion.jda.api.entities.channel.ChannelType;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.exceptions.InvalidTokenException;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
-import net.dv8tion.jda.api.interactions.components.buttons.Button;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -174,7 +175,8 @@ public class DiscordBotService implements DisposableBean {
 
         String json = objectMapper.writeValueAsString(Map.of(
                 "title", title,
-                "body", body
+                "body", body,
+                "labels", List.of("bug")
         ));
 
         HttpRequest request = HttpRequest.newBuilder(
@@ -321,7 +323,7 @@ public class DiscordBotService implements DisposableBean {
         for (int i = 0; i < chunks.size(); i++) {
             if (i == 0) {
                 event.getMessage().reply(chunks.get(i))
-                        .addActionRow(reportButton)
+                        .addComponents(ActionRow.of(reportButton))
                         .queue();
             } else {
                 event.getChannel().sendMessage(chunks.get(i)).queue();

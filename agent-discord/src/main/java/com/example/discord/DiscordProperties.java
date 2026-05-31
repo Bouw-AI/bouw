@@ -78,5 +78,24 @@ public class DiscordProperties {
     public void setGithubToken(String githubToken) { this.githubToken = githubToken; }
 
     public String getGithubRepo() { return githubRepo; }
-    public void setGithubRepo(String githubRepo) { this.githubRepo = githubRepo; }
+    public void setGithubRepo(String githubRepo) { this.githubRepo = normalizeGithubRepo(githubRepo); }
+
+    static String normalizeGithubRepo(String value) {
+        if (value == null || value.isBlank()) {
+            return value;
+        }
+        String repo = value.strip();
+        if (repo.startsWith("https://github.com/")) {
+            repo = repo.substring("https://github.com/".length());
+        } else if (repo.startsWith("http://github.com/")) {
+            repo = repo.substring("http://github.com/".length());
+        }
+        while (repo.endsWith("/")) {
+            repo = repo.substring(0, repo.length() - 1);
+        }
+        if (repo.endsWith(".git")) {
+            repo = repo.substring(0, repo.length() - ".git".length());
+        }
+        return repo;
+    }
 }

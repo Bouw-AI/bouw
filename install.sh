@@ -909,6 +909,7 @@ if [[ "$_force_reinstall" == "true" ]]; then
   info "Skipping launcher reinstall (paths unchanged between updates)."
 else
 info "Installing $LAUNCHER_NAME launcher to $LAUNCHER_PATH..."
+HUGIN_VERSION="$(node -p "require('${REPO_DIR}/package.json').version" 2>/dev/null || grep -m1 '"version"' "$REPO_DIR/package.json" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
 _launcher_tmp=$(mktemp)
 cat > "$_launcher_tmp" <<'LAUNCHER_EOF'
 #!/usr/bin/env bash
@@ -918,6 +919,7 @@ cat > "$_launcher_tmp" <<'LAUNCHER_EOF'
 #   hugin [run]    start service if needed, open terminal chat
 #   hugin serve    run server in the foreground (no service manager)
 #   hugin start / stop / restart / status / logs
+#   hugin version  print the installed Hugin version
 #   hugin config   re-prompt for credentials, restart service
 #   hugin doctor   health-check every subsystem; auto-fix what it can
 #   hugin uninstall
@@ -929,6 +931,7 @@ CONFIG_YML="$HUGIN_HOME/config/application.yml"
 SERVICE_NAME="__SERVICE_NAME__"
 LAUNCHER_PATH="__LAUNCHER_PATH__"
 REPO_DIR="__REPO_DIR__"
+HUGIN_VERSION="__HUGIN_VERSION__"
 
 info()    { printf '\033[1;34m[hugin]\033[0m %s\n' "$*"; }
 success() { printf '\033[1;32m[hugin]\033[0m %s\n' "$*"; }
@@ -1040,6 +1043,7 @@ cmd_stop()    { svc_stop; }
 cmd_restart() { svc_restart; }
 cmd_status()  { svc_status; }
 cmd_logs()    { svc_logs; }
+cmd_version() { echo "$HUGIN_VERSION"; }
 
 cmd_config() {
   [[ -f "$ENV_FILE" ]] && load_env
@@ -1473,6 +1477,7 @@ case "$CMD" in
   restart)   cmd_restart   ;;
   status)    cmd_status    ;;
   logs)      cmd_logs      ;;
+  version|--version|-v) cmd_version ;;
   config)    cmd_config    ;;
   update)    cmd_update    ;;
   doctor)    cmd_doctor    ;;
@@ -1488,6 +1493,7 @@ Usage: hugin [command]
   restart        Restart the background service
   status         Show service status
   logs           Stream service logs
+  version        Print the installed Hugin version
   config         Reconfigure credentials, restart service
   update         Pull latest code, rebuild jars, restart service
   doctor         Check every subsystem; auto-fix what it can
@@ -1504,6 +1510,7 @@ SED_INPLACE \
   -e "s|__SERVICE_NAME__|${SERVICE_NAME}|g" \
   -e "s|__LAUNCHER_PATH__|${LAUNCHER_PATH}|g" \
   -e "s|__REPO_DIR__|${REPO_DIR}|g" \
+  -e "s|__HUGIN_VERSION__|${HUGIN_VERSION}|g" \
   "$_launcher_tmp"
 sudo_retry --reason "install launcher to $LAUNCHER_PATH" cp "$_launcher_tmp" "$LAUNCHER_PATH"
 rm -f "$_launcher_tmp"
