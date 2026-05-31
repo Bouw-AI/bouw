@@ -402,9 +402,10 @@ public class DiscordBotService implements DisposableBean {
 
     private void handleMessage(MessageReceivedEvent event, String content, String sessionId) {
         log.debug("Agent request — session={} author={}", sessionId, event.getAuthor().getName());
+        String prompt = buildPromptWithContext(event, content);
         StringBuilder response = new StringBuilder();
         try {
-            agentClient.streamChat(content, sessionId, new DiscordAgentClient.Handler() {
+            agentClient.streamChat(prompt, sessionId, new DiscordAgentClient.Handler() {
                 @Override
                 public void onToken(String text) {
                     response.append(text);
@@ -434,8 +435,11 @@ public class DiscordBotService implements DisposableBean {
         } catch (Exception e) {
             log.error("Agent call failed for session {}", sessionId, e);
             logAgentError(sessionId, e.getMessage());
-            event.getChannel().sendMessage("Sorry, I encountered an error. Please try again.").queue();
-            return;
+            // If tokens arrived before the error, send them rather than the generic fallback.
+            if (response.length() == 0) {
+                event.getChannel().sendMessage("Sorry, I encountered an error. Please try again.").queue();
+                return;
+            }
         }
 
         String text = response.toString().strip();
@@ -455,6 +459,26 @@ public class DiscordBotService implements DisposableBean {
                 event.getChannel().sendMessage(chunks.get(i)).queue();
             }
         }
+    }
+
+    /**
+     * Prepends a compact Discord-context header to {@code content} so the model knows which
+     * channel or DM it is responding in without needing to call any tools to discover it.
+     */
+    private String buildPromptWithContext(MessageReceivedEvent event, String content) {
+        StringBuilder ctx = new StringBuilder("[Discord context: ");
+        boolean isDm = event.getChannelType() == ChannelType.PRIVATE;
+        if (isDm) {
+            ctx.append("direct message with ").append(event.getAuthor().getEffectiveName());
+        } else {
+            ctx.append("channel #").append(event.getChannel().getName())
+               .append(" (ID ").append(event.getChannel().getId()).append(")");
+            if (event.isFromGuild()) {
+                ctx.append(", server: ").append(event.getGuild().getName());
+            }
+        }
+        ctx.append("]\n").append(content);
+        return ctx.toString();
     }
 
     /** Splits {@code text} on newlines first to avoid cutting mid-word, up to {@code limit} chars each. */
