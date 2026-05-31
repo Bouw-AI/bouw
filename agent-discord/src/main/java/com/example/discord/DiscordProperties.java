@@ -40,6 +40,12 @@ public class DiscordProperties {
     /** Optional model override sent with every request; falls back to the server's {@code llm.model}. */
     private String model;
 
+    /** GitHub personal access token for creating issues. Set via {@code GITHUB_TOKEN}. */
+    private String githubToken;
+
+    /** GitHub repository in {@code owner/repo} format (e.g. {@code myuser/myrepo}). */
+    private String githubRepo;
+
     public String getBotToken() { return botToken; }
     public void setBotToken(String botToken) { this.botToken = botToken; }
 
@@ -67,4 +73,10 @@ public class DiscordProperties {
 
     public String getModel() { return model; }
     public void setModel(String model) { this.model = model; }
+
+    public String getGithubToken() { return githubToken; }
+    public void setGithubToken(String githubToken) { this.githubToken = githubToken; }
+
+    public String getGithubRepo() { return githubRepo; }
+    public void setGithubRepo(String githubRepo) { this.githubRepo = githubRepo; }
 }

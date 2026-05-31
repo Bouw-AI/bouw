@@ -11,10 +11,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +40,7 @@ class AgentServiceTest {
     private static final String DEFAULT_MODEL = "default-model";
     private static final String PROMPT = "What time is it?";
     private static final String SESSION_ID = "session-1";
+    private static final int MAX_ITERATIONS = 10;
     private static final Duration FIVE_MINUTES = Duration.ofMinutes(5);
     private static final Duration SHORT_TIMEOUT = Duration.ofMillis(1);
 
@@ -58,8 +62,8 @@ class AgentServiceTest {
     @BeforeEach
     void setUp() {
         agentService = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
-                defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty());
+                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     private static WorkspaceRegistry defaultRegistry() {
@@ -103,7 +107,7 @@ class AgentServiceTest {
 
         // Then: should hit the max-iterations guardrail
         assertThat(result.response()).contains("maximum number of tool-call iterations");
-        verify(toolProvider, times(AgentService.MAX_ITERATIONS))
+        verify(toolProvider, times(MAX_ITERATIONS))
                 .callTool(eq("server1"), eq("always_call"), anyMap());
     }
 
@@ -179,8 +183,8 @@ class AgentServiceTest {
     void shouldTimeoutBeforeMaxIterations() {
         // Given: a very short timeout and a tool call that blocks
         var shortTimeoutService = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, SHORT_TIMEOUT, DEFAULT_MODEL,
-                defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty());
+                llmClient, toolProvider, registry(), objectMapper, SHORT_TIMEOUT, DEFAULT_MODEL, MAX_ITERATIONS,
+                defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
 
         var availableTool = new AvailableTool("slow_tool", "Slow tool",
                 Map.of("type", "object", "properties", Map.of()));
@@ -198,6 +202,48 @@ class AgentServiceTest {
 
         // Then
         assertThat(result.response()).contains("timed out");
+    }
+
+    @Test
+    void handlesEmptyChoicesGracefully() {
+        // Given: the provider returns a body with no choices (e.g. an upstream hiccup)
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(new ChatResponse("id", List.of()));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: the loop degrades to a graceful answer instead of throwing
+        assertThat(result.response()).contains("empty response");
+    }
+
+    @Test
+    void handlesNullChoicesGracefully() {
+        // Given: a malformed response whose choices field is null
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(new ChatResponse("id", null));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then
+        assertThat(result.response()).contains("empty response");
+    }
+
+    @Test
+    void handlesBlankFinalAnswerGracefully() {
+        // Given: the model finishes with neither content nor tool calls
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent(""));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: a clear placeholder is returned rather than null/blank
+        assertThat(result.response()).contains("without producing a text answer");
     }
 
     @Test
@@ -220,8 +266,8 @@ class AgentServiceTest {
         // Given: a built-in local tool and no MCP servers
         var recordingTool = new RecordingLocalTool("local_echo", "echoed: ok");
         var localService = new AgentService(
-                llmClient, toolProvider, registry(recordingTool), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
-                defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty());
+                llmClient, toolProvider, registry(recordingTool), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
 
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
@@ -331,8 +377,8 @@ class AgentServiceTest {
                         java.time.Instant.now()),
                 0.9)));
         var service = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
-                defaultRegistry(), Optional.of(memory), Optional.empty(), Optional.empty());
+                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                defaultRegistry(), Optional.of(memory), Optional.empty(), Optional.empty(), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithContent("Final answer."));
@@ -361,8 +407,8 @@ class AgentServiceTest {
         MemoryService memory = mock(MemoryService.class);
         when(memory.recall(PROMPT)).thenReturn(List.of());
         var service = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
-                defaultRegistry(), Optional.of(memory), Optional.empty(), Optional.empty());
+                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                defaultRegistry(), Optional.of(memory), Optional.empty(), Optional.empty(), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithContent("Hi!"));
@@ -384,8 +430,8 @@ class AgentServiceTest {
                 ChatMessage.user("My name is Ada."),
                 ChatMessage.assistant("Nice to meet you, Ada.")));
         var service = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
-                defaultRegistry(), Optional.empty(), Optional.of(conversation), Optional.empty());
+                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                defaultRegistry(), Optional.empty(), Optional.of(conversation), Optional.empty(), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
                 .thenReturn(responseWithContent("Your name is Ada."));
@@ -407,6 +453,64 @@ class AgentServiceTest {
         assertThat(sent.get(1).content()).isEqualTo("Nice to meet you, Ada.");
         assertThat(sent.get(2).role()).isEqualTo("user");
         assertThat(sent.get(2).content()).isEqualTo("What is my name?");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void injectsStartupAnnouncementAsSystemMessage(@TempDir Path tmp) throws Exception {
+        // Given: an announcement written before the restart
+        Path file = tmp.resolve("announcement");
+        Files.writeString(file, "Self-update completed. Now running version: 1.2.3");
+        var svc = new StartupAnnouncementService(file.toString());
+        svc.load();
+
+        var service = new AgentService(
+                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty(),
+                Optional.of(svc));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent("Done."));
+
+        // When
+        service.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: a system message containing the announcement is included in the chat request
+        ArgumentCaptor<List<ChatMessage>> captor = ArgumentCaptor.forClass(List.class);
+        verify(llmClient).chat(eq(MODEL), captor.capture(), anyList());
+        assertThat(captor.getValue()).anySatisfy(msg -> {
+            assertThat(msg.role()).isEqualTo("system");
+            assertThat(msg.content()).contains("1.2.3");
+        });
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void announcementIsConsumedAfterFirstRequest(@TempDir Path tmp) throws Exception {
+        // Given: a pending announcement
+        Path file = tmp.resolve("announcement");
+        Files.writeString(file, "version 2.0");
+        var svc = new StartupAnnouncementService(file.toString());
+        svc.load();
+
+        var service = new AgentService(
+                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty(),
+                Optional.of(svc));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent("Done."));
+
+        // When: two consecutive requests
+        service.chat(new AgentRequest(PROMPT, MODEL));
+        service.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: first call carries the announcement, second does not
+        ArgumentCaptor<List<ChatMessage>> captor = ArgumentCaptor.forClass(List.class);
+        verify(llmClient, times(2)).chat(eq(MODEL), captor.capture(), anyList());
+        List<List<ChatMessage>> calls = captor.getAllValues();
+        assertThat(calls.get(0)).anySatisfy(msg -> assertThat(msg.content()).contains("version 2.0"));
+        assertThat(calls.get(1)).noneMatch(msg -> msg.content() != null && msg.content().contains("version 2.0"));
     }
 
     // ---- helpers ----

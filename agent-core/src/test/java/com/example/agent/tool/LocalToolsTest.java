@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -104,6 +105,53 @@ class LocalToolsTest {
     }
 
     @Test
+    void findFilesMatchesByNameRecursively() throws Exception {
+        Files.createDirectories(tmp.resolve("src/main"));
+        Files.writeString(tmp.resolve("src/main/App.java"), "x");
+        Files.writeString(tmp.resolve("README.md"), "x");
+        var find = new FindFilesTool(workspace);
+
+        String result = find.execute(Map.of("pattern", "*.java"));
+
+        assertThat(result).contains("src/main/App.java");
+        assertThat(result).doesNotContain("README.md");
+    }
+
+    @Test
+    void findFilesMatchesByPathGlob() throws Exception {
+        Files.createDirectories(tmp.resolve("src/config"));
+        Files.writeString(tmp.resolve("src/config/app.yml"), "x");
+        Files.writeString(tmp.resolve("top.yml"), "x");
+        var find = new FindFilesTool(workspace);
+
+        String result = find.execute(Map.of("pattern", "src/**/*.yml"));
+
+        assertThat(result).contains("src/config/app.yml");
+        assertThat(result).doesNotContain("top.yml");
+    }
+
+    @Test
+    void findFilesSkipsIgnoredDirectories() throws Exception {
+        Files.createDirectories(tmp.resolve("target/classes"));
+        Files.writeString(tmp.resolve("target/classes/Generated.java"), "x");
+        Files.writeString(tmp.resolve("Real.java"), "x");
+        var find = new FindFilesTool(workspace);
+
+        String result = find.execute(Map.of("pattern", "*.java"));
+
+        assertThat(result).contains("Real.java");
+        assertThat(result).doesNotContain("Generated.java");
+    }
+
+    @Test
+    void findFilesReturnsMessageWhenNoneMatch() throws Exception {
+        Files.writeString(tmp.resolve("a.txt"), "x");
+        var find = new FindFilesTool(workspace);
+
+        assertThat(find.execute(Map.of("pattern", "*.java"))).isEqualTo("No files found.");
+    }
+
+    @Test
     void runBashReturnsExitCodeAndOutput() throws Exception {
         var bash = new BashCommandTool(workspace, properties);
 
@@ -124,12 +172,59 @@ class LocalToolsTest {
 
     @Test
     void selfUpdateInputSchemaHasNoRequiredArgs() {
-        var update = new SelfUpdateTool(workspace, properties);
+        var update = new SelfUpdateTool(workspace, properties, Optional.empty());
 
         var schema = update.inputSchema();
 
         assertThat(schema.get("type")).isEqualTo("object");
         assertThat(schema.get("required")).asList().isEmpty();
+    }
+
+    @Test
+    void resolveVersionExtractsProjectVersionSkippingParent() throws Exception {
+        Files.writeString(tmp.resolve("pom.xml"),
+                "<project>\n"
+                + "  <parent><version>3.5.0</version></parent>\n"
+                + "  <groupId>com.example</groupId>\n"
+                + "  <artifactId>my-app</artifactId>\n"
+                + "  <version>1.2.3</version>\n"
+                + "</project>");
+
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("1.2.3");
+    }
+
+    @Test
+    void resolveVersionUsesFirstVersionWhenNoParentElement() throws Exception {
+        Files.writeString(tmp.resolve("pom.xml"),
+                "<project>\n"
+                + "  <groupId>com.example</groupId>\n"
+                + "  <artifactId>my-app</artifactId>\n"
+                + "  <version>2.0.0</version>\n"
+                + "</project>");
+
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("2.0.0");
+    }
+
+    @Test
+    void resolveVersionIgnoresDependencyAndPluginVersions() throws Exception {
+        Files.writeString(tmp.resolve("pom.xml"),
+                "<project>\n"
+                + "  <parent><version>3.5.0</version></parent>\n"
+                + "  <artifactId>my-app</artifactId>\n"
+                + "  <version>4.0.0</version>\n"
+                + "  <dependencies>\n"
+                + "    <dependency><groupId>org.foo</groupId><version>9.9.9</version></dependency>\n"
+                + "  </dependencies>\n"
+                + "  <build><plugins><plugin><version>1.0</version></plugin></plugins></build>\n"
+                + "</project>");
+
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("4.0.0");
+    }
+
+    @Test
+    void resolveVersionReturnsUnknownWhenNoPomAndNoGit() {
+        // tmp is an empty directory with no pom.xml and no git repo
+        assertThat(SelfUpdateTool.resolveVersion(tmp)).isEqualTo("unknown");
     }
 
     @Test

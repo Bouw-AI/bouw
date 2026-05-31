@@ -95,6 +95,10 @@ agent:
   api-key:
   # Maximum wall-clock time allowed for a single agent request
   request-timeout: 5m
+  # Maximum number of tool-call iterations in the agent loop before giving up.
+  # A higher value gives the model more chances to use tools and refine its answer,
+  # but also increases the maximum latency of a single request.
+  max-iterations: 30
   # Base-of-operations directory for the agent server (install.sh sets this to ~/.mcp-agent).
   # Used by SystemFactsService for disk-space reporting and by CloudAgentService for agent directories.
   home: ${AGENT_HOME:.}
@@ -132,10 +136,15 @@ management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,metrics,info
   endpoint:
     health:
       show-details: never
+
+newrelic:
+  enabled: ${NEW_RELIC_ENABLED:false}
+  license-key: ${NEW_RELIC_TOKEN:}
+  service-name: hugin
 
 logging:
   level:

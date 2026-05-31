@@ -31,8 +31,7 @@ import java.util.*;
 public class AgentService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
-    static final int MAX_ITERATIONS = 10;
-
+    private final int maxIterations;
 
     private final OpenAiClient llmClient;
     private final McpToolProvider toolProvider;
@@ -44,6 +43,7 @@ public class AgentService {
     private final Optional<MemoryService> memoryService;
     private final Optional<ConversationMemoryService> conversationMemory;
     private final Optional<SystemFactsService> systemFactsService;
+    private final Optional<StartupAnnouncementService> startupAnnouncement;
 
     public AgentService(
             OpenAiClient llmClient,
@@ -52,20 +52,24 @@ public class AgentService {
             ObjectMapper objectMapper,
             @Value("${agent.request-timeout:5m}") Duration requestTimeout,
             @Value("${llm.model:}") String defaultModel,
+            @Value("${agent.max-iterations:30}") int maxIterations,
             WorkspaceRegistry workspaceRegistry,
             Optional<MemoryService> memoryService,
             Optional<ConversationMemoryService> conversationMemory,
-            Optional<SystemFactsService> systemFactsService) {
+            Optional<SystemFactsService> systemFactsService,
+            Optional<StartupAnnouncementService> startupAnnouncement) {
         this.llmClient = llmClient;
         this.toolProvider = toolProvider;
         this.localTools = localTools;
         this.objectMapper = objectMapper;
         this.requestTimeout = requestTimeout;
         this.defaultModel = defaultModel;
+        this.maxIterations = maxIterations;
         this.workspaceRegistry = workspaceRegistry;
         this.memoryService = memoryService;
         this.conversationMemory = conversationMemory;
         this.systemFactsService = systemFactsService;
+        this.startupAnnouncement = startupAnnouncement;
     }
 
     public record ToolSummary(String name, String description, String server, String transport) {}
@@ -122,6 +126,10 @@ public class AgentService {
         if (!toolDefinitions.isEmpty()) {
             messages.add(ChatMessage.system(Prompts.TOOL_USE));
         }
+        startupAnnouncement.flatMap(StartupAnnouncementService::consume).ifPresent(notice ->
+                messages.add(ChatMessage.system(
+                        "You have just restarted after a self-update. " + notice
+                        + " Begin your response by sharing this update notice with the user.")));
         memoryService.ifPresent(memory -> {
             List<MemoryStore.ScoredMemory> recalled = memory.recall(request.prompt());
             if (!recalled.isEmpty()) {
@@ -134,7 +142,7 @@ public class AgentService {
 
         String lastAssistantContent = null;
 
-        for (int i = 0; i < MAX_ITERATIONS; i++) {
+        for (int i = 0; i < maxIterations; i++) {
             if (Instant.now().isAfter(deadline)) {
                 log.warn("Agent request timed out after {}", requestTimeout);
                 return new AgentResponse(
@@ -145,7 +153,17 @@ public class AgentService {
             ChatResponse response = stream
                     ? llmClient.chatStream(model, messages, toolDefinitions, listener::onContent)
                     : llmClient.chat(model, messages, toolDefinitions);
-            ChatResponse.Choice choice = response.choices().get(0);
+
+            // Guard against malformed/empty responses (null body, no choices, no message) so a
+            // provider hiccup degrades to a graceful answer instead of an NPE/IndexOutOfBounds.
+            ChatResponse.Choice choice = firstChoice(response);
+            if (choice == null || choice.message() == null) {
+                log.warn("LLM returned no usable choice on iteration {} (model={})", i, model);
+                String answer = (lastAssistantContent != null && !lastAssistantContent.isBlank())
+                        ? lastAssistantContent
+                        : "The language model returned an empty response.";
+                return new AgentResponse(answer, Collections.unmodifiableList(messages));
+            }
             ChatMessage assistantMsg = choice.message();
             messages.add(assistantMsg);
 
@@ -170,6 +188,9 @@ public class AgentService {
                 if (answer == null || answer.isBlank()) {
                     answer = lastAssistantContent;
                 }
+                if (answer == null || answer.isBlank()) {
+                    answer = "The agent finished without producing a text answer.";
+                }
                 final String finalAnswer = answer;
                 memoryService.ifPresent(memory -> memory.remember(request.prompt(), finalAnswer));
                 conversationMemory.ifPresent(cm -> cm.record(request.sessionId(), request.prompt(), finalAnswer));
@@ -177,7 +198,7 @@ public class AgentService {
             }
         }
 
-        log.warn("Agent reached max iterations ({}) without a final answer", MAX_ITERATIONS);
+        log.warn("Agent reached max iterations ({}) without a final answer", maxIterations);
         return new AgentResponse(
                 "Reached the maximum number of tool-call iterations without a final answer.",
                 Collections.unmodifiableList(messages));
@@ -207,6 +228,14 @@ public class AgentService {
                 })
         );
         return toolDefinitions;
+    }
+
+    /** First choice of a chat response, or {@code null} if the response carries none. */
+    private static ChatResponse.Choice firstChoice(ChatResponse response) {
+        if (response == null || response.choices() == null || response.choices().isEmpty()) {
+            return null;
+        }
+        return response.choices().get(0);
     }
 
     private static String formatMemories(List<MemoryStore.ScoredMemory> memories) {

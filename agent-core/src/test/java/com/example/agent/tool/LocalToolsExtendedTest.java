@@ -110,14 +110,27 @@ class LocalToolsExtendedTest {
     }
 
     @Test
-    void readDirectoryReturnsError() throws Exception {
-        Files.createDirectories(tmp.resolve("adir"));
+    void readDirectoryListsContents() throws Exception {
+        Path adir = tmp.resolve("adir");
+        Files.createDirectories(adir);
+        Files.writeString(adir.resolve("file.txt"), "hi");
+        Files.createDirectories(adir.resolve("sub"));
         var read = new ReadFileTool(workspace, properties, noDenyList);
 
         String result = read.execute(Map.of("path", "adir"));
 
-        assertThat(result).startsWith("Error: path is a directory, not a file:");
-        assertThat(result).contains("adir");
+        assertThat(result).contains("file.txt");
+        assertThat(result).contains("sub/");
+    }
+
+    @Test
+    void readEmptyDirectoryReturnsPlaceholder() throws Exception {
+        Files.createDirectories(tmp.resolve("emptydir"));
+        var read = new ReadFileTool(workspace, properties, noDenyList);
+
+        String result = read.execute(Map.of("path", "emptydir"));
+
+        assertThat(result).isEqualTo("(empty directory)");
     }
 
     @Test
@@ -317,5 +330,92 @@ class LocalToolsExtendedTest {
 
         assertThat(result).contains("single.txt:2:");
         assertThat(result).contains("target line");
+    }
+
+    // ------------------------------------------------------------------
+    // FindFilesTool — directory matching
+    // ------------------------------------------------------------------
+
+    @Test
+    void findFilesByDefaultMatchesOnlyFiles() throws Exception {
+        Files.createDirectories(tmp.resolve("hugin"));
+        Files.writeString(tmp.resolve("hugin.txt"), "x");
+        var find = new FindFilesTool(workspace);
+
+        String result = find.execute(Map.of("pattern", "hugin*"));
+
+        assertThat(result).contains("hugin.txt");
+        assertThat(result).doesNotContain("hugin/");
+    }
+
+    @Test
+    void findFilesWithTypeDirMatchesDirectories() throws Exception {
+        Files.createDirectories(tmp.resolve("nested/hugin"));
+        var find = new FindFilesTool(workspace);
+
+        String result = find.execute(Map.of("pattern", "hugin", "type", "dir"));
+
+        assertThat(result).contains("nested/hugin/");
+    }
+
+    // ------------------------------------------------------------------
+    // FindPathTool
+    // ------------------------------------------------------------------
+
+    @Test
+    void findPathLocatesDirectoryByBasenameFromFullPath() throws Exception {
+        // The directory lives at code/hugin; the user asked for the (non-existent) /code/hugin/hugin.
+        Files.createDirectories(tmp.resolve("code/hugin"));
+        var find = new FindPathTool(workspace);
+
+        String result = find.execute(Map.of("name", "/code/hugin/hugin"));
+
+        assertThat(result).contains("code/hugin/");
+    }
+
+    @Test
+    void findPathMatchesFilesAndDirectoriesCaseInsensitively() throws Exception {
+        Files.createDirectories(tmp.resolve("src/Hugin"));
+        Files.writeString(tmp.resolve("src/Hugin/HuginService.java"), "class HuginService {}");
+        var find = new FindPathTool(workspace);
+
+        String result = find.execute(Map.of("name", "hugin"));
+
+        assertThat(result).contains("src/Hugin/");
+        assertThat(result).contains("src/Hugin/HuginService.java");
+    }
+
+    @Test
+    void findPathTypeDirReturnsOnlyDirectories() throws Exception {
+        Files.createDirectories(tmp.resolve("hugin"));
+        Files.writeString(tmp.resolve("hugin.md"), "doc");
+        var find = new FindPathTool(workspace);
+
+        String result = find.execute(Map.of("name", "hugin", "type", "dir"));
+
+        assertThat(result).contains("hugin/");
+        assertThat(result).doesNotContain("hugin.md");
+    }
+
+    @Test
+    void findPathReturnsMessageWhenNothingMatches() throws Exception {
+        Files.writeString(tmp.resolve("readme.txt"), "x");
+        var find = new FindPathTool(workspace);
+
+        String result = find.execute(Map.of("name", "nonexistent-thing"));
+
+        assertThat(result).startsWith("No files or directories matching");
+    }
+
+    @Test
+    void findPathRanksExactNameMatchesFirst() throws Exception {
+        Files.createDirectories(tmp.resolve("a/huginous"));
+        Files.createDirectories(tmp.resolve("z/hugin"));
+        var find = new FindPathTool(workspace);
+
+        String result = find.execute(Map.of("name", "hugin", "type", "dir"));
+
+        // The exact basename match (z/hugin) should be ranked ahead of the substring match.
+        assertThat(result.indexOf("z/hugin/")).isLessThan(result.indexOf("a/huginous/"));
     }
 }
