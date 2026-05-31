@@ -1,15 +1,21 @@
 package com.example.agent.tool;
 
+import com.example.agent.StartupAnnouncementService;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Runs {@code hugin update} from the workspace root to rebuild and reinstall the agent
@@ -22,15 +28,18 @@ public class SelfUpdateTool implements LocalTool {
     private final Workspace workspace;
     private final Duration timeout;
     private final int maxChars;
+    private final Optional<StartupAnnouncementService> announcement;
 
     private static final Duration MIN_TIMEOUT = Duration.ofMinutes(10);
 
-    public SelfUpdateTool(Workspace workspace, LocalToolProperties properties) {
+    public SelfUpdateTool(Workspace workspace, LocalToolProperties properties,
+                          Optional<StartupAnnouncementService> announcement) {
         this.workspace = workspace;
         // Maven builds take several minutes; use at least 10 minutes regardless of bash-timeout.
         Duration configured = properties.bashTimeout();
         this.timeout = configured.compareTo(MIN_TIMEOUT) < 0 ? MIN_TIMEOUT : configured;
         this.maxChars = properties.maxOutputChars();
+        this.announcement = announcement;
     }
 
     @Override
@@ -87,7 +96,43 @@ public class SelfUpdateTool implements LocalTool {
 
         int exitCode = process.exitValue();
         String rendered = render(output);
+        if (exitCode == 0) {
+            announcement.ifPresent(svc -> svc.set(buildAnnouncement(ctx.workspace().root())));
+        }
         return "exit code: " + exitCode + (rendered.isBlank() ? " (no output)" : "\n" + rendered);
+    }
+
+    private static String buildAnnouncement(Path workspaceRoot) {
+        String version = resolveVersion(workspaceRoot);
+        return "Self-update completed successfully. Now running version: " + version;
+    }
+
+    private static String resolveVersion(Path root) {
+        // Prefer a human-readable git description (tag + offset + hash).
+        try {
+            Process p = new ProcessBuilder("git", "describe", "--tags", "--always")
+                    .directory(root.toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+            if (p.waitFor() == 0 && !out.isBlank()) {
+                return out;
+            }
+        } catch (Exception ignored) {}
+
+        // Fall back to the <version> element from the root pom.xml.
+        try {
+            Path pom = root.resolve("pom.xml");
+            if (Files.exists(pom)) {
+                String xml = Files.readString(pom);
+                Matcher m = Pattern.compile("<version>([^<]+)</version>").matcher(xml);
+                if (m.find()) {
+                    return m.group(1);
+                }
+            }
+        } catch (Exception ignored) {}
+
+        return "unknown";
     }
 
     private void drain(Process process, StringBuilder output) {

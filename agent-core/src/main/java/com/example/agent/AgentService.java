@@ -44,6 +44,7 @@ public class AgentService {
     private final Optional<MemoryService> memoryService;
     private final Optional<ConversationMemoryService> conversationMemory;
     private final Optional<SystemFactsService> systemFactsService;
+    private final Optional<StartupAnnouncementService> startupAnnouncement;
 
     public AgentService(
             OpenAiClient llmClient,
@@ -55,7 +56,8 @@ public class AgentService {
             WorkspaceRegistry workspaceRegistry,
             Optional<MemoryService> memoryService,
             Optional<ConversationMemoryService> conversationMemory,
-            Optional<SystemFactsService> systemFactsService) {
+            Optional<SystemFactsService> systemFactsService,
+            Optional<StartupAnnouncementService> startupAnnouncement) {
         this.llmClient = llmClient;
         this.toolProvider = toolProvider;
         this.localTools = localTools;
@@ -66,6 +68,7 @@ public class AgentService {
         this.memoryService = memoryService;
         this.conversationMemory = conversationMemory;
         this.systemFactsService = systemFactsService;
+        this.startupAnnouncement = startupAnnouncement;
     }
 
     public record ToolSummary(String name, String description, String server, String transport) {}
@@ -122,6 +125,10 @@ public class AgentService {
         if (!toolDefinitions.isEmpty()) {
             messages.add(ChatMessage.system(Prompts.TOOL_USE));
         }
+        startupAnnouncement.flatMap(StartupAnnouncementService::consume).ifPresent(notice ->
+                messages.add(ChatMessage.system(
+                        "You have just restarted after a self-update. " + notice
+                        + " Begin your response by sharing this update notice with the user.")));
         memoryService.ifPresent(memory -> {
             List<MemoryStore.ScoredMemory> recalled = memory.recall(request.prompt());
             if (!recalled.isEmpty()) {
