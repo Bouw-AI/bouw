@@ -160,13 +160,11 @@ management:
   endpoint:
     health:
       show-details: never
-  newrelic:
-    metrics:
-      export:
-        enabled: ${NEW_RELIC_ENABLED:false}
-        api-key: ${NEW_RELIC_TOKEN:}
-        uri: https://metric-api.newrelic.com/metric/v1
-        step: 1m
+
+newrelic:
+  enabled: ${NEW_RELIC_ENABLED:false}
+  license-key: ${NEW_RELIC_TOKEN:}
+  service-name: hugin
 
 logging:
   level:

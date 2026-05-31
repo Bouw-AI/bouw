@@ -41,8 +41,9 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-registry-newrelic</artifactId>
+            <groupId>com.newrelic.telemetry</groupId>
+            <artifactId>micrometer-registry-new-relic</artifactId>
+            <version>0.10.0</version>
         </dependency>
         <dependency>
             <groupId>org.springdoc</groupId>
