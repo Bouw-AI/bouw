@@ -156,10 +156,15 @@ management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,metrics,info
   endpoint:
     health:
       show-details: never
+
+newrelic:
+  enabled: ${NEW_RELIC_ENABLED:false}
+  license-key: ${NEW_RELIC_TOKEN:}
+  service-name: hugin
 
 logging:
   level:

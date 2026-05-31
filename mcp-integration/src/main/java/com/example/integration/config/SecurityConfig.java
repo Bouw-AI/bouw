@@ -59,7 +59,7 @@ public class SecurityConfig {
                         auth.anyRequest().authenticated();
                     } else {
                         // no api-key: agent endpoints open to localhost, denied externally
-                        auth.requestMatchers(req -> req.getServletPath().startsWith("/api/agent/")
+                        auth.requestMatchers(req -> req.getRequestURI().startsWith("/api/agent/")
                                         && isLocalhost(req.getRemoteAddr())).permitAll()
                                 .requestMatchers("/api/agent/**").denyAll()
                                 .anyRequest().authenticated();
