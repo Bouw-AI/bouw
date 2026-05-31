@@ -5,12 +5,10 @@ import com.example.agent.OpenAiClient;
 import com.example.agent.model.AvailableTool;
 import com.example.agent.model.ChatMessage;
 import com.example.agent.model.ChatResponse;
-import com.example.integration.service.JwtService;
 import com.example.mcpclient.model.McpServerDefinition;
 import com.example.mcpclient.model.McpServersConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.security.test.context.support.WithMockUser;
@@ -44,9 +42,7 @@ import static org.mockito.Mockito.when;
         // Non-existent config file → no real MCP servers started during tests
         "mcp.config-file=./nonexistent-test-servers.json",
         // Disable the search MCP subprocess so no external processes are spawned during tests
-        "search.provider=none",
-        // Use in-memory H2 so tests are isolated and never corrupt a shared file
-        "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE"
+        "search.provider=none"
 })
 class McpIntegrationApplicationTests {
 
@@ -56,21 +52,11 @@ class McpIntegrationApplicationTests {
     @Autowired
     private MockMvc mockMvc;
 
-    @Autowired
-    private JwtService jwtService;
-
     @MockBean
     private McpToolProvider toolProvider;
 
     @MockBean
     private OpenAiClient llmClient;
-
-    private String authToken;
-
-    @BeforeEach
-    void setUpAuth() {
-        authToken = jwtService.generate("testuser");
-    }
 
     private void stubLlmFinalAnswer(String answer) {
         when(llmClient.chat(anyString(), anyList(), anyList()))
@@ -110,17 +96,14 @@ class McpIntegrationApplicationTests {
 
     @Test
     void agentEndpointReturnsResponse() {
-        // Given: mocked tools and LLM response
+        // Given: mocked tools and LLM response — no api-key configured, so localhost requests are open
         var availableTool = new AvailableTool("get_time", "Get time", Map.of());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
         when(toolProvider.callTool(anyString(), anyString(), anyMap())).thenReturn("12:00");
         stubLlmFinalAnswer("It is 12:00.");
 
         var request = Map.of("prompt", "What time is it?", "model", "llama3.2");
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + authToken);
-        HttpEntity<Map<String, String>> entity = new HttpEntity<>(request, headers);
-        var response = restTemplate.exchange("/api/agent/chat", HttpMethod.POST, entity, String.class);
+        var response = restTemplate.postForEntity("/api/agent/chat", request, String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isNotNull();
@@ -140,8 +123,6 @@ class McpIntegrationApplicationTests {
                             new ChatResponse.Choice(0, ChatMessage.assistant("Hello world"), "stop")));
                 });
 
-        // TestRestTemplate cannot read SSE/async responses (body arrives after headers on a
-        // background thread). MockMvc + asyncDispatch handles Spring's async dispatch correctly.
         MvcResult mvcResult = mockMvc.perform(
                         post("/api/agent/stream")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -156,7 +137,6 @@ class McpIntegrationApplicationTests {
                 .getResponse()
                 .getContentAsString();
 
-        // Then: the body is a well-formed SSE stream the terminal client can parse
         assertThat(body).isNotNull();
         assertThat(body).contains("event:token");
         assertThat(body).contains("\"text\":\"Hello\"");
@@ -164,17 +144,12 @@ class McpIntegrationApplicationTests {
     }
 
     @Test
-    void agentEndpointCanBeCalledWithApiKeyWhenConfigured() throws Exception {
-        // This test verifies the security filter works:
-        // - the endpoint returns 401 when a wrong API key is sent
+    void agentEndpointCanBeCalledWithApiKeyWhenConfigured() {
+        // When no api-key is configured, wrong X-API-Key is ignored and localhost request succeeds.
         stubLlmFinalAnswer("ok");
         var request = Map.of("prompt", "test", "model", "llama3.2");
 
-        // Send a valid JWT plus a wrong X-API-Key. The JWT satisfies the security
-        // filter; the X-API-Key filter is not active (no api-key configured in test),
-        // so the wrong key is ignored and the request succeeds with 200.
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + authToken);
         headers.set("X-API-Key", "wrong-key");
         HttpEntity<Map<String, String>> entity = new HttpEntity<>(request, headers);
 

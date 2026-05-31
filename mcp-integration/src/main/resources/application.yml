@@ -10,19 +10,6 @@ spring:
         # Disable Spring AI's property-driven auto-configuration.
         # All server lifecycle is managed by McpServerRegistryService.
         enabled: false
-  datasource:
-    url: "${DB_URL:jdbc:h2:file:./data/hugin}"
-    driver-class-name: org.h2.Driver
-    username: sa
-    password: ""
-  jpa:
-    database-platform: org.hibernate.dialect.H2Dialect
-    hibernate:
-      ddl-auto: update
-    show-sql: false
-  h2:
-    console:
-      enabled: false
   data:
     # Redis backing the long-term memory store. Only contacted when memory.enabled=true
     # (the connection is established lazily on first use).
@@ -144,17 +131,6 @@ agent:
     # will refuse to access. Patterns follow Java glob syntax; ** matches across directories.
     # Examples:  **/.env  secrets/**  **/*.key  .git/**
     deny-list: []
-
-jwt:
-  # JWT secret for signing tokens. Set JWT_SECRET to a 48+ char random string.
-  # If blank, a random key is generated per-startup (tokens won't survive restarts).
-  secret: ${JWT_SECRET:}
-  expiration-ms: 86400000
-
-admin:
-  # Admin user created on first startup if it doesn't already exist.
-  username: ${ADMIN_USERNAME:admin}
-  password: ${ADMIN_PASSWORD:}
 
 management:
   endpoints:
