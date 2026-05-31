@@ -181,6 +181,23 @@ class LocalToolsTest {
     }
 
     @Test
+    void huginVersionExtractsPlainCliVersion() {
+        assertThat(HuginVersionTool.extractVersion("0.1.6\n")).isEqualTo("0.1.6");
+    }
+
+    @Test
+    void huginVersionExtractsNpmGlobalVersion() {
+        assertThat(HuginVersionTool.extractVersion("/opt/homebrew/lib\n└── hugin-agent@0.1.6\n"))
+                .isEqualTo("0.1.6");
+    }
+
+    @Test
+    void huginVersionIgnoresLauncherUsageOutput() {
+        assertThat(HuginVersionTool.extractVersion("Usage: hugin [command]\n\n  logs Stream service logs\n"))
+                .isNull();
+    }
+
+    @Test
     void resolveVersionExtractsProjectVersionSkippingParent() throws Exception {
         Files.writeString(tmp.resolve("pom.xml"),
                 "<project>\n"

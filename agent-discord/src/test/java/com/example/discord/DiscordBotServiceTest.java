@@ -47,4 +47,11 @@ class DiscordBotServiceTest {
         props.setApiKey("  ");
         assertThat(props.hasApiKey()).isFalse();
     }
+
+    @Test
+    void discordProperties_normalizesGithubRepoUrl() {
+        DiscordProperties props = new DiscordProperties();
+        props.setGithubRepo("https://github.com/jeremyunck/hugin.git/");
+        assertThat(props.getGithubRepo()).isEqualTo("jeremyunck/hugin");
+    }
 }

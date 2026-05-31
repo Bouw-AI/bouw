@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -14,6 +15,8 @@ import java.util.concurrent.TimeUnit;
 /** Retrieves the version of the hugin CLI. */
 @Component
 public class HuginVersionTool implements LocalTool {
+
+    private static final String COMMON_PATH_PREFIX = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin";
 
     private final Duration timeout;
     private final int maxChars;
@@ -30,7 +33,7 @@ public class HuginVersionTool implements LocalTool {
 
     @Override
     public String description() {
-        return "Get the version of the hugin CLI tool by executing 'hugin --version'.";
+        return "Get the installed version of the hugin CLI tool.";
     }
 
     @Override
@@ -43,7 +46,29 @@ public class HuginVersionTool implements LocalTool {
 
     @Override
     public String execute(Map<String, Object> arguments) throws IOException, InterruptedException {
-        ProcessBuilder builder = new ProcessBuilder("hugin", "--version");
+        List<List<String>> commands = List.of(
+                List.of("hugin", "--version"),
+                List.of("hugin", "version"),
+                List.of("npm", "list", "-g", "hugin-agent", "--depth=0"));
+
+        List<String> failures = new ArrayList<>();
+        for (List<String> command : commands) {
+            CommandResult result = run(command);
+            String version = extractVersion(result.output());
+            if (result.exitCode() == 0 && version != null) {
+                return version;
+            }
+            failures.add(String.join(" ", command) + " exited with code " + result.exitCode()
+                    + (result.output().isBlank() ? "" : "\n" + result.output().strip()));
+        }
+
+        return "Error: could not determine hugin version.\n" + String.join("\n\n", failures);
+    }
+
+    private CommandResult run(List<String> command) throws IOException, InterruptedException {
+        ProcessBuilder builder = new ProcessBuilder(command);
+        String currentPath = System.getenv("PATH") != null ? System.getenv("PATH") : "";
+        builder.environment().put("PATH", COMMON_PATH_PREFIX + ":" + currentPath);
         builder.redirectErrorStream(true);
 
         Process process = builder.start();
@@ -56,16 +81,12 @@ public class HuginVersionTool implements LocalTool {
         if (!finished) {
             process.destroyForcibly();
             reader.join(1000);
-            return "Error: hugin --version timed out after " + timeout.toSeconds() + "s.";
+            return new CommandResult(124, String.join(" ", command)
+                    + " timed out after " + timeout.toSeconds() + "s.");
         }
         reader.join(2000);
 
-        int exitCode = process.exitValue();
-        String rendered = render(output);
-        if (exitCode != 0) {
-            return "Error: hugin --version exited with code " + exitCode + "\n" + rendered;
-        }
-        return rendered;
+        return new CommandResult(process.exitValue(), render(output));
     }
 
     private void drain(Process process, StringBuilder output) {
@@ -88,4 +109,37 @@ public class HuginVersionTool implements LocalTool {
         }
         return output.toString();
     }
+
+    static String extractVersion(String output) {
+        if (output == null || output.isBlank()) {
+            return null;
+        }
+        String text = output.strip();
+        if (text.startsWith("Usage: hugin")) {
+            return null;
+        }
+
+        for (String line : text.split("\\R")) {
+            String trimmed = line.strip();
+            if (trimmed.matches("v?\\d+\\.\\d+\\.\\d+.*")) {
+                return trimmed.startsWith("v") ? trimmed.substring(1) : trimmed;
+            }
+            int packageAt = trimmed.indexOf("hugin-agent@");
+            if (packageAt >= 0) {
+                String candidate = trimmed.substring(packageAt + "hugin-agent@".length()).strip();
+                int end = 0;
+                while (end < candidate.length()
+                        && !Character.isWhitespace(candidate.charAt(end))
+                        && candidate.charAt(end) != ')') {
+                    end++;
+                }
+                if (end > 0) {
+                    return candidate.substring(0, end);
+                }
+            }
+        }
+        return null;
+    }
+
+    private record CommandResult(int exitCode, String output) {}
 }
