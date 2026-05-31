@@ -29,6 +29,11 @@ public final class Prompts {
             step. Prefer simple, targeted tool calls over complex ones unless the task genuinely \
             needs a heavier tool such as web_search.
             \
+            ANSWER FROM CONTEXT FIRST: If the information the user is asking about is already \
+            present in the system messages or the conversation (for example, the current channel, \
+            server, platform, or environment details that were injected as context), answer directly \
+            from that context — do NOT call tools to re-discover information you already have.
+            \
             Be persistent and self-directed: take the next concrete step yourself rather than \
             stopping to ask the user how to proceed when a tool could find the answer. Do not give \
             up after a single failed attempt — when something doesn't work, diagnose why and try a \

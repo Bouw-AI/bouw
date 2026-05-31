@@ -80,21 +80,27 @@ public class DiscordAgentClient {
             String event = null;
             StringBuilder data = new StringBuilder();
             String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isEmpty()) {
-                    if (event != null) {
-                        if (dispatch(event, data.toString(), handler)) return;
+            try {
+                while ((line = reader.readLine()) != null) {
+                    if (line.isEmpty()) {
+                        if (event != null) {
+                            if (dispatch(event, data.toString(), handler)) return;
+                        }
+                        event = null;
+                        data.setLength(0);
+                    } else if (line.startsWith("event:")) {
+                        event = line.substring("event:".length()).trim();
+                    } else if (line.startsWith("data:")) {
+                        if (data.length() > 0) data.append('\n');
+                        String payload = line.substring("data:".length());
+                        data.append(payload.startsWith(" ") ? payload.substring(1) : payload);
                     }
-                    event = null;
-                    data.setLength(0);
-                } else if (line.startsWith("event:")) {
-                    event = line.substring("event:".length()).trim();
-                } else if (line.startsWith("data:")) {
-                    if (data.length() > 0) data.append('\n');
-                    String payload = line.substring("data:".length());
-                    data.append(payload.startsWith(" ") ? payload.substring(1) : payload);
+                    // other SSE fields (id:, retry:, comments) are ignored
                 }
-                // other SSE fields (id:, retry:, comments) are ignored
+            } catch (IOException e) {
+                // Stream closed prematurely (e.g. chunked-transfer EOF before "done" event).
+                // Any tokens already dispatched to the handler are still valid — treat as
+                // end-of-stream rather than propagating, so the caller sees a normal return.
             }
         }
     }
