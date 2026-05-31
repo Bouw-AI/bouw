@@ -126,6 +126,18 @@ public class DiscordBotService implements DisposableBean {
                 }
 
                 @Override
+                public void onToolCall(String name, String args) {
+                    event.getChannel().sendTyping().queue();
+                    event.getChannel().sendMessage("Calling **" + name + "**...").queue();
+                }
+
+                @Override
+                public void onToolResult(String name, String result) {
+                    String preview = result.length() > 200 ? result.substring(0, 200) + "..." : result;
+                    event.getChannel().sendMessage("**" + name + "** result:\n```\n" + preview + "\n```").queue();
+                }
+
+                @Override
                 public void onError(String message) {
                     response.append("Agent error: ").append(message);
                 }
