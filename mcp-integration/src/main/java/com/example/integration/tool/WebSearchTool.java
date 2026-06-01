@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -21,21 +22,31 @@ import java.util.Map;
 public class WebSearchTool implements LocalTool {
 
     private static final Logger log = LoggerFactory.getLogger(WebSearchTool.class);
-    private static final String ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-    private static final String SEARCH_MODEL = "perplexity/sonar";
     private static final int MAX_ATTEMPTS = 3;
     private static final long RETRY_BASE_MS = 1_000;
 
     private final String apiKey;
+    private final String endpoint;
+    private final String model;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
-    public WebSearchTool(@Value("${OPEN_ROUTER_API_KEY:}") String apiKey, ObjectMapper objectMapper) {
+    @Autowired
+    public WebSearchTool(
+            @Value("${OPEN_ROUTER_API_KEY:}") String apiKey,
+            @Value("${web.search.endpoint:https://openrouter.ai/api/v1/chat/completions}") String endpoint,
+            @Value("${web.search.model:perplexity/sonar}") String model,
+            ObjectMapper objectMapper) {
+        this(apiKey, endpoint, model, objectMapper,
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());
+    }
+
+    WebSearchTool(String apiKey, String endpoint, String model, ObjectMapper objectMapper, HttpClient httpClient) {
         this.apiKey = apiKey;
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+        this.endpoint = endpoint;
+        this.model = model;
         this.objectMapper = objectMapper;
+        this.httpClient = httpClient;
     }
 
     @Override
@@ -68,7 +79,7 @@ public class WebSearchTool implements LocalTool {
 
         String query = requiredString(arguments, "query");
         String requestBody = objectMapper.writeValueAsString(Map.of(
-                "model", SEARCH_MODEL,
+                "model", model,
                 "messages", List.of(Map.of(
                         "role", "user",
                         "content", "Search the web and provide the latest information about: " + query
@@ -76,7 +87,7 @@ public class WebSearchTool implements LocalTool {
                 "max_tokens", 1024));
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(ENDPOINT))
+                .uri(URI.create(endpoint))
                 .timeout(Duration.ofSeconds(30))
                 .header("Authorization", "Bearer " + apiKey)
                 .header("Content-Type", "application/json")
@@ -94,7 +105,6 @@ public class WebSearchTool implements LocalTool {
                     return root.path("choices").path(0).path("message").path("content").asText();
                 }
 
-                // 429 (rate limit) and 5xx (server error) are retriable
                 if ((status == 429 || status >= 500) && attempt < MAX_ATTEMPTS) {
                     long delay = RETRY_BASE_MS * (1L << (attempt - 1));
                     log.warn("OpenRouter search returned {} on attempt {}; retrying in {}ms", status, attempt, delay);

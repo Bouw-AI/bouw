@@ -8,7 +8,6 @@
   "files": [
     "hugin/bin/",
     "install.sh",
-    "openrouter-search-mcp.py",
     "mcp-servers.example.json",
     "pom.xml",
     "agent-core/src",
