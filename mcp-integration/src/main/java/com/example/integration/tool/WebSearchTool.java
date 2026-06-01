@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -22,6 +23,8 @@ public class WebSearchTool implements LocalTool {
     private static final Logger log = LoggerFactory.getLogger(WebSearchTool.class);
     private static final String ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
     private static final String SEARCH_MODEL = "perplexity/sonar";
+    private static final int MAX_ATTEMPTS = 3;
+    private static final long RETRY_BASE_MS = 1_000;
 
     private final String apiKey;
     private final HttpClient httpClient;
@@ -80,13 +83,38 @@ public class WebSearchTool implements LocalTool {
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                 .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            log.warn("OpenRouter search API returned {}: {}", response.statusCode(), response.body());
-            return "Search failed: OpenRouter API error " + response.statusCode() + ": " + response.body();
+        IOException lastNetworkError = null;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                int status = response.statusCode();
+
+                if (status == 200) {
+                    JsonNode root = objectMapper.readTree(response.body());
+                    return root.path("choices").path(0).path("message").path("content").asText();
+                }
+
+                // 429 (rate limit) and 5xx (server error) are retriable
+                if ((status == 429 || status >= 500) && attempt < MAX_ATTEMPTS) {
+                    long delay = RETRY_BASE_MS * (1L << (attempt - 1));
+                    log.warn("OpenRouter search returned {} on attempt {}; retrying in {}ms", status, attempt, delay);
+                    Thread.sleep(delay);
+                    continue;
+                }
+
+                log.warn("OpenRouter search API returned {}: {}", status, response.body());
+                return "Search failed: OpenRouter API error " + status + ": " + response.body();
+
+            } catch (IOException e) {
+                lastNetworkError = e;
+                if (attempt < MAX_ATTEMPTS) {
+                    long delay = RETRY_BASE_MS * (1L << (attempt - 1));
+                    log.warn("OpenRouter search network error on attempt {}; retrying in {}ms: {}", attempt, delay, e.getMessage());
+                    Thread.sleep(delay);
+                }
+            }
         }
 
-        JsonNode root = objectMapper.readTree(response.body());
-        return root.path("choices").path(0).path("message").path("content").asText();
+        throw new IOException("OpenRouter search failed after " + MAX_ATTEMPTS + " attempts", lastNetworkError);
     }
 }
