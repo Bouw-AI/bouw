@@ -104,7 +104,7 @@ if [[ "$OS_TYPE" == "macos" ]]; then
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>set -a; source ${ENV_FILE}; set +a; export PATH=${HUGIN_HOME}/venv/bin:/usr/local/bin:/usr/bin:/bin; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar --spring.config.additional-location=file:${CONFIG_YML}</string>
+    <string>set -a; source ${ENV_FILE}; set +a; export PATH=/usr/local/bin:/usr/bin:/bin; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar --spring.config.additional-location=file:${CONFIG_YML}</string>
   </array>
   <key>WorkingDirectory</key>  <string>${HUGIN_HOME}</string>
   <key>StandardOutPath</key>   <string>${HUGIN_HOME}/logs/hugin.log</string>
@@ -281,7 +281,7 @@ User=${INSTALL_USER}
 Environment=HUGIN_HOME=${HUGIN_HOME}
 Environment=AGENT_HOME=${HUGIN_HOME}
 EnvironmentFile=${ENV_FILE}
-Environment=PATH=${HUGIN_HOME}/venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=${HUGIN_HOME}
 ExecStart=/usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar \
   --spring.config.additional-location=file:${HUGIN_HOME}/config/application.yml
@@ -404,7 +404,6 @@ echo
 mkdir -p \
   "$HUGIN_HOME/bin" \
   "$HUGIN_HOME/config" \
-  "$HUGIN_HOME/venv" \
   "$HUGIN_HOME/workspace" \
   "$HUGIN_HOME/logs"
 info "Directory tree ready at $HUGIN_HOME"
@@ -427,7 +426,6 @@ if [[ "$OS_TYPE" == "macos" ]]; then
 
   require_cmd git     || pkg_install git
   require_cmd mvn     || pkg_install maven
-  require_cmd python3 || pkg_install python3
   require_cmd curl    || pkg_install curl
 
 else
@@ -448,12 +446,7 @@ else
 
   require_cmd git     || pkgs_to_install+=(git)
   require_cmd mvn     || pkgs_to_install+=(maven)
-  require_cmd python3 || pkgs_to_install+=(python3)
   require_cmd curl    || pkgs_to_install+=(curl)
-
-  if ! python3 -c "import venv" 2>/dev/null; then
-    pkgs_to_install+=(python3-venv)
-  fi
 
   if [[ ${#pkgs_to_install[@]} -gt 0 ]]; then
     info "Installing system packages: ${pkgs_to_install[*]}"
@@ -550,8 +543,7 @@ if [[ "$SKIP_CREDENTIALS" == "true" ]]; then
   ADMIN_PASSWORD=$(grep -E '^ADMIN_PASSWORD=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "")
   JWT_SECRET=$(grep -E '^JWT_SECRET=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "")
   if [[ -z "$JWT_SECRET" ]]; then
-    JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))" 2>/dev/null \
-                 || openssl rand -base64 48 2>/dev/null | tr -d '\n')
+    JWT_SECRET=$(openssl rand -base64 48 2>/dev/null | tr -d '\n')
     info "JWT secret auto-generated."
   fi
   # Prefer existing env file value, fall back to shell env var (handles first-run after manual token setup)
@@ -841,8 +833,7 @@ case "$_jwt_choice" in
     success "JWT secret set (${#JWT_SECRET} chars)."
     ;;
   *)
-    JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))" 2>/dev/null \
-                 || openssl rand -base64 48 2>/dev/null | tr -d '\n')
+    JWT_SECRET=$(openssl rand -base64 48 2>/dev/null | tr -d '\n')
     success "JWT secret auto-generated (${#JWT_SECRET} chars)."
     ;;
 esac
@@ -896,14 +887,7 @@ else
   info "$MCP_JSON already exists — not overwritten."
 fi
 
-# ── 6. python venv for web search ────────────────────────────────────────────
-info "Setting up Python venv for the web-search MCP server..."
-python3 -m venv "$HUGIN_HOME/venv"
-"$HUGIN_HOME/venv/bin/pip" install --no-cache-dir --quiet mcp
-cp "$REPO_DIR/openrouter-search-mcp.py" "$HUGIN_HOME/bin/openrouter-search-mcp.py"
-info "Python venv ready; openrouter-search-mcp.py copied."
-
-# ── 7. build fat jars ────────────────────────────────────────────────────────
+# ── 6. build fat jars ────────────────────────────────────────────────────────
 if [[ "$SKIP_BUILD" == "true" ]]; then
   info "Skipping Maven build (reconfigure-only mode)."
 else
@@ -1181,44 +1165,11 @@ cmd_doctor() {
     _dr_fail "Java 21+ not found — required to run jars; re-run install.sh to install"
   fi
 
-  if [[ -x "$HUGIN_HOME/venv/bin/python3" ]]; then
-    if "$HUGIN_HOME/venv/bin/python3" -c "import mcp" 2>/dev/null; then
-      _dr_pass "Python venv + mcp package"
-    else
-      _dr_fail "mcp package missing from venv — attempting reinstall"
-      if "$HUGIN_HOME/venv/bin/pip" install --no-cache-dir --quiet mcp 2>/dev/null; then
-        _dr_fixed "mcp package reinstalled in venv"
-      else
-        _dr_fail "Could not reinstall mcp (check internet access)"
-      fi
-    fi
-  else
-    _dr_fail "Python venv missing at $HUGIN_HOME/venv — attempting rebuild"
-    if command -v python3 >/dev/null 2>&1; then
-      if python3 -m venv "$HUGIN_HOME/venv" \
-          && "$HUGIN_HOME/venv/bin/pip" install --no-cache-dir --quiet mcp 2>/dev/null; then
-        _dr_fixed "Python venv rebuilt"
-      else
-        if [[ "$OS_TYPE" == "macos" ]]; then
-          _dr_fail "venv rebuild failed — check: brew install python3"
-        else
-          _dr_fail "venv rebuild failed — check python3-venv: sudo apt-get install python3-venv"
-        fi
-      fi
-    else
-      if [[ "$OS_TYPE" == "macos" ]]; then
-        _dr_fail "python3 not found — run: brew install python3"
-      else
-        _dr_fail "python3 not found — run: sudo apt-get install python3 python3-venv"
-      fi
-    fi
-  fi
-
   echo
   # ── Files ────────────────────────────────────────────────────────────────────
   printf '\033[1;34m[Files]\033[0m\n'
 
-  for _d in bin config venv workspace logs; do
+  for _d in bin config workspace logs; do
     if [[ -d "$HUGIN_HOME/$_d" ]]; then
       _dr_pass "~/.hugin/$_d/"
     else
