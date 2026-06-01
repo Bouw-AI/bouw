@@ -141,6 +141,8 @@ public class AgentService {
         messages.add(ChatMessage.user(request.prompt()));
 
         String lastAssistantContent = null;
+        boolean hadToolCalls = false;
+        boolean nudgedForEmptyResponse = false;
 
         for (int i = 0; i < maxIterations; i++) {
             if (Instant.now().isAfter(deadline)) {
@@ -174,6 +176,7 @@ public class AgentService {
             // Handle tool calls regardless of finishReason — some models set
             // finish_reason to "stop" or leave it null even when tool_calls are present.
             if (assistantMsg.toolCalls() != null && !assistantMsg.toolCalls().isEmpty()) {
+                hadToolCalls = true;
                 if (assistantMsg.content() != null && !assistantMsg.content().isEmpty()) {
                     lastAssistantContent = assistantMsg.content();
                 }
@@ -185,6 +188,16 @@ public class AgentService {
                 }
             } else {
                 String answer = assistantMsg.content();
+                // Some models (e.g. deepseek streaming) return an empty assistant message after
+                // completing tool calls instead of following up with a text answer. Nudge once by
+                // removing the empty message and asking the model to reply, then retry.
+                if ((answer == null || answer.isBlank()) && hadToolCalls && !nudgedForEmptyResponse) {
+                    messages.remove(messages.size() - 1);
+                    nudgedForEmptyResponse = true;
+                    messages.add(ChatMessage.user("Please provide your answer."));
+                    log.debug("Empty response after tool calls on iteration {}; nudging model for text answer", i);
+                    continue;
+                }
                 if (answer == null || answer.isBlank()) {
                     answer = lastAssistantContent;
                 }

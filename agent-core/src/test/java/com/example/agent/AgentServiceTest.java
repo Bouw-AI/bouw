@@ -247,6 +247,75 @@ class AgentServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void shouldNudgeModelWhenEmptyResponseFollowsToolCalls() {
+        // Given: some models (e.g. deepseek streaming) return an empty message after tool results
+        // instead of immediately providing a text answer. The agent should nudge once and retry.
+        var availableTool = new AvailableTool("get_time", "Get the current time",
+                Map.of("type", "object", "properties", Map.of()));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
+        when(toolProvider.callTool(eq("server1"), eq("get_time"), anyMap())).thenReturn("12:00");
+
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithToolCall("call_1", "get_time", "{}"))
+                .thenReturn(responseWithContent(""))          // empty after tool results
+                .thenReturn(responseWithContent("The time is 12:00."));  // answer after nudge
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: the model was nudged and the final answer is returned
+        assertThat(result.response()).isEqualTo("The time is 12:00.");
+        verify(llmClient, times(3)).chat(anyString(), anyList(), anyList());
+
+        // The nudge message ("Please provide your answer.") should appear in the message history
+        ArgumentCaptor<List<ChatMessage>> captor = ArgumentCaptor.forClass(List.class);
+        verify(llmClient, times(3)).chat(eq(MODEL), captor.capture(), anyList());
+        List<ChatMessage> thirdCallMessages = captor.getAllValues().get(2);
+        assertThat(thirdCallMessages).anySatisfy(msg -> {
+            assertThat(msg.role()).isEqualTo("user");
+            assertThat(msg.content()).contains("Please provide your answer");
+        });
+    }
+
+    @Test
+    void shouldNotNudgeWhenEmptyResponseWithNoToolCalls() {
+        // Given: empty response on the very first turn (no tool calls at all) — no nudge expected
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent(""));
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: fallback message returned, only one LLM call (no nudge)
+        assertThat(result.response()).contains("without producing a text answer");
+        verify(llmClient, times(1)).chat(anyString(), anyList(), anyList());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void shouldNudgeOnlyOnceEvenIfModelStillReturnsEmpty() {
+        // Given: model keeps returning empty after tool calls even after a nudge
+        var availableTool = new AvailableTool("get_time", "Get the current time",
+                Map.of("type", "object", "properties", Map.of()));
+        when(toolProvider.getAllToolsByServer()).thenReturn(Map.of("server1", List.of(availableTool)));
+        when(toolProvider.callTool(eq("server1"), eq("get_time"), anyMap())).thenReturn("12:00");
+
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithToolCall("call_1", "get_time", "{}"))
+                .thenReturn(responseWithContent(""))   // empty after tool results
+                .thenReturn(responseWithContent(""));  // still empty after nudge
+
+        // When
+        AgentResponse result = agentService.chat(new AgentRequest(PROMPT, MODEL));
+
+        // Then: fallback returned after one nudge attempt; exactly 3 LLM calls (no infinite loop)
+        assertThat(result.response()).contains("without producing a text answer");
+        verify(llmClient, times(3)).chat(anyString(), anyList(), anyList());
+    }
+
+    @Test
     void shouldReturnDirectAnswerWithNoTools() {
         // Given: no tools available, model responds directly
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
