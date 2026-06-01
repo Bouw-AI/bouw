@@ -281,7 +281,7 @@ public class AgentService {
         LocalTool localTool = localTools.find(toolName);
         if (localTool != null) {
             log.debug("Executing built-in tool '{}' with args: {}", toolName, args);
-            ToolContext ctx = new ToolContext(workspaceRegistry.resolve(sessionId));
+            ToolContext ctx = new ToolContext(workspaceRegistry.resolve(sessionId), sessionId);
             try {
                 return localTool.execute(args, ctx);
             } catch (Exception e) {
