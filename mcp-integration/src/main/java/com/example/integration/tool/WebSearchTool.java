@@ -102,7 +102,12 @@ public class WebSearchTool implements LocalTool {
 
                 if (status == 200) {
                     JsonNode root = objectMapper.readTree(response.body());
-                    return root.path("choices").path(0).path("message").path("content").asText();
+                    JsonNode content = root.path("choices").path(0).path("message").path("content");
+                    if (content.isMissingNode() || content.isNull()) {
+                        log.warn("OpenRouter search: missing content field in 200 response: {}", response.body());
+                        return "Search failed: unexpected response structure (missing content field)";
+                    }
+                    return content.asText();
                 }
 
                 if ((status == 429 || status >= 500) && attempt < MAX_ATTEMPTS) {

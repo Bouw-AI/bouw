@@ -111,6 +111,26 @@ class WebSearchToolTest {
     }
 
     @Test
+    void returnsErrorOnMissingContentField() throws Exception {
+        doReturn(mockResponse(200, "{\"choices\":[{\"message\":{}}]}"))
+                .when(httpClient).send(any(), any());
+
+        assertThat(tool.execute(Map.of("query", "test")))
+                .contains("missing content field");
+        verify(httpClient, times(1)).send(any(), any());
+    }
+
+    @Test
+    void returnsErrorOnNullContentField() throws Exception {
+        doReturn(mockResponse(200, "{\"choices\":[{\"message\":{\"content\":null}}]}"))
+                .when(httpClient).send(any(), any());
+
+        assertThat(tool.execute(Map.of("query", "test")))
+                .contains("missing content field");
+        verify(httpClient, times(1)).send(any(), any());
+    }
+
+    @Test
     void throwsOnMissingQueryArgument() {
         assertThatThrownBy(() -> tool.execute(Map.of()))
                 .isInstanceOf(IllegalArgumentException.class)

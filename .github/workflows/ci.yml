@@ -60,6 +60,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Install the root POM into ~/.m2 so Trivy can resolve com.example:mcp-parent
+      # when scanning child-module pom.xml files (needed to pick up tomcat.version override).
+      - name: Resolve Maven parent POM
+        run: mvn --batch-mode --no-transfer-progress install -N -q
+
       - name: Install Trivy
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \

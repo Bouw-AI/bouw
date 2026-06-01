@@ -11,12 +11,6 @@
     </parent>
 
     <artifactId>mcp-integration</artifactId>
-
-    <properties>
-        <!-- Explicit override so Trivy resolves the correct Tomcat version
-             even when the local parent POM is not in the Maven cache. -->
-        <tomcat.version>10.1.55</tomcat.version>
-    </properties>
     <name>mcp-integration</name>
     <description>Spring Boot application – wires agent-core and mcp-client together</description>
 
