@@ -2,6 +2,7 @@ package com.example.integration.controller;
 
 import com.example.agent.AgentService;
 import com.example.agent.AgentStreamListener;
+import com.example.agent.DeveloperModeService;
 import com.example.agent.model.AgentRequest;
 import com.example.agent.model.AgentResponse;
 import com.example.agent.model.ChatMessage;
@@ -33,6 +34,9 @@ class AgentControllerTest {
     @Mock
     AgentService agentService;
 
+    @Mock
+    DeveloperModeService developerModeService;
+
     ObjectMapper objectMapper = new ObjectMapper();
     AgentController controller;
 
@@ -42,6 +46,7 @@ class AgentControllerTest {
                 agentService,
                 objectMapper,
                 Executors.newCachedThreadPool(),
+                developerModeService,
                 Duration.ofMinutes(5)
         );
     }
