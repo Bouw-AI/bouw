@@ -124,6 +124,8 @@ agent:
     # Run commands through a login shell (-l) so the user's profile is sourced. Keep this true
     # so PATH entries set up in ~/.zprofile / ~/.bash_profile resolve — this is what makes
     # Homebrew tools like 'brew' (/opt/homebrew/bin, /usr/local/bin) runnable from run_bash.
+    # Trade-off: the profile may define aliases/functions or run side-effecting startup code;
+    # set to false to run a plain non-login shell if that is a concern.
     login-shell: true
     # Cap on the size (characters) of any single tool result returned to the model.
     max-output-chars: 30000

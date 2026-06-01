@@ -23,7 +23,9 @@ import java.util.List;
  *   <li>{@code loginShell} — when true (default) {@code run_bash} runs the command through a
  *       login shell ({@code -l}) so the user's profile is sourced. This is what makes tools
  *       installed via Homebrew ({@code brew}, {@code /opt/homebrew/bin}, {@code /usr/local/bin})
- *       and other PATH entries set up in {@code ~/.zprofile} / {@code ~/.bash_profile} resolvable.</li>
+ *       and other PATH entries set up in {@code ~/.zprofile} / {@code ~/.bash_profile} resolvable.
+ *       The trade-off: the profile may define aliases/functions or run side-effecting startup code.
+ *       Set this to false to run a plain non-login shell when that is a concern.</li>
  * </ul>
  */
 @ConfigurationProperties("agent.tools")

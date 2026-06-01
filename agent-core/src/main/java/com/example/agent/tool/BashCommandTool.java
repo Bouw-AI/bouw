@@ -12,7 +12,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-/** Runs a shell command from the workspace root and returns its combined output. */
+/**
+ * Runs a shell command from the workspace root and returns its combined output.
+ *
+ * <p>By default commands run through a <em>login</em> shell ({@code -l}) so the user's profile is
+ * sourced and PATH-dependent tools (e.g. Homebrew's {@code brew}) resolve. The trade-off is that
+ * the profile may define aliases/functions or run side-effecting startup code, and runs in the
+ * environment the user's profile sets up. Set {@code agent.tools.login-shell=false} to run a plain
+ * non-login shell instead when that is a concern (note: like all built-in tools, {@code run_bash}
+ * already grants arbitrary shell access and is gated by {@code agent.tools.enabled}).
+ */
 @Component
 public class BashCommandTool implements LocalTool {
 

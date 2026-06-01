@@ -79,13 +79,19 @@ public class WebSearchTool implements LocalTool {
         }
 
         String query = requiredString(arguments, "query");
+        // Keep the formatting instruction in a system message, separate from the user-supplied
+        // query, so the query is treated as data to search for rather than instructions to follow.
         String requestBody = objectMapper.writeValueAsString(Map.of(
                 "model", model,
-                "messages", List.of(Map.of(
-                        "role", "user",
-                        "content", "Search the web and provide the latest information about: " + query
-                                + "\n\nReturn a concise summary of the most relevant and recent results, "
-                                + "and include the direct source URL for each fact you report.")),
+                "messages", List.of(
+                        Map.of(
+                                "role", "system",
+                                "content", "Search the web for the latest information about the user's query. "
+                                        + "Return a concise summary of the most relevant and recent results, "
+                                        + "and include the direct source URL for each fact you report."),
+                        Map.of(
+                                "role", "user",
+                                "content", query)),
                 "max_tokens", 1024));
 
         HttpRequest request = HttpRequest.newBuilder()
