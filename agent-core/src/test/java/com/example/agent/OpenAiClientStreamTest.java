@@ -90,6 +90,56 @@ class OpenAiClientStreamTest {
         assertThat(response.choices().get(0).finishReason()).isEqualTo("tool_calls");
     }
 
+    @Test
+    void fallsBackToReasoningWhenContentEmpty() throws IOException {
+        // A reasoning model (e.g. gpt-oss / deepseek) that only ever emits "reasoning" deltas and
+        // no content — this previously produced an empty assistant message ("The agent finished
+        // without producing a text answer."). The reasoning text is used as a content fallback.
+        String sse = """
+                data: {"choices":[{"index":0,"delta":{"reasoning":"Let me think. "},"finish_reason":null}]}
+
+                data: {"choices":[{"index":0,"delta":{"reasoning":"The answer is 42."},"finish_reason":null}]}
+
+                data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+                data: [DONE]
+
+                """;
+        OpenAiClient client = clientServing(sse);
+
+        List<String> tokens = new ArrayList<>();
+        ChatResponse response = client.chatStream(
+                "m", List.of(ChatMessage.user("hi")), List.of(), tokens::add);
+
+        // Reasoning is not streamed live, but is surfaced as the final content fallback.
+        assertThat(tokens).isEmpty();
+        assertThat(response.choices().get(0).message().content())
+                .isEqualTo("Let me think. The answer is 42.");
+    }
+
+    @Test
+    void prefersContentOverReasoningWhenBothPresent() throws IOException {
+        String sse = """
+                data: {"choices":[{"index":0,"delta":{"reasoning":"thinking..."},"finish_reason":null}]}
+
+                data: {"choices":[{"index":0,"delta":{"content":"Final answer."},"finish_reason":null}]}
+
+                data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+                data: [DONE]
+
+                """;
+        OpenAiClient client = clientServing(sse);
+
+        List<String> tokens = new ArrayList<>();
+        ChatResponse response = client.chatStream(
+                "m", List.of(ChatMessage.user("hi")), List.of(), tokens::add);
+
+        // Only real content is surfaced; reasoning is ignored when content exists.
+        assertThat(tokens).containsExactly("Final answer.");
+        assertThat(response.choices().get(0).message().content()).isEqualTo("Final answer.");
+    }
+
     private OpenAiClient clientServing(String sseBody) throws IOException {
         server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
