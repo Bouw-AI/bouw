@@ -52,7 +52,7 @@ public class AgentService {
             ObjectMapper objectMapper,
             @Value("${agent.request-timeout:5m}") Duration requestTimeout,
             @Value("${llm.model:}") String defaultModel,
-            @Value("${agent.max-iterations:30}") int maxIterations,
+            @Value("${agent.max-iterations:50}") int maxIterations,
             WorkspaceRegistry workspaceRegistry,
             Optional<MemoryService> memoryService,
             Optional<ConversationMemoryService> conversationMemory,
@@ -153,7 +153,7 @@ public class AgentService {
             }
 
             ChatResponse response = stream
-                    ? llmClient.chatStream(model, messages, toolDefinitions, listener::onContent)
+                    ? llmClient.chatStream(model, messages, toolDefinitions, listener::onContent, listener::onReasoning)
                     : llmClient.chat(model, messages, toolDefinitions);
 
             // Guard against malformed/empty responses (null body, no choices, no message) so a
