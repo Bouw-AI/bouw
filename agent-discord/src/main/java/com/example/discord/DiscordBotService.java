@@ -139,6 +139,47 @@ public class DiscordBotService implements DisposableBean {
         }
     }
 
+    // ---- Scheduled-result delivery ----
+
+    /**
+     * Posts the result of a scheduled prompt back to its origin. The {@code target} is the session id
+     * captured when the prompt was scheduled — {@code discord-channel-<id>} or
+     * {@code discord-dm-<userId>} for Discord origins; other targets are ignored here (they belong to
+     * a different front-end). Called by {@link DeliverySubscriber} for each delivery event.
+     */
+    public void deliverScheduledResult(String target, String prompt, String result) {
+        if (target == null || jda == null) {
+            return;
+        }
+        String body = (result == null || result.isBlank()) ? "(no result)" : result;
+        String header = "⏰ **Scheduled result**"
+                + (prompt == null || prompt.isBlank() ? "" : " for: " + oneLine(prompt));
+        String message = header + "\n\n" + body;
+        List<String> chunks = splitMessage(message, DISCORD_MSG_LIMIT);
+
+        if (target.startsWith("discord-channel-")) {
+            String channelId = target.substring("discord-channel-".length());
+            var channel = jda.getTextChannelById(channelId);
+            if (channel == null) {
+                log.warn("Cannot deliver scheduled result: unknown channel {}", channelId);
+                return;
+            }
+            chunks.forEach(c -> channel.sendMessage(c).queue());
+            logAgentResponse(target, body);
+        } else if (target.startsWith("discord-dm-")) {
+            String userId = target.substring("discord-dm-".length());
+            jda.openPrivateChannelById(userId).queue(
+                    channel -> {
+                        chunks.forEach(c -> channel.sendMessage(c).queue());
+                        logAgentResponse(target, body);
+                    },
+                    err -> log.warn("Cannot deliver scheduled result to user {}: {}",
+                            userId, err.getMessage()));
+        } else {
+            log.debug("Ignoring scheduled delivery for non-Discord target '{}'", target);
+        }
+    }
+
     // ---- Conversation log helpers ----
 
     private void logUserMessage(String sessionId, String author, String content) {
