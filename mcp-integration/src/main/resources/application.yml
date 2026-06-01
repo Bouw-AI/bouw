@@ -24,6 +24,10 @@ mcp:
   # Path to the personal (gitignored) MCP servers config file.
   # Entries here override same-named entries in config-file.
   user-config-file: ../mcp-servers-user.json
+  # Max wait for an MCP server's initialization handshake before the connection is
+  # considered failed. Generous by default to tolerate slow first-run servers (e.g. uvx
+  # downloading a package); lower it if you'd rather fail fast on unreachable servers.
+  init-timeout: 120s
 
 
 llm:
@@ -120,6 +124,20 @@ agent:
     # will refuse to access. Patterns follow Java glob syntax; ** matches across directories.
     # Examples:  **/.env  secrets/**  **/*.key  .git/**
     deny-list: []
+  # Self-scheduling: the schedule_prompt / list_scheduled_prompts / cancel_scheduled_prompt tools
+  # let the agent set a prompt to run later (one-shot or recurring cron). When it fires, the prompt
+  # runs through the full agent and the result is delivered back to the origin (the session it was
+  # scheduled from) over the /api/agent/deliveries SSE stream — e.g. the Discord bot posts it to the
+  # originating channel/DM.
+  scheduler:
+    # Master switch for the scheduling tools and the runner. When false the tools are not registered.
+    enabled: ${SCHEDULER_ENABLED:true}
+    # JSON file scheduled prompts are persisted to so they survive a restart ('~/' is expanded).
+    store-file: ${SCHEDULER_STORE_FILE:~/.hugin/scheduled-prompts.json}
+    # Cap on how many active schedules a single origin (session) may hold.
+    max-per-target: 20
+    # IANA timezone used when a schedule request omits one (e.g. America/Chicago for US Central).
+    default-zone: ${SCHEDULER_DEFAULT_ZONE:}
 
 management:
   endpoints:
