@@ -22,7 +22,7 @@ hugin onboard
 ```
 
 Onboarding will:
-- Install Java 21 (Temurin), git, Maven, and Python 3 if missing
+- Install Java 21 (Temurin), git, and Maven if missing
 - Prompt for your **OpenRouter API key** (required — used for LLM + web search)
 - Prompt for a **Redis host** for long-term memory (leave blank to skip)
 - Build the fat jars, create `~/.hugin/`, and register a **systemd service** that starts on boot
@@ -112,7 +112,7 @@ The server starts on **port 8080**. `agent-core` and `mcp-client` are libraries.
 
 ## Docker
 
-Build and run the agent server as a container. The image bundles the Spring Boot server and the Python 3 runtime for the OpenRouter web-search MCP server. The default configuration talks to OpenRouter over HTTPS.
+Build and run the agent server as a container. The image bundles the Spring Boot server. The default configuration talks to OpenRouter over HTTPS.
 
 ### Build the image
 
@@ -138,7 +138,6 @@ docker run -p 8080:8080 \
 | `REDIS_HOST` | Redis hostname (only used when `MEMORY_ENABLED=true`) | `redis` |
 | `REDIS_PORT` | Redis port | `6379` |
 | `MCP_CONFIG_FILE` | Path to `mcp-servers.json` inside the container | `/app/mcp-servers.json` |
-| `SEARCH_OPENROUTER_SCRIPT` | Path to `openrouter-search-mcp.py` inside the container | `/app/openrouter-search-mcp.py` |
 
 ### Run with Docker Compose
 
@@ -250,22 +249,7 @@ To add another OpenAI-compatible provider, add an entry under `llm.providers` wi
 
 ## Web search
 
-A web search MCP server is registered automatically at startup. Configure it via `search.provider` in `application.yml`:
-
-```yaml
-search:
-  provider: openrouter   # or: duckduckgo
-  openrouter-script: ../openrouter-search-mcp.py
-```
-
-| Provider | How it works | Requirements |
-| --- | --- | --- |
-| `openrouter` *(default)* | Calls `perplexity/sonar` via OpenRouter for real-time web search. Reliable from cloud/server IPs. | `OPEN_ROUTER_API_KEY`, `python3` with `mcp` package (`pip install mcp`) |
-| `duckduckgo` | Launches `duckduckgo-mcp-server` via `uvx`. No API key needed, but DuckDuckGo applies bot detection that blocks most cloud IP ranges. Works well on local developer machines. | `uvx` |
-
-The `openrouter-search-mcp.py` script is in the repo root. The `openrouter-script` path is resolved relative to the working directory of `mcp-integration` at startup — the default `../openrouter-search-mcp.py` works when running with `mvn -pl mcp-integration spring-boot:run` from the repo root.
-
-If a `web-search` entry already exists in `mcp-servers.json`, that entry takes precedence and auto-configuration is skipped.
+Web search is a built-in local tool (`web_search`) that calls `perplexity/sonar` via OpenRouter for real-time results. It activates automatically when `OPEN_ROUTER_API_KEY` is set and `agent.tools.enabled` is `true` (the default). No extra runtime dependencies are required.
 
 ## Long-term memory
 
@@ -297,5 +281,3 @@ Settings live in `mcp-integration/src/main/resources/application.yml`:
 | `embedding.api-key` | Optional; when set, sent as `Authorization: Bearer <key>` | `${OPEN_ROUTER_API_KEY:}` |
 | `embedding.model` | Model used specifically for embedding text | `openai/text-embedding-3-small` |
 | `spring.data.redis.host` / `.port` | Redis connection (only used when `memory.enabled`) | `localhost` / `6379` |
-| `search.provider` | Web search MCP provider registered at startup: `openrouter` or `duckduckgo` (see [Web search](#web-search)) | `openrouter` |
-| `search.openrouter-script` | Path to `openrouter-search-mcp.py` (used when `provider=openrouter`) | `../openrouter-search-mcp.py` |
