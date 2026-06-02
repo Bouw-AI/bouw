@@ -36,6 +36,8 @@ public class AgentService {
     private final OpenAiClient llmClient;
     private final McpToolProvider toolProvider;
     private final LocalToolRegistry localTools;
+    /** Built-in local tool definitions, precomputed once — the local registry is fixed after startup. */
+    private final List<ToolDefinition> localToolDefinitions;
     private final ObjectMapper objectMapper;
     private final Duration requestTimeout;
     private final String defaultModel;
@@ -61,6 +63,11 @@ public class AgentService {
         this.llmClient = llmClient;
         this.toolProvider = toolProvider;
         this.localTools = localTools;
+        List<ToolDefinition> localDefs = new ArrayList<>();
+        for (LocalTool tool : localTools.tools()) {
+            localDefs.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
+        }
+        this.localToolDefinitions = List.copyOf(localDefs);
         this.objectMapper = objectMapper;
         this.requestTimeout = requestTimeout;
         this.defaultModel = defaultModel;
@@ -180,6 +187,8 @@ public class AgentService {
                 if (assistantMsg.content() != null && !assistantMsg.content().isEmpty()) {
                     lastAssistantContent = assistantMsg.content();
                 }
+                assistantMsg = normalizeToolCallAssistantMessage(assistantMsg);
+                messages.set(messages.size() - 1, assistantMsg);
                 for (ToolCall toolCall : assistantMsg.toolCalls()) {
                     listener.onToolCall(toolCall.function().name(), toolCall.function().arguments());
                     String toolResult = executeToolCall(toolCall, toolServerMap, request.sessionId());
@@ -223,11 +232,7 @@ public class AgentService {
      * Built-in local tools are advertised first and take precedence on name collisions.
      */
     private List<ToolDefinition> collectTools(Map<String, String> toolServerMap) {
-        List<ToolDefinition> toolDefinitions = new ArrayList<>();
-
-        for (LocalTool tool : localTools.tools()) {
-            toolDefinitions.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
-        }
+        List<ToolDefinition> toolDefinitions = new ArrayList<>(localToolDefinitions);
 
         toolProvider.getAllToolsByServer().forEach((serverName, tools) ->
                 tools.forEach(tool -> {
@@ -276,7 +281,7 @@ public class AgentService {
         LocalTool localTool = localTools.find(toolName);
         if (localTool != null) {
             log.debug("Executing built-in tool '{}' with args: {}", toolName, args);
-            ToolContext ctx = new ToolContext(workspaceRegistry.resolve(sessionId));
+            ToolContext ctx = new ToolContext(workspaceRegistry.resolve(sessionId), sessionId);
             try {
                 return localTool.execute(args, ctx);
             } catch (Exception e) {
@@ -314,5 +319,17 @@ public class AgentService {
             log.warn("Could not parse tool arguments '{}': {}", arguments, e.getMessage());
             return Map.of();
         }
+    }
+
+    private static ChatMessage normalizeToolCallAssistantMessage(ChatMessage message) {
+        if (message == null || message.toolCalls() == null || message.toolCalls().isEmpty()) {
+            return message;
+        }
+        return new ChatMessage(
+                message.role(),
+                message.content() == null ? "" : message.content(),
+                message.reasoningContent() == null ? "" : message.reasoningContent(),
+                message.toolCalls(),
+                message.toolCallId());
     }
 }

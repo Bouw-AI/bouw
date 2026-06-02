@@ -6,9 +6,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Toggles developer mode: DEBUG logging and Discord tool-call visibility.
- */
+/** Toggles developer mode: DEBUG logging and Discord tool-call visibility. */
 @Component
 public class DeveloperModeTool implements LocalTool {
 

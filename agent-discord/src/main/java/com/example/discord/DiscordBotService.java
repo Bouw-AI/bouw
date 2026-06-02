@@ -66,6 +66,15 @@ public class DiscordBotService implements DisposableBean {
     private static final int DIAGNOSTIC_WORD_LIMIT = 200;
     private static final int DIAGNOSTIC_LOG_LINES = 120;
     private static final int DIAGNOSTIC_LOG_CHAR_LIMIT = 24_000;
+    /**
+     * Per-session sliding window for the in-memory conversation and diagnostic logs. These grow for
+     * the lifetime of a session, so without a cap a long-lived channel's bug report keeps growing
+     * until it crosses GitHub's body limit and issue creation starts failing. Keep only the most
+     * recent turns — older context is rarely useful in a bug report.
+     */
+    private static final int SESSION_LOG_MAX_ENTRIES = 60;
+    /** GitHub rejects issue bodies longer than 65,536 characters; stay safely under it. */
+    private static final int GITHUB_BODY_LIMIT = 65_000;
 
     private final DiscordProperties properties;
     private final DiscordAgentClient agentClient;
@@ -142,33 +151,82 @@ public class DiscordBotService implements DisposableBean {
         }
     }
 
+    // ---- Scheduled-result delivery ----
+
+    /**
+     * Posts the result of a scheduled prompt back to its origin. The {@code target} is the session id
+     * captured when the prompt was scheduled — {@code discord-channel-<id>} or
+     * {@code discord-dm-<userId>} for Discord origins; other targets are ignored here (they belong to
+     * a different front-end). Called by {@link DeliverySubscriber} for each delivery event.
+     */
+    public void deliverScheduledResult(String target, String prompt, String result) {
+        if (target == null || jda == null) {
+            return;
+        }
+        String body = (result == null || result.isBlank()) ? "(no result)" : result;
+        String header = "⏰ **Scheduled result**"
+                + (prompt == null || prompt.isBlank() ? "" : " for: " + oneLine(prompt));
+        String message = header + "\n\n" + body;
+        List<String> chunks = splitMessage(message, DISCORD_MSG_LIMIT);
+
+        if (target.startsWith("discord-channel-")) {
+            String channelId = target.substring("discord-channel-".length());
+            var channel = jda.getTextChannelById(channelId);
+            if (channel == null) {
+                log.warn("Cannot deliver scheduled result: unknown channel {}", channelId);
+                return;
+            }
+            chunks.forEach(c -> channel.sendMessage(c).queue());
+            logAgentResponse(target, body);
+        } else if (target.startsWith("discord-dm-")) {
+            String userId = target.substring("discord-dm-".length());
+            jda.openPrivateChannelById(userId).queue(
+                    channel -> {
+                        chunks.forEach(c -> channel.sendMessage(c).queue());
+                        logAgentResponse(target, body);
+                    },
+                    err -> log.warn("Cannot deliver scheduled result to user {}: {}",
+                            userId, err.getMessage()));
+        } else {
+            log.debug("Ignoring scheduled delivery for non-Discord target '{}'", target);
+        }
+    }
+
     // ---- Conversation log helpers ----
 
     private void logUserMessage(String sessionId, String author, String content) {
-        conversationLogs.computeIfAbsent(sessionId, k -> new LinkedList<>())
-                .add("[**" + author + "**] " + content);
+        addBounded(conversationLogs.computeIfAbsent(sessionId, k -> new LinkedList<>()),
+                "[**" + author + "**] " + content);
     }
 
     private void logAgentResponse(String sessionId, String response) {
         LinkedList<String> log = conversationLogs.get(sessionId);
         if (log != null) {
-            log.add("[**Hugin**] " + response);
+            addBounded(log, "[**Hugin**] " + response);
         }
     }
 
     void logToolCall(String sessionId, String name, String args) {
-        diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>())
-                .add("Tool call `" + name + "` args: " + truncateWords(oneLine(args), DIAGNOSTIC_WORD_LIMIT));
+        addBounded(diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>()),
+                "Tool call `" + name + "` args: " + truncateWords(oneLine(args), DIAGNOSTIC_WORD_LIMIT));
     }
 
     void logToolResult(String sessionId, String name, String result) {
-        diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>())
-                .add("Tool result `" + name + "`: " + truncateWords(oneLine(result), DIAGNOSTIC_WORD_LIMIT));
+        addBounded(diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>()),
+                "Tool result `" + name + "`: " + truncateWords(oneLine(result), DIAGNOSTIC_WORD_LIMIT));
     }
 
     void logAgentError(String sessionId, String message) {
-        diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>())
-                .add("Agent error: " + truncateWords(oneLine(message), DIAGNOSTIC_WORD_LIMIT));
+        addBounded(diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>()),
+                "Agent error: " + truncateWords(oneLine(message), DIAGNOSTIC_WORD_LIMIT));
+    }
+
+    /** Appends {@code entry}, evicting the oldest entries so the log keeps only the most recent turns. */
+    private static void addBounded(LinkedList<String> log, String entry) {
+        log.add(entry);
+        while (log.size() > SESSION_LOG_MAX_ENTRIES) {
+            log.removeFirst();
+        }
     }
 
     String buildIssueBody(String sessionId, String authorMention) {
@@ -200,7 +258,20 @@ public class DiscordBotService implements DisposableBean {
         }
         appendLogExcerpt(body, "Hugin Server Log", logDir.resolve("hugin.log"));
         appendLogExcerpt(body, "Discord Bot Log", logDir.resolve("discord.log"));
-        return body.toString();
+        return capBody(body.toString());
+    }
+
+    /**
+     * Caps an issue body to GitHub's character limit. Without this, a long-lived session's report
+     * eventually exceeds the limit and GitHub rejects it with HTTP 422 — the "Report Bug" button
+     * then appears to do nothing.
+     */
+    static String capBody(String body) {
+        if (body == null || body.length() <= GITHUB_BODY_LIMIT) {
+            return body;
+        }
+        String notice = "\n\n...(report truncated to fit GitHub's character limit)";
+        return body.substring(0, GITHUB_BODY_LIMIT - notice.length()) + notice;
     }
 
     private void appendLogExcerpt(StringBuilder body, String title, Path logFile) {
