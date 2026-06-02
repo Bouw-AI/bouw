@@ -13,6 +13,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.List;
 
 @Configuration
@@ -33,7 +35,17 @@ public class SecurityConfig {
     private static final IpAddressMatcher LOCALHOST_V6 = new IpAddressMatcher("::1");
 
     private static boolean isLocalhost(String remoteAddr) {
-        return LOCALHOST_V4.matches(remoteAddr) || LOCALHOST_V6.matches(remoteAddr);
+        if (remoteAddr == null || remoteAddr.isBlank()) {
+            return false;
+        }
+        if (LOCALHOST_V4.matches(remoteAddr) || LOCALHOST_V6.matches(remoteAddr)) {
+            return true;
+        }
+        try {
+            return InetAddress.getByName(remoteAddr).isLoopbackAddress();
+        } catch (UnknownHostException ex) {
+            return false;
+        }
     }
 
     /**
@@ -53,10 +65,13 @@ public class SecurityConfig {
                     if (apiKeyConfigured) {
                         auth.anyRequest().authenticated();
                     } else {
-                        // no api-key: agent endpoints open to localhost, denied externally
+                        // no api-key: agent + server endpoints open to localhost, denied externally
                         auth.requestMatchers(req -> req.getRequestURI().startsWith("/api/agent/")
                                         && isLocalhost(req.getRemoteAddr())).permitAll()
+                                .requestMatchers(req -> req.getRequestURI().startsWith("/api/servers")
+                                        && isLocalhost(req.getRemoteAddr())).permitAll()
                                 .requestMatchers("/api/agent/**").denyAll()
+                                .requestMatchers("/api/servers/**").denyAll()
                                 .anyRequest().denyAll();
                     }
                 })
