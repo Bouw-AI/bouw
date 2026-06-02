@@ -104,7 +104,7 @@ if [[ "$OS_TYPE" == "macos" ]]; then
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>set -a; source ${ENV_FILE}; set +a; export PATH=/usr/local/bin:/usr/bin:/bin; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar --spring.config.additional-location=file:${CONFIG_YML}</string>
+    <string>set -a; source ${ENV_FILE}; set +a; export PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar --spring.config.additional-location=file:${CONFIG_YML}</string>
   </array>
   <key>WorkingDirectory</key>  <string>${HUGIN_HOME}</string>
   <key>StandardOutPath</key>   <string>${HUGIN_HOME}/logs/hugin.log</string>
@@ -165,7 +165,7 @@ PLIST
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>set -a; source ${ENV_FILE}; set +a; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/agent-discord.jar</string>
+    <string>set -a; source ${ENV_FILE}; set +a; export PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/agent-discord.jar</string>
   </array>
   <key>WorkingDirectory</key>  <string>${HUGIN_HOME}</string>
   <key>StandardOutPath</key>   <string>${HUGIN_HOME}/logs/discord.log</string>
@@ -281,7 +281,7 @@ User=${INSTALL_USER}
 Environment=HUGIN_HOME=${HUGIN_HOME}
 Environment=AGENT_HOME=${HUGIN_HOME}
 EnvironmentFile=${ENV_FILE}
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=${HUGIN_HOME}
 ExecStart=/usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar \
   --spring.config.additional-location=file:${HUGIN_HOME}/config/application.yml
