@@ -183,6 +183,19 @@ To add another OpenAI-compatible provider, add an entry under `llm.providers` wi
 
 Web search is a built-in local tool (`web_search`) that calls `perplexity/sonar` via OpenRouter for real-time results. It activates automatically when `OPEN_ROUTER_API_KEY` is set and `agent.tools.enabled` is `true` (the default). No extra runtime dependencies are required.
 
+## Google Docs & Sheets
+
+Hugin can create, read, and edit Google Docs and Sheets through seven built-in local tools backed by the official Google API Java client libraries: `google_docs_create`, `google_docs_read`, `google_docs_edit`, `google_sheets_create`, `google_sheets_read`, `google_sheets_write`, and `google_sheets_append`.
+
+Authentication uses a **Google service account** (the recommended method for a headless server):
+
+1. In a Google Cloud project, enable the Google **Docs**, **Sheets**, and **Drive** APIs.
+2. Create a service account and download its JSON key.
+3. Set `GOOGLE_APPLICATION_CREDENTIALS` to the key's path (or `google.credentials-file` in `application.yml`).
+4. **Share** the docs/sheets you want Hugin to access with the service account's `client_email`. Files Hugin *creates* are owned by the service account, so pass a `share_with` email (or set `GOOGLE_DEFAULT_SHARE_WITH`) to make them visible to a person.
+
+When no credentials are configured the tools report themselves as unavailable rather than failing startup. Workspace domains can use domain-wide delegation via `GOOGLE_IMPERSONATE_USER`. See [`docs/skills/google-docs-sheets`](docs/skills/google-docs-sheets/SKILL.md) for usage details and the [Configuration](#configuration) table for the `google.*` settings.
+
 ## Long-term memory
 
 The agent can keep a **Redis-backed long-term memory** of past conversations using text embeddings. It is **disabled by default**. When enabled, every finished exchange (the prompt and the agent's final answer) is embedded and stored in Redis; on each new request the most similar past memories are recalled and injected into the prompt as extra context, so the agent can remember things across requests and restarts.
@@ -204,6 +217,10 @@ Settings live in `mcp-integration/src/main/resources/application.yml`:
 | `mcp.config-file` | Path to the MCP servers JSON (supports `~/`) | `./mcp-servers.json` |
 | `agent.api-key` | If set, `/api/agent/**` requires the `X-API-Key` header; if blank, those endpoints are open | _(blank)_ |
 | `agent.request-timeout` | Per-request wall-clock budget for the agent loop | `5m` |
+| `google.credentials-file` | Path to a Google service-account JSON key enabling the `google_docs_*`/`google_sheets_*` tools | `${GOOGLE_APPLICATION_CREDENTIALS:}` |
+| `google.application-name` | Application name reported to the Google APIs | `Hugin` |
+| `google.impersonate-user` | Optional user email to impersonate via domain-wide delegation | `${GOOGLE_IMPERSONATE_USER:}` |
+| `google.default-share-with` | Optional email that newly created docs/sheets are auto-shared with | `${GOOGLE_DEFAULT_SHARE_WITH:}` |
 | `memory.enabled` | Enable Redis-backed long-term memory (see [Long-term memory](#long-term-memory)) | `false` |
 | `memory.key-prefix` | Redis key prefix for stored memory records | `agent:memory` |
 | `memory.top-k` | Number of most-similar past memories recalled into the prompt | `3` |

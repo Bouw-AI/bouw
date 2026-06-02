@@ -66,10 +66,16 @@ jobs:
           java-version: '21'
           cache: maven
 
-      # Install the root POM into ~/.m2 so Trivy can resolve com.example:mcp-parent
-      # when scanning child-module pom.xml files (needed to pick up tomcat.version override).
-      - name: Resolve Maven parent POM
-        run: mvn --batch-mode --no-transfer-progress install -N -q
+      # Build and install every module so the local Maven repository (~/.m2) is fully
+      # warmed: the parent POM (com.example:mcp-parent, needed for the tomcat.version
+      # override) plus all external dependencies and their transitive POMs. Trivy's
+      # pom.xml analyzer resolves from ~/.m2 first and only calls remote repositories for
+      # artifacts it can't find locally; those remote calls can fail with
+      # "semaphore acquire: context canceled" and abort the entire scan — a risk that grew
+      # once the Google API client libraries (large transitive trees) were added. Warming
+      # the cache keeps the scan local and deterministic.
+      - name: Warm Maven repository for Trivy
+        run: mvn --batch-mode --no-transfer-progress install -DskipTests -q
 
       - name: Install Trivy
         run: |
