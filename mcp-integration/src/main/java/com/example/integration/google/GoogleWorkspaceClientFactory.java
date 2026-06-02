@@ -169,18 +169,15 @@ public class GoogleWorkspaceClientFactory {
     }
 
     /**
-     * Loads the service-account credentials, applies optional domain-wide delegation, and scopes them
-     * to the Docs/Sheets/Drive APIs.
+     * Loads the service-account credentials from the configured file, applies optional domain-wide
+     * delegation, and scopes them to the Docs/Sheets/Drive APIs. The credentials file is the single
+     * source of truth — {@link #isConfigured()} gates every call on its presence, so this is only
+     * reached when a file is configured (keeping the two in agreement).
      */
     private GoogleCredentials credentials() throws IOException {
         GoogleCredentials base;
-        String file = properties.credentialsFile();
-        if (file != null && !file.isBlank()) {
-            try (InputStream in = new FileInputStream(file)) {
-                base = GoogleCredentials.fromStream(in);
-            }
-        } else {
-            base = GoogleCredentials.getApplicationDefault();
+        try (InputStream in = new FileInputStream(properties.credentialsFile())) {
+            base = GoogleCredentials.fromStream(in);
         }
 
         String impersonate = properties.impersonateUser();

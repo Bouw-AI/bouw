@@ -5,6 +5,10 @@ import com.example.integration.google.GoogleSheetValues;
 import com.example.integration.google.GoogleIds;
 import com.example.integration.google.GoogleWorkspaceClientFactory;
 import com.example.integration.google.GoogleWorkspaceProperties;
+import com.google.api.client.googleapis.json.GoogleJsonError;
+import com.google.api.client.googleapis.json.GoogleJsonResponseException;
+import com.google.api.client.http.HttpHeaders;
+import com.google.api.client.http.HttpResponseException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -133,6 +137,35 @@ class GoogleWorkspaceToolsTest {
     void errorsDescribeFallsBackForGenericException() {
         assertThat(GoogleErrors.describe(new RuntimeException("boom")))
                 .contains("Google Workspace request failed").contains("boom");
+    }
+
+    @Test
+    void errorsDescribeAddsSharingHintFor403And404() {
+        assertThat(GoogleErrors.describe(googleError(403, "The caller does not have permission")))
+                .contains("403").contains("shared with the service account");
+        assertThat(GoogleErrors.describe(googleError(404, "Requested entity was not found")))
+                .contains("404").contains("shared with the service account");
+    }
+
+    @Test
+    void errorsDescribeReportsOtherGoogleStatusCodesPlainly() {
+        assertThat(GoogleErrors.describe(googleError(500, "Backend error")))
+                .contains("Google API error 500").contains("Backend error")
+                .doesNotContain("shared with the service account");
+    }
+
+    private GoogleJsonResponseException googleError(int code, String message) {
+        GoogleJsonError details = new GoogleJsonError();
+        details.setMessage(message);
+        return new GoogleJsonResponseException(
+                new HttpResponseException.Builder(code, message, new HttpHeaders()), details);
+    }
+
+    @Test
+    void shareFileIsANoopForBlankEmail() {
+        GoogleWorkspaceClientFactory f = unconfiguredFactory();
+        assertThat(f.shareFile("file1", "", "writer")).isNull();
+        assertThat(f.shareFile("file1", null, "writer")).isNull();
     }
 
     /**
