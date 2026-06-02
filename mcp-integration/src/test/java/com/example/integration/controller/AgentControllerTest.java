@@ -2,6 +2,7 @@ package com.example.integration.controller;
 
 import com.example.agent.AgentService;
 import com.example.agent.AgentStreamListener;
+import com.example.agent.DeveloperModeService;
 import com.example.agent.model.AgentRequest;
 import com.example.agent.model.AgentResponse;
 import com.example.agent.model.ChatMessage;
@@ -33,6 +34,9 @@ class AgentControllerTest {
     @Mock
     AgentService agentService;
 
+    @Mock
+    DeveloperModeService developerModeService;
+
     ObjectMapper objectMapper = new ObjectMapper();
     AgentController controller;
 
@@ -42,6 +46,7 @@ class AgentControllerTest {
                 agentService,
                 objectMapper,
                 Executors.newCachedThreadPool(),
+                developerModeService,
                 Duration.ofMinutes(5)
         );
     }
@@ -279,5 +284,25 @@ class AgentControllerTest {
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(emitter).isNotNull();
+    }
+
+    @Test
+    void chatStreamEmitsConfigEventUsingDeveloperModeState() throws InterruptedException {
+        when(developerModeService.isEnabled()).thenReturn(true);
+        var request = new AgentRequest("Hello", "llama3.2");
+        var latch = new CountDownLatch(1);
+
+        doAnswer(invocation -> {
+            AgentStreamListener listener = invocation.getArgument(1);
+            listener.onContent("Hi");
+            latch.countDown();
+            return null;
+        }).when(agentService).chatStream(eq(request), any(AgentStreamListener.class));
+
+        SseEmitter emitter = controller.chatStream(request);
+
+        assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(emitter).isNotNull();
+        verify(developerModeService).isEnabled();
     }
 }
