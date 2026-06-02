@@ -62,6 +62,12 @@ class DiscordBotServiceTest {
     }
 
     @Test
+    void discordProperties_mentionOnlyDefaultsToTrue() {
+        // By default Hugin stays quiet in guild channels unless @mentioned or replied to.
+        assertThat(new DiscordProperties().isMentionOnly()).isTrue();
+    }
+
+    @Test
     void truncateWords_capsLongTextAtWordLimit() {
         String text = "one two three four five";
         assertThat(DiscordBotService.truncateWords(text, 3))
@@ -82,6 +88,40 @@ class DiscordBotServiceTest {
                 List.of("old line", "middle line", "newest line"), 20);
 
         assertThat(result).containsExactly("...(older log lines omitted)", "newest line");
+    }
+
+    @Test
+    void capBody_leavesBodyUnderLimitUnchanged() {
+        String small = "Bug Report\n\nshort body";
+        assertThat(DiscordBotService.capBody(small)).isSameAs(small);
+    }
+
+    @Test
+    void capBody_truncatesOverLimitBodyBelowGithubLimit() {
+        String oversized = "x".repeat(200_000);
+        String capped = DiscordBotService.capBody(oversized);
+        assertThat(capped.length()).isLessThanOrEqualTo(65_000);
+        assertThat(capped).endsWith("(report truncated to fit GitHub's character limit)");
+    }
+
+    @Test
+    void buildIssueBody_boundsLogsToRecentTurns() {
+        DiscordBotService service = new DiscordBotService(
+                new DiscordProperties(), null, null, tempDir);
+        // Simulate a long-lived channel session that accumulated far more turns than the window.
+        for (int i = 0; i < 500; i++) {
+            service.logToolResult("session-long", "tool" + i, "ok");
+        }
+
+        String body = service.buildIssueBody("session-long", "Jeremy");
+
+        // Body stays under GitHub's 65,536-character hard limit so issue creation won't 422.
+        assertThat(body.length()).isLessThanOrEqualTo(65_000);
+        // The sliding window keeps the newest turns and evicts the oldest.
+        long toolLines = body.lines().filter(l -> l.startsWith("- Tool result")).count();
+        assertThat(toolLines).isLessThanOrEqualTo(60);
+        assertThat(body).contains("`tool499`");
+        assertThat(body).doesNotContain("`tool0`");
     }
 
     @Test

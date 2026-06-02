@@ -14,7 +14,7 @@ public final class EnvironmentProbe {
 
     private static final Logger log = LoggerFactory.getLogger(EnvironmentProbe.class);
 
-    private static final String[] TOOLCHAINS = {"git", "node", "python3", "uvx", "docker", "mvn"};
+    private static final String[] TOOLCHAINS = {"git", "node", "uvx", "docker", "mvn"};
 
     private EnvironmentProbe() {}
 

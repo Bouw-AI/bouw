@@ -7,9 +7,9 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 public record ReasoningConfig(
         String effort,
         Boolean exclude,
-        Boolean enabled
+    Boolean enabled
 ) {
     public static ReasoningConfig maxEffort() {
-        return new ReasoningConfig("max", Boolean.FALSE, Boolean.TRUE);
+        return new ReasoningConfig("xhigh", Boolean.FALSE, Boolean.TRUE);
     }
 }

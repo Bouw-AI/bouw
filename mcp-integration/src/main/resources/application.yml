@@ -24,18 +24,11 @@ mcp:
   # Path to the personal (gitignored) MCP servers config file.
   # Entries here override same-named entries in config-file.
   user-config-file: ../mcp-servers-user.json
+  # Max wait for an MCP server's initialization handshake before the connection is
+  # considered failed. Generous by default to tolerate slow first-run servers (e.g. uvx
+  # downloading a package); lower it if you'd rather fail fast on unreachable servers.
+  init-timeout: 120s
 
-search:
-  # Web search MCP provider registered automatically at startup.
-  # Options:
-  #   openrouter  - uses perplexity/sonar via OpenRouter (requires OPEN_ROUTER_API_KEY,
-  #                 works reliably on cloud/server IPs)
-  #   duckduckgo  - uses duckduckgo-mcp-server via uvx (no API key, but bot detection
-  #                 may block it on cloud IPs)
-  # If a "web-search" entry already exists in mcp-servers.json, this setting is ignored.
-  provider: openrouter
-  # Path to the openrouter-search-mcp.py script (only used when provider=openrouter).
-  openrouter-script: ../openrouter-search-mcp.py
 
 llm:
   # Active LLM provider — must match a key under llm.providers below.
@@ -125,12 +118,53 @@ agent:
     workspace-root: .
     # Wall-clock limit for a single run_bash command.
     bash-timeout: 30s
+    # Shell binary run_bash invokes. Blank auto-detects the user's login shell from $SHELL
+    # (falling back to /bin/sh). Set explicitly to pin one, e.g. /bin/bash or /bin/zsh.
+    shell: ""
+    # Run commands through a login shell (-l) so the user's profile is sourced. Keep this true
+    # so PATH entries set up in ~/.zprofile / ~/.bash_profile resolve — this is what makes
+    # Homebrew tools like 'brew' (/opt/homebrew/bin, /usr/local/bin) runnable from run_bash.
+    # Trade-off: the profile may define aliases/functions or run side-effecting startup code;
+    # set to false to run a plain non-login shell if that is a concern.
+    login-shell: true
     # Cap on the size (characters) of any single tool result returned to the model.
     max-output-chars: 30000
     # Glob patterns (relative to workspace-root) that read_file, write_file, and edit_file
     # will refuse to access. Patterns follow Java glob syntax; ** matches across directories.
     # Examples:  **/.env  secrets/**  **/*.key  .git/**
     deny-list: []
+  # Self-scheduling: the schedule_prompt / list_scheduled_prompts / cancel_scheduled_prompt tools
+  # let the agent set a prompt to run later (one-shot or recurring cron). When it fires, the prompt
+  # runs through the full agent and the result is delivered back to the origin (the session it was
+  # scheduled from) over the /api/agent/deliveries SSE stream — e.g. the Discord bot posts it to the
+  # originating channel/DM.
+  scheduler:
+    # Master switch for the scheduling tools and the runner. When false the tools are not registered.
+    enabled: ${SCHEDULER_ENABLED:true}
+    # JSON file scheduled prompts are persisted to so they survive a restart ('~/' is expanded).
+    store-file: ${SCHEDULER_STORE_FILE:~/.hugin/scheduled-prompts.json}
+    # Cap on how many active schedules a single origin (session) may hold.
+    max-per-target: 20
+    # IANA timezone used when a schedule request omits one (e.g. America/Chicago for US Central).
+    default-zone: ${SCHEDULER_DEFAULT_ZONE:}
+
+google:
+  # Google Workspace integration powering the google_docs_* and google_sheets_* tools.
+  # Authentication uses a Google service account (the recommended method for a headless server):
+  #   1. In a Google Cloud project, enable the Google Docs, Sheets and Drive APIs.
+  #   2. Create a service account and download its JSON key.
+  #   3. Point credentials-file at that JSON (or set GOOGLE_APPLICATION_CREDENTIALS).
+  #   4. Share the docs/sheets you want Hugin to access with the service account's email,
+  #      or set default-share-with so files Hugin creates are shared back to you.
+  # When no credentials are configured the google_* tools report themselves unavailable (no startup failure).
+  credentials-file: ${GOOGLE_APPLICATION_CREDENTIALS:}
+  # Application name reported to the Google APIs (cosmetic).
+  application-name: Hugin
+  # Optional: for Google Workspace domains with domain-wide delegation, the user email to impersonate.
+  impersonate-user: ${GOOGLE_IMPERSONATE_USER:}
+  # Optional: email that newly created docs/sheets are automatically shared with (as editor),
+  # so a person can open files the service account creates. Per-call share_with overrides this.
+  default-share-with: ${GOOGLE_DEFAULT_SHARE_WITH:}
 
 management:
   endpoints:

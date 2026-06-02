@@ -38,6 +38,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Manages the JDA bot lifecycle and routes incoming Discord messages to the agent server.
@@ -62,9 +63,22 @@ public class DiscordBotService implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(DiscordBotService.class);
     private static final int DISCORD_MSG_LIMIT = 2000;
+    /** Recent channel messages injected into the prompt as Hugin's short-term context. */
+    private static final int CHANNEL_CONTEXT_MESSAGES = 2;
+    /** How many recent messages we fetch and forward; read_discord_channel can surface up to this many. */
+    private static final int CHANNEL_HISTORY_FETCH = 10;
     private static final int DIAGNOSTIC_WORD_LIMIT = 200;
     private static final int DIAGNOSTIC_LOG_LINES = 120;
     private static final int DIAGNOSTIC_LOG_CHAR_LIMIT = 24_000;
+    /**
+     * Per-session sliding window for the in-memory conversation and diagnostic logs. These grow for
+     * the lifetime of a session, so without a cap a long-lived channel's bug report keeps growing
+     * until it crosses GitHub's body limit and issue creation starts failing. Keep only the most
+     * recent turns — older context is rarely useful in a bug report.
+     */
+    private static final int SESSION_LOG_MAX_ENTRIES = 60;
+    /** GitHub rejects issue bodies longer than 65,536 characters; stay safely under it. */
+    private static final int GITHUB_BODY_LIMIT = 65_000;
 
     private final DiscordProperties properties;
     private final DiscordAgentClient agentClient;
@@ -80,6 +94,8 @@ public class DiscordBotService implements DisposableBean {
      */
     private final ConcurrentHashMap<String, LinkedList<String>> conversationLogs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, LinkedList<String>> diagnosticLogs = new ConcurrentHashMap<>();
+    // Cache the last known mode so the next stream starts with the current visibility.
+    private volatile boolean lastKnownDeveloperMode = false;
 
     @Autowired
     public DiscordBotService(DiscordProperties properties, DiscordAgentClient agentClient,
@@ -139,33 +155,82 @@ public class DiscordBotService implements DisposableBean {
         }
     }
 
+    // ---- Scheduled-result delivery ----
+
+    /**
+     * Posts the result of a scheduled prompt back to its origin. The {@code target} is the session id
+     * captured when the prompt was scheduled — {@code discord-channel-<id>} or
+     * {@code discord-dm-<userId>} for Discord origins; other targets are ignored here (they belong to
+     * a different front-end). Called by {@link DeliverySubscriber} for each delivery event.
+     */
+    public void deliverScheduledResult(String target, String prompt, String result) {
+        if (target == null || jda == null) {
+            return;
+        }
+        String body = (result == null || result.isBlank()) ? "(no result)" : result;
+        String header = "⏰ **Scheduled result**"
+                + (prompt == null || prompt.isBlank() ? "" : " for: " + oneLine(prompt));
+        String message = header + "\n\n" + body;
+        List<String> chunks = splitMessage(message, DISCORD_MSG_LIMIT);
+
+        if (target.startsWith("discord-channel-")) {
+            String channelId = target.substring("discord-channel-".length());
+            var channel = jda.getTextChannelById(channelId);
+            if (channel == null) {
+                log.warn("Cannot deliver scheduled result: unknown channel {}", channelId);
+                return;
+            }
+            chunks.forEach(c -> channel.sendMessage(c).queue());
+            logAgentResponse(target, body);
+        } else if (target.startsWith("discord-dm-")) {
+            String userId = target.substring("discord-dm-".length());
+            jda.openPrivateChannelById(userId).queue(
+                    channel -> {
+                        chunks.forEach(c -> channel.sendMessage(c).queue());
+                        logAgentResponse(target, body);
+                    },
+                    err -> log.warn("Cannot deliver scheduled result to user {}: {}",
+                            userId, err.getMessage()));
+        } else {
+            log.debug("Ignoring scheduled delivery for non-Discord target '{}'", target);
+        }
+    }
+
     // ---- Conversation log helpers ----
 
     private void logUserMessage(String sessionId, String author, String content) {
-        conversationLogs.computeIfAbsent(sessionId, k -> new LinkedList<>())
-                .add("[**" + author + "**] " + content);
+        addBounded(conversationLogs.computeIfAbsent(sessionId, k -> new LinkedList<>()),
+                "[**" + author + "**] " + content);
     }
 
     private void logAgentResponse(String sessionId, String response) {
         LinkedList<String> log = conversationLogs.get(sessionId);
         if (log != null) {
-            log.add("[**Hugin**] " + response);
+            addBounded(log, "[**Hugin**] " + response);
         }
     }
 
     void logToolCall(String sessionId, String name, String args) {
-        diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>())
-                .add("Tool call `" + name + "` args: " + truncateWords(oneLine(args), DIAGNOSTIC_WORD_LIMIT));
+        addBounded(diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>()),
+                "Tool call `" + name + "` args: " + truncateWords(oneLine(args), DIAGNOSTIC_WORD_LIMIT));
     }
 
     void logToolResult(String sessionId, String name, String result) {
-        diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>())
-                .add("Tool result `" + name + "`: " + truncateWords(oneLine(result), DIAGNOSTIC_WORD_LIMIT));
+        addBounded(diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>()),
+                "Tool result `" + name + "`: " + truncateWords(oneLine(result), DIAGNOSTIC_WORD_LIMIT));
     }
 
     void logAgentError(String sessionId, String message) {
-        diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>())
-                .add("Agent error: " + truncateWords(oneLine(message), DIAGNOSTIC_WORD_LIMIT));
+        addBounded(diagnosticLogs.computeIfAbsent(sessionId, k -> new LinkedList<>()),
+                "Agent error: " + truncateWords(oneLine(message), DIAGNOSTIC_WORD_LIMIT));
+    }
+
+    /** Appends {@code entry}, evicting the oldest entries so the log keeps only the most recent turns. */
+    private static void addBounded(LinkedList<String> log, String entry) {
+        log.add(entry);
+        while (log.size() > SESSION_LOG_MAX_ENTRIES) {
+            log.removeFirst();
+        }
     }
 
     String buildIssueBody(String sessionId, String authorMention) {
@@ -197,7 +262,20 @@ public class DiscordBotService implements DisposableBean {
         }
         appendLogExcerpt(body, "Hugin Server Log", logDir.resolve("hugin.log"));
         appendLogExcerpt(body, "Discord Bot Log", logDir.resolve("discord.log"));
-        return body.toString();
+        return capBody(body.toString());
+    }
+
+    /**
+     * Caps an issue body to GitHub's character limit. Without this, a long-lived session's report
+     * eventually exceeds the limit and GitHub rejects it with HTTP 422 — the "Report Bug" button
+     * then appears to do nothing.
+     */
+    static String capBody(String body) {
+        if (body == null || body.length() <= GITHUB_BODY_LIMIT) {
+            return body;
+        }
+        String notice = "\n\n...(report truncated to fit GitHub's character limit)";
+        return body.substring(0, GITHUB_BODY_LIMIT - notice.length()) + notice;
     }
 
     private void appendLogExcerpt(StringBuilder body, String title, Path logFile) {
@@ -344,11 +422,12 @@ public class DiscordBotService implements DisposableBean {
             if (!isDm && !isAllowedChannel) return;
             if (isDm && !properties.isRespondToDms()) return;
 
-            // In guild channels, optionally gate on @mention
+            // In guild channels, optionally only respond when Hugin is directly addressed — either
+            // @mentioned or replied to. This is the default so Hugin stays quiet in busy channels.
             if (!isDm && properties.isMentionOnly()) {
                 boolean mentioned = event.getMessage().getMentions().getUsers().stream()
                         .anyMatch(u -> u.getIdLong() == jda.getSelfUser().getIdLong());
-                if (!mentioned) return;
+                if (!mentioned && !isReplyToSelf(event)) return;
             }
 
             String content = event.getMessage().getContentStripped().strip();
@@ -363,6 +442,13 @@ public class DiscordBotService implements DisposableBean {
 
             Thread.ofVirtual().start(() -> handleMessage(event, content, sessionId));
         }
+    }
+
+    /** True when {@code event} is a reply to one of Hugin's own messages. */
+    private boolean isReplyToSelf(MessageReceivedEvent event) {
+        var referenced = event.getMessage().getReferencedMessage();
+        return referenced != null && jda != null
+                && referenced.getAuthor().getIdLong() == jda.getSelfUser().getIdLong();
     }
 
     // ---- Button interaction listener ----
@@ -402,10 +488,21 @@ public class DiscordBotService implements DisposableBean {
 
     private void handleMessage(MessageReceivedEvent event, String content, String sessionId) {
         log.debug("Agent request — session={} author={}", sessionId, event.getAuthor().getName());
-        String prompt = buildPromptWithContext(event, content);
+        // Short-term context comes from the channel itself: the messages immediately preceding the
+        // one Hugin is replying to. We fetch up to CHANNEL_HISTORY_FETCH so the read_discord_channel
+        // tool can surface more on demand, but only inject CHANNEL_CONTEXT_MESSAGES into the prompt.
+        List<String> recentMessages = fetchRecentMessages(event, CHANNEL_HISTORY_FETCH);
+        String prompt = buildPromptWithContext(event, content, recentMessages);
         StringBuilder response = new StringBuilder();
+        AtomicBoolean developerMode = new AtomicBoolean(lastKnownDeveloperMode);
         try {
-            agentClient.streamChat(prompt, sessionId, new DiscordAgentClient.Handler() {
+            agentClient.streamChat(prompt, sessionId, recentMessages, new DiscordAgentClient.Handler() {
+                @Override
+                public void onConfig(boolean enabled) {
+                    lastKnownDeveloperMode = enabled;
+                    developerMode.set(enabled);
+                }
+
                 @Override
                 public void onToken(String text) {
                     response.append(text);
@@ -414,16 +511,20 @@ public class DiscordBotService implements DisposableBean {
                 @Override
                 public void onToolCall(String name, String args) {
                     logToolCall(sessionId, name, args);
+                    if (!developerMode.get()) return;
                     event.getChannel().sendTyping().queue();
-                    event.getChannel().sendMessage("Calling **" + name + "**...").queue();
+                    event.getChannel().sendMessage("Calling **" + name + "**...").queue(
+                            null, err -> log.warn("Failed to post tool call to Discord: {}", err.getMessage()));
                 }
 
                 @Override
                 public void onToolResult(String name, String result) {
                     String resultText = result == null ? "" : result;
                     logToolResult(sessionId, name, resultText);
+                    if (!developerMode.get()) return;
                     String preview = resultText.length() > 200 ? resultText.substring(0, 200) + "..." : resultText;
-                    event.getChannel().sendMessage("**" + name + "** result:\n```\n" + preview + "\n```").queue();
+                    event.getChannel().sendMessage("**" + name + "** result:\n```\n" + preview + "\n```").queue(
+                            null, err -> log.warn("Failed to post tool result to Discord: {}", err.getMessage()));
                 }
 
                 @Override
@@ -463,9 +564,12 @@ public class DiscordBotService implements DisposableBean {
 
     /**
      * Prepends a compact Discord-context header to {@code content} so the model knows which
-     * channel or DM it is responding in without needing to call any tools to discover it.
+     * channel or DM it is responding in without needing to call any tools to discover it, followed
+     * by the last {@link #CHANNEL_CONTEXT_MESSAGES} messages that preceded the one being replied to
+     * as short-term context. (More history is available to the agent via {@code read_discord_channel}.)
      */
-    private String buildPromptWithContext(MessageReceivedEvent event, String content) {
+    private String buildPromptWithContext(MessageReceivedEvent event, String content,
+                                          List<String> recentMessages) {
         StringBuilder ctx = new StringBuilder("[Discord context: ");
         boolean isDm = event.getChannelType() == ChannelType.PRIVATE;
         if (isDm) {
@@ -477,8 +581,45 @@ public class DiscordBotService implements DisposableBean {
                 ctx.append(", server: ").append(event.getGuild().getName());
             }
         }
-        ctx.append("]\n").append(content);
+        ctx.append("]\n");
+        if (recentMessages != null && !recentMessages.isEmpty()) {
+            int from = Math.max(0, recentMessages.size() - CHANNEL_CONTEXT_MESSAGES);
+            ctx.append("[Recent channel messages (oldest first):");
+            for (String message : recentMessages.subList(from, recentMessages.size())) {
+                ctx.append("\n").append(message);
+            }
+            ctx.append("]\n");
+        }
+        ctx.append(content);
         return ctx.toString();
+    }
+
+    /**
+     * Fetches up to {@code limit} messages that immediately precede the triggering message, oldest
+     * first, formatted as {@code "Author: text"}. Empty messages are skipped; Hugin's own prior
+     * replies are kept so it has the back-and-forth context. Best-effort: returns an empty list if
+     * history can't be read.
+     */
+    private List<String> fetchRecentMessages(MessageReceivedEvent event, int limit) {
+        try {
+            List<net.dv8tion.jda.api.entities.Message> history = event.getChannel()
+                    .getHistoryBefore(event.getMessageId(), limit)
+                    .complete()
+                    .getRetrievedHistory();
+            List<String> result = new ArrayList<>();
+            // JDA returns history newest-first; walk it backwards to produce oldest-first.
+            for (int i = history.size() - 1; i >= 0; i--) {
+                net.dv8tion.jda.api.entities.Message message = history.get(i);
+                String text = message.getContentStripped().strip();
+                if (text.isBlank()) continue;
+                result.add(message.getAuthor().getEffectiveName() + ": " + text);
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("Could not fetch channel history for {}: {}",
+                    event.getChannel().getId(), e.getMessage());
+            return List.of();
+        }
     }
 
     /** Splits {@code text} on newlines first to avoid cutting mid-word, up to {@code limit} chars each. */

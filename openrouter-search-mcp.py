@@ -8,12 +8,12 @@ import asyncio
 import json
 import os
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 
+from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp import types
 
 OPENROUTER_API_KEY = os.environ.get("OPEN_ROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
