@@ -1,0 +1,97 @@
+package com.example.integration.tool;
+
+import com.example.integration.google.GoogleSheetValues;
+import com.example.integration.google.GoogleIds;
+import com.example.integration.google.GoogleWorkspaceClientFactory;
+import com.example.integration.google.GoogleWorkspaceProperties;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * Unit tests for the Google Workspace tools that don't require live Google calls: the graceful
+ * "unavailable" path when no credentials are configured, schema/name correctness, and the helper
+ * utilities (id extraction, value coercion).
+ */
+class GoogleWorkspaceToolsTest {
+
+    /** A factory with no credentials configured -> isConfigured() is false. */
+    private GoogleWorkspaceClientFactory unconfiguredFactory() {
+        return new GoogleWorkspaceClientFactory(
+                new GoogleWorkspaceProperties("", "Hugin", "", ""));
+    }
+
+    @Test
+    void factoryReportsUnavailableWithoutCredentials() {
+        assertThat(unconfiguredFactory().isConfigured()).isFalse();
+    }
+
+    @Test
+    void allToolsReturnUnavailableMessageWithoutCredentials() throws Exception {
+        GoogleWorkspaceClientFactory f = unconfiguredFactory();
+        List<? extends com.example.agent.tool.LocalTool> tools = List.of(
+                new GoogleDocsCreateTool(f),
+                new GoogleDocsReadTool(f),
+                new GoogleDocsEditTool(f),
+                new GoogleSheetsCreateTool(f),
+                new GoogleSheetsReadTool(f),
+                new GoogleSheetsWriteTool(f),
+                new GoogleSheetsAppendTool(f));
+
+        for (var tool : tools) {
+            // document_id/spreadsheet_id are required by some tools but the unavailable check runs first.
+            String result = tool.execute(Map.of(
+                    "document_id", "x", "spreadsheet_id", "x",
+                    "operation", "append", "text", "hi",
+                    "range", "Sheet1!A1", "values", List.of(List.of("a"))));
+            assertThat(result).as(tool.name()).contains("unavailable");
+        }
+    }
+
+    @Test
+    void toolNamesAndSchemasAreCorrect() {
+        GoogleWorkspaceClientFactory f = unconfiguredFactory();
+        assertThat(new GoogleDocsCreateTool(f).name()).isEqualTo("google_docs_create");
+        assertThat(new GoogleDocsReadTool(f).name()).isEqualTo("google_docs_read");
+        assertThat(new GoogleDocsEditTool(f).name()).isEqualTo("google_docs_edit");
+        assertThat(new GoogleSheetsCreateTool(f).name()).isEqualTo("google_sheets_create");
+        assertThat(new GoogleSheetsReadTool(f).name()).isEqualTo("google_sheets_read");
+        assertThat(new GoogleSheetsWriteTool(f).name()).isEqualTo("google_sheets_write");
+        assertThat(new GoogleSheetsAppendTool(f).name()).isEqualTo("google_sheets_append");
+
+        @SuppressWarnings("unchecked")
+        var props = (Map<String, ?>) new GoogleSheetsReadTool(f).inputSchema().get("properties");
+        assertThat(props).containsKeys("spreadsheet_id", "range");
+    }
+
+    @Test
+    void extractsIdFromUrlOrBareId() {
+        assertThat(GoogleIds.extract("https://docs.google.com/document/d/ABC123_xyz/edit"))
+                .isEqualTo("ABC123_xyz");
+        assertThat(GoogleIds.extract("https://docs.google.com/spreadsheets/d/SHEET-99/edit#gid=0"))
+                .isEqualTo("SHEET-99");
+        assertThat(GoogleIds.extract("PlainId42")).isEqualTo("PlainId42");
+    }
+
+    @Test
+    void coercesNestedAndFlatValues() {
+        assertThat(GoogleSheetValues.toRows(List.of(List.of("a", "b"), List.of("c", "d"))))
+                .hasSize(2)
+                .containsExactly(List.of("a", "b"), List.of("c", "d"));
+        // A flat list is treated as a single row.
+        assertThat(GoogleSheetValues.toRows(List.of("a", "b", "c")))
+                .hasSize(1)
+                .containsExactly(List.of("a", "b", "c"));
+    }
+
+    @Test
+    void rejectsNonListValues() {
+        assertThatThrownBy(() -> GoogleSheetValues.toRows("not a list"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("2-D array");
+    }
+}
