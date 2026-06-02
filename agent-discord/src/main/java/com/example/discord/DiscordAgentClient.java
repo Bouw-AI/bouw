@@ -63,9 +63,21 @@ public class DiscordAgentClient {
      */
     public void streamChat(String prompt, String sessionId, List<String> recentMessages, Handler handler)
             throws IOException, InterruptedException {
+        streamChat(prompt, sessionId, recentMessages, null, handler);
+    }
+
+    /**
+     * Streams a chat as {@link #streamChat(String, String, List, Handler)} but also forwards
+     * {@code channelApps} — a snapshot of the apps (integrations) and slash commands available in the
+     * channel. This feeds the {@code list_discord_commands} tool so the agent can report what apps and
+     * commands the channel offers.
+     */
+    public void streamChat(String prompt, String sessionId, List<String> recentMessages,
+                           List<String> channelApps, Handler handler)
+            throws IOException, InterruptedException {
         String model = blankToNull(properties.getModel());
         String requestBody = objectMapper.writeValueAsString(
-                new AgentRequest(prompt, model, sessionId, recentMessages));
+                new AgentRequest(prompt, model, sessionId, recentMessages, channelApps));
 
         HttpRequest request = HttpRequest.newBuilder(
                 URI.create(properties.getServerUrl() + "/api/agent/stream"))

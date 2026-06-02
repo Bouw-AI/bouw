@@ -197,7 +197,7 @@ public class AgentService {
                 for (ToolCall toolCall : assistantMsg.toolCalls()) {
                     listener.onToolCall(toolCall.function().name(), toolCall.function().arguments());
                     String toolResult = executeToolCall(toolCall, toolServerMap,
-                            request.sessionId(), request.recentMessages());
+                            request.sessionId(), request.recentMessages(), request.channelApps());
                     listener.onToolResult(toolCall.function().name(), toolResult);
                     messages.add(ChatMessage.tool(toolCall.id(), toolResult));
                 }
@@ -283,7 +283,8 @@ public class AgentService {
     }
 
     private String executeToolCall(ToolCall toolCall, Map<String, String> toolServerMap,
-                                   String sessionId, List<String> channelMessages) {
+                                   String sessionId, List<String> channelMessages,
+                                   List<String> channelApps) {
         String toolName = toolCall.function().name();
         Map<String, Object> args = parseArguments(toolCall.function().arguments());
 
@@ -291,7 +292,7 @@ public class AgentService {
         if (localTool != null) {
             log.debug("Executing built-in tool '{}' with args: {}", toolName, args);
             ToolContext ctx = new ToolContext(
-                    workspaceRegistry.resolve(sessionId), sessionId, channelMessages);
+                    workspaceRegistry.resolve(sessionId), sessionId, channelMessages, channelApps);
             try {
                 return localTool.execute(args, ctx);
             } catch (Exception e) {

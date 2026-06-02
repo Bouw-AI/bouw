@@ -492,11 +492,13 @@ public class DiscordBotService implements DisposableBean {
         // one Hugin is replying to. We fetch up to CHANNEL_HISTORY_FETCH so the read_discord_channel
         // tool can surface more on demand, but only inject CHANNEL_CONTEXT_MESSAGES into the prompt.
         List<String> recentMessages = fetchRecentMessages(event, CHANNEL_HISTORY_FETCH);
+        // Apps (integrations) and slash commands available here, surfaced via list_discord_commands.
+        List<String> channelApps = fetchChannelApps(event);
         String prompt = buildPromptWithContext(event, content, recentMessages);
         StringBuilder response = new StringBuilder();
         AtomicBoolean developerMode = new AtomicBoolean(lastKnownDeveloperMode);
         try {
-            agentClient.streamChat(prompt, sessionId, recentMessages, new DiscordAgentClient.Handler() {
+            agentClient.streamChat(prompt, sessionId, recentMessages, channelApps, new DiscordAgentClient.Handler() {
                 @Override
                 public void onConfig(boolean enabled) {
                     lastKnownDeveloperMode = enabled;
@@ -619,6 +621,60 @@ public class DiscordBotService implements DisposableBean {
             log.warn("Could not fetch channel history for {}: {}",
                     event.getChannel().getId(), e.getMessage());
             return List.of();
+        }
+    }
+
+    /**
+     * Gathers the apps (bots) present in the guild the message came from, plus the slash commands
+     * available there, formatted one per line for the {@code list_discord_commands} tool. Returns
+     * {@code null} for DMs (no guild context). Best-effort: each part is gathered independently, so a
+     * failure (e.g. a missing permission) degrades to whatever did succeed.
+     *
+     * <p>The bot gateway API only exposes <em>our own</em> application's registered slash commands —
+     * other apps' commands aren't retrievable — so other apps are listed by name from the bots present
+     * in the guild (best-effort from JDA's member cache; only bots JDA has seen are listed).
+     */
+    private List<String> fetchChannelApps(MessageReceivedEvent event) {
+        if (!event.isFromGuild()) {
+            return null;
+        }
+        List<String> entries = new ArrayList<>();
+        var guild = event.getGuild();
+
+        // Apps present in the guild = bot members JDA currently knows about.
+        try {
+            guild.getMembers().stream()
+                    .filter(member -> member.getUser().isBot())
+                    .map(member -> "App: " + member.getUser().getEffectiveName())
+                    .distinct()
+                    .forEach(entries::add);
+        } catch (Exception e) {
+            log.debug("Could not list bot members for guild {}: {}", guild.getId(), e.getMessage());
+        }
+
+        // Our own slash commands available in this guild (guild-scoped then global).
+        addCommands(entries, () -> guild.retrieveCommands().complete());
+        addCommands(entries, () -> event.getJDA().retrieveCommands().complete());
+
+        return entries;
+    }
+
+    /** Appends {@code "Command: /name — description"} lines for the supplied commands, best-effort. */
+    private void addCommands(List<String> entries,
+                             java.util.function.Supplier<List<net.dv8tion.jda.api.interactions.commands.Command>> source) {
+        try {
+            for (var command : source.get()) {
+                StringBuilder line = new StringBuilder("Command: /").append(command.getName());
+                if (command.getDescription() != null && !command.getDescription().isBlank()) {
+                    line.append(" — ").append(oneLine(command.getDescription()));
+                }
+                String entry = line.toString();
+                if (!entries.contains(entry)) {
+                    entries.add(entry);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not fetch slash commands: {}", e.getMessage());
         }
     }
 
