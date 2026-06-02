@@ -59,7 +59,8 @@ public class GoogleDocsEditTool implements LocalTool {
                                 "description", "The edit to perform."),
                         "text", Map.of(
                                 "type", "string",
-                                "description", "Text to append/insert, or the replacement for 'replace'."),
+                                "description", "Required for operation 'append' and 'insert'; for 'replace' it is "
+                                        + "the replacement and may be omitted to delete the matched text."),
                         "find", Map.of(
                                 "type", "string",
                                 "description", "For operation='replace': the substring to search for."),
