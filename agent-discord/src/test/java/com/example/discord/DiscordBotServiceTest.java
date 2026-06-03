@@ -55,6 +55,17 @@ class DiscordBotServiceTest {
     }
 
     @Test
+    void discordProperties_hasRoutingModelsOnlyWhenAllThreeConfigured() {
+        DiscordProperties props = new DiscordProperties();
+        assertThat(props.hasRoutingModels()).isFalse();
+
+        props.setDecision("decision");
+        props.setComplex("complex");
+        props.setSimple("simple");
+        assertThat(props.hasRoutingModels()).isTrue();
+    }
+
+    @Test
     void discordProperties_normalizesGithubRepoUrl() {
         DiscordProperties props = new DiscordProperties();
         props.setGithubRepo("https://github.com/jeremyunck/hugin.git/");
