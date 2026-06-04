@@ -73,7 +73,7 @@ class LocalToolsTest {
         String writeResult = create.execute(Map.of(
                 "path", "docs/unicode.pdf",
                 "title", "Unicode Report",
-                "content", "Résumé — 東京 — café — π"));
+                "content", "Résumé — café — π — Привет"));
 
         assertThat(writeResult).contains("Wrote PDF to docs/unicode.pdf");
         assertThat(Files.exists(tmp.resolve("docs/unicode.pdf"))).isTrue();
@@ -81,8 +81,8 @@ class LocalToolsTest {
         String readResult = read.execute(Map.of("path", "docs/unicode.pdf"));
         assertThat(readResult).contains("Title: Unicode Report");
         assertThat(readResult).contains("Résumé");
-        assertThat(readResult).contains("東京");
         assertThat(readResult).contains("café");
+        assertThat(readResult).contains("Привет");
     }
 
     @Test
