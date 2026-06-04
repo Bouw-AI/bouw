@@ -66,6 +66,26 @@ class LocalToolsTest {
     }
 
     @Test
+    void createThenReadPdfRoundTripsUnicodeText() throws Exception {
+        var create = new CreatePdfTool(workspace, noDenyList);
+        var read = new ReadPdfTool(workspace, properties, noDenyList);
+
+        String writeResult = create.execute(Map.of(
+                "path", "docs/unicode.pdf",
+                "title", "Unicode Report",
+                "content", "Résumé — 東京 — café — π"));
+
+        assertThat(writeResult).contains("Wrote PDF to docs/unicode.pdf");
+        assertThat(Files.exists(tmp.resolve("docs/unicode.pdf"))).isTrue();
+
+        String readResult = read.execute(Map.of("path", "docs/unicode.pdf"));
+        assertThat(readResult).contains("Title: Unicode Report");
+        assertThat(readResult).contains("Résumé");
+        assertThat(readResult).contains("東京");
+        assertThat(readResult).contains("café");
+    }
+
+    @Test
     void editReplacesUniqueOccurrence() throws Exception {
         Files.writeString(tmp.resolve("a.txt"), "foo bar baz");
         var edit = new EditFileTool(workspace, noDenyList);

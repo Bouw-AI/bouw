@@ -7,11 +7,11 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream.AppendMode;
 import org.apache.pdfbox.pdmodel.PDDocumentInformation;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
-import org.apache.pdfbox.pdmodel.font.PDType1Font;
-import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -26,7 +26,12 @@ public class CreatePdfTool implements LocalTool {
     private static final float MARGIN = 54f;
     private static final float FONT_SIZE = 11f;
     private static final float LINE_HEIGHT = 14f;
-    private static final PDFont FONT = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+    private static final List<Path> FONT_CANDIDATES = List.of(
+            Path.of("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
+            Path.of("/System/Library/Fonts/Supplemental/Arial Unicode MS.ttf"),
+            Path.of("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+            Path.of("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
+            Path.of("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"));
 
     private final Workspace workspace;
     private final PathDenyList denyList;
@@ -94,7 +99,8 @@ public class CreatePdfTool implements LocalTool {
             PDDocumentInformation info = document.getDocumentInformation();
             info.setTitle(title);
 
-            pagesWritten = writeText(document, content);
+            PDFont font = loadFont(document);
+            pagesWritten = writeText(document, content, font);
             document.save(file.toFile());
         }
 
@@ -102,8 +108,23 @@ public class CreatePdfTool implements LocalTool {
                 + (pagesWritten == 1 ? "" : "s") + ", " + content.length() + " characters)";
     }
 
-    private int writeText(PDDocument document, String content) throws IOException {
-        List<String> lines = wrapContent(content);
+    private PDFont loadFont(PDDocument document) throws IOException {
+        for (Path candidate : FONT_CANDIDATES) {
+            if (!Files.isRegularFile(candidate)) {
+                continue;
+            }
+            try (InputStream in = Files.newInputStream(candidate)) {
+                return PDType0Font.load(document, in);
+            } catch (IOException e) {
+                // Try the next candidate.
+            }
+        }
+
+        throw new IOException("No Unicode-capable font found for PDF generation.");
+    }
+
+    private int writeText(PDDocument document, String content, PDFont font) throws IOException {
+        List<String> lines = wrapContent(content, font);
         if (lines.isEmpty()) {
             lines = List.of("");
         }
@@ -113,14 +134,13 @@ public class CreatePdfTool implements LocalTool {
         document.addPage(page);
         pageCount++;
 
-        float width = PAGE_SIZE.getWidth() - (2 * MARGIN);
         float topY = PAGE_SIZE.getHeight() - MARGIN;
         float bottomY = MARGIN;
         float y = topY;
 
         PDPageContentStream stream = new PDPageContentStream(document, page, AppendMode.APPEND, true, true);
         stream.beginText();
-        stream.setFont(FONT, FONT_SIZE);
+        stream.setFont(font, FONT_SIZE);
         stream.newLineAtOffset(MARGIN, y);
 
         try {
@@ -135,7 +155,7 @@ public class CreatePdfTool implements LocalTool {
                         pageCount++;
                         stream = new PDPageContentStream(document, page, AppendMode.APPEND, true, true);
                         stream.beginText();
-                        stream.setFont(FONT, FONT_SIZE);
+                        stream.setFont(font, FONT_SIZE);
                         y = topY;
                         stream.newLineAtOffset(MARGIN, y);
                     } else {
@@ -152,7 +172,7 @@ public class CreatePdfTool implements LocalTool {
                     pageCount++;
                     stream = new PDPageContentStream(document, page, AppendMode.APPEND, true, true);
                     stream.beginText();
-                    stream.setFont(FONT, FONT_SIZE);
+                    stream.setFont(font, FONT_SIZE);
                     y = topY;
                     stream.newLineAtOffset(MARGIN, y);
                 }
@@ -171,7 +191,7 @@ public class CreatePdfTool implements LocalTool {
         return pageCount;
     }
 
-    private List<String> wrapContent(String content) throws IOException {
+    private List<String> wrapContent(String content, PDFont font) throws IOException {
         String normalized = content.replace("\r\n", "\n").replace('\r', '\n');
         List<String> wrapped = new ArrayList<>();
         for (String paragraph : normalized.split("\n", -1)) {
@@ -179,18 +199,18 @@ public class CreatePdfTool implements LocalTool {
                 wrapped.add("");
                 continue;
             }
-            wrapped.addAll(wrapParagraph(paragraph));
+            wrapped.addAll(wrapParagraph(paragraph, font));
         }
         return wrapped;
     }
 
-    private List<String> wrapParagraph(String paragraph) throws IOException {
+    private List<String> wrapParagraph(String paragraph, PDFont font) throws IOException {
         float maxWidth = PAGE_SIZE.getWidth() - (2 * MARGIN);
         List<String> wrapped = new ArrayList<>();
         String remaining = paragraph.stripTrailing();
 
         while (!remaining.isEmpty()) {
-            int end = findWrapPoint(remaining, maxWidth);
+            int end = findWrapPoint(remaining, maxWidth, font);
             if (end <= 0 || end >= remaining.length()) {
                 wrapped.add(remaining);
                 break;
@@ -207,33 +227,38 @@ public class CreatePdfTool implements LocalTool {
         return wrapped;
     }
 
-    private int findWrapPoint(String text, float maxWidth) throws IOException {
-        if (FONT.getStringWidth(text) / 1000f * FONT_SIZE <= maxWidth) {
+    private int findWrapPoint(String text, float maxWidth, PDFont font) throws IOException {
+        if (fits(text, maxWidth, font)) {
             return text.length();
         }
 
-        int breakPoint = -1;
-        for (int i = 1; i <= text.length(); i++) {
-            String candidate = text.substring(0, i);
-            if (FONT.getStringWidth(candidate) / 1000f * FONT_SIZE > maxWidth) {
-                break;
+        int low = 1;
+        int high = text.length();
+        int best = 1;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            if (fits(text.substring(0, mid), maxWidth, font)) {
+                best = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
             }
+        }
+
+        for (int i = best; i > 0; i--) {
             if (Character.isWhitespace(text.charAt(i - 1))) {
-                breakPoint = i - 1;
+                return Math.max(1, i - 1);
             }
         }
 
-        if (breakPoint > 0) {
-            return breakPoint;
-        }
+        return best;
+    }
 
-        for (int i = text.length(); i > 0; i--) {
-            String candidate = text.substring(0, i);
-            if (FONT.getStringWidth(candidate) / 1000f * FONT_SIZE <= maxWidth) {
-                return i;
-            }
-        }
+    private boolean fits(String text, float maxWidth, PDFont font) throws IOException {
+        return measureWidth(text, font) <= maxWidth;
+    }
 
-        return 1;
+    private float measureWidth(String text, PDFont font) throws IOException {
+        return font.getStringWidth(text) / 1000f * FONT_SIZE;
     }
 }
