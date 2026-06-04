@@ -25,8 +25,8 @@ import java.util.regex.Pattern;
  * Git-CLI implementation of {@link RepositoryProvisioner}.
  *
  * <p>Shells out to the system {@code git} binary (same ProcessBuilder approach as
- * {@code BashCommandTool}). A {@code GITHUB_TOKEN} credential helper is configured so the token
- * is never written into {@code .git/config}.
+ * {@code BashCommandTool}). When a GitHub token is configured it is exposed only through a
+ * transient credential helper environment variable, not written into {@code .git/config}.
  */
 @Component
 @ConditionalOnProperty("agent.cloud.enabled")
@@ -93,7 +93,9 @@ public class GitRepositoryProvisioner implements RepositoryProvisioner {
                         "git " + label + " failed (exit " + exitCode + "):\n" + output);
             }
         } catch (IOException | InterruptedException e) {
-            Thread.currentThread().interrupt();
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             throw new RuntimeException("git " + label + " error: " + e.getMessage(), e);
         }
     }
@@ -104,14 +106,12 @@ public class GitRepositoryProvisioner implements RepositoryProvisioner {
             return;
         }
         Map<String, String> env = pb.environment();
-        // Use GIT_ASKPASS so the token is never written into .git/config
-        String askPassScript = "echo " + token;
-        env.put("GIT_ASKPASS", "sh");
-        env.put("GIT_ASKPASS_ARGS", "-c");
-        // More portable: set the credential via a transient helper
+        env.put("GIT_TERMINAL_PROMPT", "0");
         env.put("GIT_CONFIG_COUNT", "1");
         env.put("GIT_CONFIG_KEY_0", "credential.helper");
-        env.put("GIT_CONFIG_VALUE_0", "!echo password=" + token);
+        env.put("GIT_CONFIG_VALUE_0",
+                "!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f");
+        env.put("GITHUB_TOKEN", token);
     }
 
     private static String extractRepoName(String repoUrl) {
