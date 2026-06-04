@@ -35,6 +35,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.awt.GraphicsEnvironment;
 import java.util.List;
 
 /**
@@ -195,6 +196,11 @@ public class GoogleWorkspaceClientFactory {
 
     private HttpRequestInitializer createRequestInitializer() throws IOException, GeneralSecurityException {
         if (hasOauthClientSecrets()) {
+            if (GraphicsEnvironment.isHeadless()) {
+                throw new IOException(
+                        "Google OAuth client secrets are configured, but this process is running headless. "
+                                + "Use a service-account JSON key instead on servers without a GUI.");
+            }
             return authorizeViaOAuth();
         }
         if (hasServiceAccountCredentials()) {

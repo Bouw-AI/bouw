@@ -1,6 +1,8 @@
 package com.example.integration.tool;
 
 import com.example.agent.tool.LocalTool;
+import jakarta.mail.internet.AddressException;
+import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -50,6 +52,7 @@ public class SendEmailTool implements LocalTool {
         String to = requiredString(arguments, "to");
         String subject = requiredString(arguments, "subject");
         String body = requiredString(arguments, "body");
+        validateEmail(to, "to");
 
         MimeMessage message = mailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
@@ -68,9 +71,25 @@ public class SendEmailTool implements LocalTool {
         if (!(value instanceof List<?> list) || list.isEmpty()) {
             return;
         }
-        String[] recipients = list.stream().map(Object::toString).filter(s -> !s.isBlank()).toArray(String[]::new);
-        if (recipients.length > 0) {
-            setter.accept(recipients);
+        java.util.List<String> recipients = new java.util.ArrayList<>();
+        for (Object item : list) {
+            String recipient = item == null ? "" : item.toString().trim();
+            if (recipient.isBlank()) {
+                continue;
+            }
+            validateEmail(recipient, "cc/bcc");
+            recipients.add(recipient);
+        }
+        if (!recipients.isEmpty()) {
+            setter.accept(recipients.toArray(String[]::new));
+        }
+    }
+
+    private static void validateEmail(String address, String field) throws AddressException {
+        InternetAddress parsed = new InternetAddress(address, true);
+        parsed.validate();
+        if (parsed.getAddress() == null || parsed.getAddress().isBlank()) {
+            throw new AddressException("Invalid " + field + " email address: " + address);
         }
     }
 

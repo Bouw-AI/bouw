@@ -216,19 +216,33 @@ public class DiscordBotService implements DisposableBean, ChatMessagePublisher {
             if (channel == null) {
                 return java.util.Optional.empty();
             }
-            chunks.forEach(c -> channel.sendMessage(c).queue());
+            try {
+                chunks.forEach(c -> channel.sendMessage(c).complete());
+            } catch (Exception e) {
+                log.warn("Cannot send Discord channel message to {}: {}", channelId, e.getMessage());
+                return java.util.Optional.empty();
+            }
             return java.util.Optional.of(target);
         }
         if (target.startsWith("discord-dm-")) {
             String userId = target.substring("discord-dm-".length());
-            jda.openPrivateChannelById(userId).queue(
-                    channel -> chunks.forEach(c -> channel.sendMessage(c).queue()),
-                    err -> log.warn("Cannot send Discord DM to {}: {}", userId, err.getMessage()));
+            try {
+                var channel = jda.openPrivateChannelById(userId).complete();
+                chunks.forEach(c -> channel.sendMessage(c).complete());
+            } catch (Exception e) {
+                log.warn("Cannot send Discord DM to {}: {}", userId, e.getMessage());
+                return java.util.Optional.empty();
+            }
             return java.util.Optional.of(target);
         }
         var channel = jda.getTextChannelById(target);
         if (channel != null) {
-            chunks.forEach(c -> channel.sendMessage(c).queue());
+            try {
+                chunks.forEach(c -> channel.sendMessage(c).complete());
+            } catch (Exception e) {
+                log.warn("Cannot send Discord channel message to {}: {}", target, e.getMessage());
+                return java.util.Optional.empty();
+            }
             return java.util.Optional.of(target);
         }
         return java.util.Optional.empty();
