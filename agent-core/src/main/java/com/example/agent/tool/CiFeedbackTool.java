@@ -159,6 +159,9 @@ public class CiFeedbackTool implements LocalTool {
             trimmed = trimmed.substring("http://github.com/".length());
         }
         trimmed = trimmed.replaceAll("\\.git$", "");
-        return trimmed.contains("/") ? trimmed : "";
+        if (!trimmed.matches("[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")) {
+            return "";
+        }
+        return trimmed;
     }
 }

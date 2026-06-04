@@ -11,7 +11,6 @@ import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -113,8 +112,8 @@ public class CreatePdfTool implements LocalTool {
             if (!Files.isRegularFile(candidate)) {
                 continue;
             }
-            try (InputStream in = Files.newInputStream(candidate)) {
-                return PDType0Font.load(document, in);
+            try {
+                return PDType0Font.load(document, candidate.toFile());
             } catch (IOException e) {
                 // Try the next candidate.
             }
