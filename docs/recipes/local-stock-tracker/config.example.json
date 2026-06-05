@@ -1,0 +1,21 @@
+{
+  "tickers": ["AAPL", "MSFT", "NVDA"],
+  "database": "./stock-tracker.sqlite3",
+  "history_period": "1y",
+  "history_interval": "1d",
+  "intraday_period": "5d",
+  "intraday_interval": "5m",
+  "cron_times": [
+    "09:30",
+    "10:15",
+    "11:00",
+    "11:45",
+    "12:30",
+    "13:15",
+    "14:00",
+    "14:45",
+    "15:30",
+    "15:55"
+  ],
+  "timezone": "America/New_York"
+}
