@@ -4,7 +4,9 @@ import com.example.agent.model.*;
 import com.example.agent.prompts.Prompts;
 import com.example.agent.tool.LocalTool;
 import com.example.agent.tool.LocalToolRegistry;
+import com.example.agent.tool.JustInTimeToolRegistry;
 import com.example.agent.tool.ToolContext;
+import com.example.agent.tool.Workspace;
 import com.example.agent.tool.WorkspaceRegistry;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,8 +41,7 @@ public class AgentService {
     private final OpenAiClient llmClient;
     private final McpToolProvider toolProvider;
     private final LocalToolRegistry localTools;
-    /** Built-in local tool definitions, precomputed once — the local registry is fixed after startup. */
-    private final List<ToolDefinition> localToolDefinitions;
+    private final JustInTimeToolRegistry jitTools;
     private final ObjectMapper objectMapper;
     private final Duration requestTimeout;
     private final String defaultModel;
@@ -54,6 +55,7 @@ public class AgentService {
             OpenAiClient llmClient,
             McpToolProvider toolProvider,
             LocalToolRegistry localTools,
+            JustInTimeToolRegistry jitTools,
             ObjectMapper objectMapper,
             @Value("${agent.request-timeout:5m}") Duration requestTimeout,
             @Value("${llm.model:}") String defaultModel,
@@ -66,11 +68,7 @@ public class AgentService {
         this.llmClient = llmClient;
         this.toolProvider = toolProvider;
         this.localTools = localTools;
-        List<ToolDefinition> localDefs = new ArrayList<>();
-        for (LocalTool tool : localTools.tools()) {
-            localDefs.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
-        }
-        this.localToolDefinitions = List.copyOf(localDefs);
+        this.jitTools = jitTools;
         this.objectMapper = objectMapper;
         this.requestTimeout = requestTimeout;
         this.defaultModel = defaultModel;
@@ -86,17 +84,29 @@ public class AgentService {
 
     /** Returns a flat list of all tools currently available to the agent (local + MCP). */
     public List<ToolSummary> availableTools() {
+        Workspace workspace = workspaceRegistry.resolve(null);
         List<ToolSummary> result = new ArrayList<>();
+        Set<String> toolNames = new LinkedHashSet<>();
         for (LocalTool tool : localTools.tools()) {
             result.add(new ToolSummary(tool.name(), tool.description(), "local", "built-in"));
+            toolNames.add(tool.name());
+        }
+        for (LocalTool tool : jitTools.tools(workspace)) {
+            if (toolNames.add(tool.name())) {
+                result.add(new ToolSummary(tool.name(), tool.description(), "workspace", "jit"));
+            }
         }
         toolProvider.getAllToolsByServer().forEach((serverName, tools) ->
-            tools.forEach(t -> result.add(new ToolSummary(
-                t.name(),
-                t.description() != null ? t.description() : "",
-                serverName,
-                "mcp"
-            )))
+            tools.forEach(t -> {
+                if (toolNames.add(t.name())) {
+                    result.add(new ToolSummary(
+                            t.name(),
+                            t.description() != null ? t.description() : "",
+                            serverName,
+                            "mcp"
+                    ));
+                }
+            })
         );
         return result;
     }
@@ -127,14 +137,12 @@ public class AgentService {
         Instant deadline = Instant.now().plus(requestTimeout);
         RoutingSelection routing = resolveModel(request);
         String model = routing.model();
-
-        // Build flattened tool list and a reverse lookup: tool name → server name.
-        Map<String, String> toolServerMap = new LinkedHashMap<>();
-        List<ToolDefinition> toolDefinitions = collectTools(toolServerMap);
+        Workspace workspace = workspaceRegistry.resolve(request.sessionId());
+        List<ToolDefinition> initialToolDefinitions = collectTools(new LinkedHashMap<>(), workspace);
 
         log.debug("Agent chat: model={}, route={}, decisionModel={}, tools available={} (local={}), stream={}",
-                model, routing.route(), routing.decisionModel(), toolDefinitions.size(),
-                localTools.tools().size(), stream);
+                model, routing.route(), routing.decisionModel(), initialToolDefinitions.size(),
+                localTools.tools().size() + jitTools.tools(workspace).size(), stream);
 
         List<ChatMessage> messages = new ArrayList<>();
         systemFactsService.ifPresent(sfs -> {
@@ -146,7 +154,7 @@ public class AgentService {
         if (request.systemPrompt() != null && !request.systemPrompt().isBlank()) {
             messages.add(ChatMessage.system(request.systemPrompt()));
         }
-        if (!toolDefinitions.isEmpty()) {
+        if (!initialToolDefinitions.isEmpty()) {
             messages.add(ChatMessage.system(Prompts.TOOL_USE));
         }
         startupAnnouncement.flatMap(StartupAnnouncementService::consume).ifPresent(notice ->
@@ -181,6 +189,11 @@ public class AgentService {
                         Collections.unmodifiableList(messages));
             }
 
+            // Rebuild the tool list on every loop iteration so freshly written local manifests
+            // become visible without a service restart.
+            Map<String, String> toolServerMap = new LinkedHashMap<>();
+            List<ToolDefinition> toolDefinitions = collectTools(toolServerMap, workspace);
+
             ChatResponse response = stream
                     ? llmClient.chatStream(model, messages, toolDefinitions, listener::onContent, listener::onReasoning)
                     : llmClient.chat(model, messages, toolDefinitions);
@@ -214,7 +227,7 @@ public class AgentService {
                 for (ToolCall toolCall : assistantMsg.toolCalls()) {
                     listener.onToolCall(toolCall.function().name(), toolCall.function().arguments());
                     String toolResult = executeToolCall(toolCall, toolServerMap,
-                            request.sessionId(), owner, request.agentId(), request.recentMessages());
+                            workspace, request.sessionId(), owner, request.agentId(), request.recentMessages());
                     listener.onToolResult(toolCall.function().name(), toolResult);
                     messages.add(ChatMessage.tool(toolCall.id(), toolResult));
                 }
@@ -259,17 +272,31 @@ public class AgentService {
      * OpenAI-format list, filling {@code toolServerMap} with a tool name → server name lookup.
      * Built-in local tools are advertised first and take precedence on name collisions.
      */
-    private List<ToolDefinition> collectTools(Map<String, String> toolServerMap) {
-        List<ToolDefinition> toolDefinitions = new ArrayList<>(localToolDefinitions);
+    private List<ToolDefinition> collectTools(Map<String, String> toolServerMap, Workspace workspace) {
+        List<ToolDefinition> toolDefinitions = new ArrayList<>();
+        Set<String> toolNames = new LinkedHashSet<>();
+        for (LocalTool tool : localTools.tools()) {
+            toolDefinitions.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
+            toolNames.add(tool.name());
+        }
+        for (LocalTool tool : jitTools.tools(workspace)) {
+            if (!toolNames.add(tool.name())) {
+                log.warn("JIT tool '{}' in workspace {} is shadowed by a built-in local tool",
+                        tool.name(), workspace.root());
+                continue;
+            }
+            toolDefinitions.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
+        }
 
         toolProvider.getAllToolsByServer().forEach((serverName, tools) ->
                 tools.forEach(tool -> {
-                    if (localTools.find(tool.name()) != null) {
-                        log.warn("MCP tool '{}' on server '{}' is shadowed by a built-in local tool",
+                    if (toolNames.contains(tool.name())) {
+                        log.warn("MCP tool '{}' on server '{}' is shadowed by a local tool",
                                 tool.name(), serverName);
                         return;
                     }
                     toolServerMap.put(tool.name(), serverName);
+                    toolNames.add(tool.name());
                     toolDefinitions.add(ToolDefinition.from(tool));
                 })
         );
@@ -383,15 +410,19 @@ public class AgentService {
     private record RoutingSelection(String model, String route, String decisionModel) {}
 
     private String executeToolCall(ToolCall toolCall, Map<String, String> toolServerMap,
+                                   Workspace workspace,
                                    String sessionId, String owner, String agentId, List<String> channelMessages) {
         String toolName = toolCall.function().name();
         Map<String, Object> args = parseArguments(toolCall.function().arguments());
 
         LocalTool localTool = localTools.find(toolName);
+        if (localTool == null) {
+            localTool = jitTools.find(toolName, workspace);
+        }
         if (localTool != null) {
             log.debug("Executing built-in tool '{}' with args: {}", toolName, args);
             ToolContext ctx = new ToolContext(
-                    workspaceRegistry.resolve(sessionId), sessionId, owner, agentId, channelMessages);
+                    workspace, sessionId, owner, agentId, channelMessages);
             try {
                 return localTool.execute(args, ctx);
             } catch (Exception e) {

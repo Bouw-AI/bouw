@@ -141,6 +141,9 @@ agent:
     # will refuse to access. Patterns follow Java glob syntax; ** matches across directories.
     # Examples:  **/.env  secrets/**  **/*.key  .git/**
     deny-list: []
+    # Workspace-local just-in-time tool manifests. The agent rescans this directory on every
+    # loop iteration, so tools created at runtime become available without restarting Hugin.
+    jit-tool-directory: .hugin/jit-tools
 
 auth:
   jwt:

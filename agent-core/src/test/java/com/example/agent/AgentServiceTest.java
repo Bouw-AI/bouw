@@ -5,6 +5,7 @@ import com.example.agent.prompts.Prompts;
 import com.example.agent.tool.LocalTool;
 import com.example.agent.tool.LocalToolProperties;
 import com.example.agent.tool.LocalToolRegistry;
+import com.example.agent.tool.JustInTimeToolRegistry;
 import com.example.agent.tool.ToolContext;
 import com.example.agent.tool.Workspace;
 import com.example.agent.tool.WorkspaceRegistry;
@@ -60,10 +61,16 @@ class AgentServiceTest {
                 new LocalToolProperties(true, ".", Duration.ofSeconds(30), 30_000, List.of()));
     }
 
+    private JustInTimeToolRegistry jitRegistry(Path root) {
+        var props = new LocalToolProperties(true, root.toString(), Duration.ofSeconds(30), 30_000, List.of());
+        return new JustInTimeToolRegistry(props, objectMapper);
+    }
+
     @BeforeEach
     void setUp() {
         agentService = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                llmClient, toolProvider, registry(), jitRegistry(Path.of(".")), objectMapper, FIVE_MINUTES,
+                DEFAULT_MODEL, MAX_ITERATIONS,
                 defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
     }
 
@@ -213,7 +220,9 @@ class AgentServiceTest {
     void shouldTimeoutBeforeMaxIterations() {
         // Given: a very short timeout and a tool call that blocks
         var shortTimeoutService = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, SHORT_TIMEOUT, DEFAULT_MODEL, MAX_ITERATIONS,
+                llmClient, toolProvider, registry(), jitRegistry(Path.of(".")), objectMapper, SHORT_TIMEOUT,
+                DEFAULT_MODEL,
+                MAX_ITERATIONS,
                 defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
 
         var availableTool = new AvailableTool("slow_tool", "Slow tool",
@@ -385,7 +394,8 @@ class AgentServiceTest {
         // Given: a built-in local tool and no MCP servers
         var recordingTool = new RecordingLocalTool("local_echo", "echoed: ok");
         var localService = new AgentService(
-                llmClient, toolProvider, registry(recordingTool), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                llmClient, toolProvider, registry(recordingTool), jitRegistry(Path.of(".")), objectMapper,
+                FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
                 defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
 
@@ -496,7 +506,8 @@ class AgentServiceTest {
                         java.time.Instant.now()),
                 0.9)));
         var service = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                llmClient, toolProvider, registry(), jitRegistry(Path.of(".")), objectMapper, FIVE_MINUTES,
+                DEFAULT_MODEL, MAX_ITERATIONS,
                 defaultRegistry(), Optional.of(memory), Optional.empty(), Optional.empty(), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
@@ -526,7 +537,8 @@ class AgentServiceTest {
         MemoryService memory = mock(MemoryService.class);
         when(memory.recall("alice", PROMPT)).thenReturn(List.of());
         var service = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                llmClient, toolProvider, registry(), jitRegistry(Path.of(".")), objectMapper, FIVE_MINUTES,
+                DEFAULT_MODEL, MAX_ITERATIONS,
                 defaultRegistry(), Optional.of(memory), Optional.empty(), Optional.empty(), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
@@ -550,7 +562,8 @@ class AgentServiceTest {
                 ChatMessage.user("My name is Ada."),
                 ChatMessage.assistant("Nice to meet you, Ada.")));
         var service = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                llmClient, toolProvider, registry(), jitRegistry(Path.of(".")), objectMapper, FIVE_MINUTES,
+                DEFAULT_MODEL, MAX_ITERATIONS,
                 defaultRegistry(), Optional.empty(), Optional.of(conversation), Optional.empty(), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
@@ -581,8 +594,9 @@ class AgentServiceTest {
         ConversationMemoryService conversation = mock(ConversationMemoryService.class);
         RecordingChannelTool channelTool = new RecordingChannelTool();
         var service = new AgentService(
-                llmClient, toolProvider, registry(channelTool), objectMapper, FIVE_MINUTES, DEFAULT_MODEL,
-                MAX_ITERATIONS, defaultRegistry(), Optional.empty(), Optional.of(conversation),
+                llmClient, toolProvider, registry(channelTool), jitRegistry(Path.of(".")), objectMapper,
+                FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS, defaultRegistry(), Optional.empty(),
+                Optional.of(conversation),
                 Optional.empty(), Optional.empty());
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
         when(llmClient.chat(eq(MODEL), anyList(), anyList()))
@@ -629,7 +643,8 @@ class AgentServiceTest {
         svc.load();
 
         var service = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                llmClient, toolProvider, registry(), jitRegistry(Path.of(".")), objectMapper, FIVE_MINUTES,
+                DEFAULT_MODEL, MAX_ITERATIONS,
                 defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty(),
                 Optional.of(svc));
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
@@ -658,7 +673,8 @@ class AgentServiceTest {
         svc.load();
 
         var service = new AgentService(
-                llmClient, toolProvider, registry(), objectMapper, FIVE_MINUTES, DEFAULT_MODEL, MAX_ITERATIONS,
+                llmClient, toolProvider, registry(), jitRegistry(Path.of(".")), objectMapper, FIVE_MINUTES,
+                DEFAULT_MODEL, MAX_ITERATIONS,
                 defaultRegistry(), Optional.empty(), Optional.empty(), Optional.empty(),
                 Optional.of(svc));
         when(toolProvider.getAllToolsByServer()).thenReturn(Map.of());
