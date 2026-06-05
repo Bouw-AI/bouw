@@ -64,6 +64,19 @@ The agent can schedule a prompt to run later, on behalf of (and delivered back t
 - **SPIs**: `ScheduledPromptStore` (persistence; default `JsonFileScheduledPromptStore` writes `agent.scheduler.store-file` so schedules survive a restart) and `ScheduledResultDelivery` (delivery; transport-agnostic, so `agent-core` never depends on a channel). When no delivery bean is present the result is logged only.
 - **Delivery** (the bridge, because the server cannot push to a chat client — clients connect to it): `mcp-integration`'s `OutboxResultDelivery` fans each finished result out over SSE at `GET /api/agent/deliveries` (under `/api/agent/**`, so same auth). `agent-discord`'s `DeliverySubscriber` holds that stream open and calls `DiscordBotService.deliverScheduledResult`, which posts to the `discord-channel-<id>` / `discord-dm-<userId>` parsed from the target. Keep this the only place that maps a target to a concrete channel.
 
+### Local recurring data jobs
+For workflows that must run locally on a fixed schedule and must **not** invoke the LLM on each run
+(for example: fetch stock prices 10 times a day into SQLite), use a deterministic Python script plus
+cron or launchd. Do not use `schedule_prompt` for this class of job; that feature is for LLM-driven
+future prompts and still routes through `AgentService`.
+
+Use `docs/recipes/local-stock-tracker/` as the reference pattern:
+- create a local Python venv and install `yfinance` + `pandas`
+- store ticker config and the SQLite DB path in files, not in prompts
+- have the script create the DB schema on first run
+- schedule the script with cron at explicit times (or a wrapper that enforces the exact 10-daily-run policy)
+- keep all execution local; no cloud instance or remote job runner is required
+
 ### Memory (two independent layers)
 - **Short-term, per-session conversation memory** (`ConversationMemoryService` + `ConversationStore`): replays the recent verbatim turns of a single session back into the model so it remembers the conversation. Keyed by an opaque `sessionId` on `AgentRequest` (requests without one stay stateless; clients that care about continuity generate a stable UUID per session). Sliding window of `conversation.memory.max-messages`. Only the user prompt + final answer are stored per turn — tool-call scaffolding is dropped so the trimmed history is always a valid transcript. **Enabled by default**, in-process via `InMemoryConversationStore` (no external dependency). `ConversationStore.append` must be atomic to avoid losing turns under concurrent same-session requests. **Client-managed context override:** when a request carries `AgentRequest.recentMessages` (non-null — the caller supplies its own short-term context), `AgentService` neither replays nor records server-side conversation memory for it. The Discord bot uses this: it sends the recent channel messages and lets the channel itself be the short-term memory (see below).
 - **Long-term semantic memory** (`MemoryService` + `EmbeddingClient` + `MemoryStore`): embeds each finished exchange and stores it; on later requests recalls the top-k most cosine-similar past memories and injects them into the prompt, and the agent can also search it on demand via the `recall_memory` tool. **Disabled by default** (`memory.enabled`); requires Redis + an embeddings endpoint. `RedisMemoryStore` keeps records as JSON in one Redis hash and ranks in-process (works against vanilla Redis, no RediSearch). Both recall and store are **best-effort** — failures are logged and swallowed so the loop keeps working.
