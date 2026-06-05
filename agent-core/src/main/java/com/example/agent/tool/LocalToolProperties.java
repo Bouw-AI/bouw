@@ -26,6 +26,9 @@ import java.util.List;
  *       and other PATH entries set up in {@code ~/.zprofile} / {@code ~/.bash_profile} resolvable.
  *       The trade-off: the profile may define aliases/functions or run side-effecting startup code.
  *       Set this to false to run a plain non-login shell when that is a concern.</li>
+ *   <li>{@code jitToolDirectory} — directory within each workspace where just-in-time tool
+ *       manifests live. The agent rescans this directory on every loop iteration so tools created
+ *       at runtime are available without restarting the service.</li>
  * </ul>
  */
 @ConfigurationProperties("agent.tools")
@@ -36,7 +39,8 @@ public record LocalToolProperties(
         Integer maxOutputChars,
         List<String> denyList,
         String shell,
-        Boolean loginShell) {
+        Boolean loginShell,
+        String jitToolDirectory) {
 
     @ConstructorBinding
     public LocalToolProperties {
@@ -61,6 +65,9 @@ public record LocalToolProperties(
         if (loginShell == null) {
             loginShell = true;
         }
+        if (jitToolDirectory == null || jitToolDirectory.isBlank()) {
+            jitToolDirectory = ".hugin/jit-tools";
+        }
     }
 
     /** Backwards-compatible constructor without shell settings (auto-detect, login shell on). */
@@ -70,6 +77,18 @@ public record LocalToolProperties(
             Duration bashTimeout,
             Integer maxOutputChars,
             List<String> denyList) {
-        this(enabled, workspaceRoot, bashTimeout, maxOutputChars, denyList, null, null);
+        this(enabled, workspaceRoot, bashTimeout, maxOutputChars, denyList, null, null, null);
+    }
+
+    /** Backwards-compatible constructor that also accepts shell settings. */
+    public LocalToolProperties(
+            Boolean enabled,
+            String workspaceRoot,
+            Duration bashTimeout,
+            Integer maxOutputChars,
+            List<String> denyList,
+            String shell,
+            Boolean loginShell) {
+        this(enabled, workspaceRoot, bashTimeout, maxOutputChars, denyList, shell, loginShell, null);
     }
 }
