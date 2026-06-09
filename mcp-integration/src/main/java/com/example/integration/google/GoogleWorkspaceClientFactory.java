@@ -3,8 +3,8 @@ package com.example.integration.google;
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
 import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
+import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
 import com.google.api.client.http.HttpRequestInitializer;
 import com.google.api.client.http.javanet.NetHttpTransport;
@@ -38,7 +38,10 @@ import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.awt.GraphicsEnvironment;
+import java.net.URI;
+import java.util.concurrent.CompletableFuture;
 import java.util.List;
+import java.util.Comparator;
 
 /**
  * Builds authenticated Google {@link Docs}, {@link Sheets}, {@link Drive}, {@link Calendar} and
@@ -86,6 +89,119 @@ public class GoogleWorkspaceClientFactory {
     /** True when OAuth client secrets or a service-account credentials file is configured and present. */
     public boolean isConfigured() {
         return hasOauthClientSecrets() || hasServiceAccountCredentials();
+    }
+
+    /**
+     * Reports whether Google Workspace is ready right now and whether the UI can retry auth.
+     */
+    public synchronized GoogleWorkspaceStatus status() {
+        if (hasOauthClientSecrets()) {
+            try {
+                if (hasOAuthCredential()) {
+                    return new GoogleWorkspaceStatus(
+                            true,
+                            true,
+                            true,
+                            "oauth",
+                            "Google OAuth is connected and the Docs, Sheets, Calendar, and Gmail tools are ready.");
+                }
+                return new GoogleWorkspaceStatus(
+                        false,
+                        true,
+                        true,
+                        "oauth",
+                        "Google OAuth client secrets are configured, but consent has not completed yet. Click Reconnect to open the browser flow.");
+            } catch (Exception e) {
+                return new GoogleWorkspaceStatus(
+                        false,
+                        true,
+                        true,
+                        "oauth",
+                        "Google OAuth is configured, but the consent store could not be read: " + e.getMessage());
+            }
+        }
+
+        if (hasServiceAccountCredentials()) {
+            return new GoogleWorkspaceStatus(
+                    true,
+                    true,
+                    false,
+                    "service-account",
+                    "Google Workspace is connected with a service-account key.");
+        }
+
+        return new GoogleWorkspaceStatus(
+                false,
+                false,
+                false,
+                "none",
+                "Google Workspace is not configured. Set GOOGLE_OAUTH_CLIENT_SECRETS_FILE or GOOGLE_APPLICATION_CREDENTIALS.");
+    }
+
+    /**
+     * Forces Google auth to reconnect. For OAuth, this clears cached consent and re-runs the browser flow.
+     * For service-account setups, it refreshes the cached client wrappers and returns the latest status.
+     */
+    public synchronized GoogleWorkspaceStatus reconnect() throws IOException, GeneralSecurityException {
+        if (hasOauthClientSecrets()) {
+            clearOauthTokenCache();
+            requestInitializer = authorizeViaOAuth();
+            clearCachedClients();
+            return status();
+        }
+
+        if (hasServiceAccountCredentials()) {
+            requestInitializer = new HttpCredentialsAdapter(serviceAccountCredentials());
+            clearCachedClients();
+            return status();
+        }
+
+        return status();
+    }
+
+    /**
+     * Starts an OAuth reconnect and returns the URL the browser should open.
+     */
+    public synchronized GoogleReconnectResponse beginReconnect(String returnTo) throws IOException, GeneralSecurityException {
+        if (hasOauthClientSecrets()) {
+            clearOauthTokenCache();
+            clearCachedClients();
+
+            GoogleAuthorizationCodeFlow flow = oauthFlow();
+            String landingPage = buildLandingPage(returnTo, true);
+            String failurePage = buildLandingPage(returnTo, false);
+            LocalServerReceiver receiver = new LocalServerReceiver.Builder()
+                    .setHost("127.0.0.1")
+                    .setPort(properties.oauthLocalServerPort())
+                    .setLandingPages(landingPage, failurePage)
+                    .build();
+            String authUrl = flow.newAuthorizationUrl()
+                    .setRedirectUri(receiver.getRedirectUri())
+                    .build();
+
+            CompletableFuture.runAsync(() -> {
+                try {
+                    requestInitializer = new AuthorizationCodeInstalledApp(flow, receiver).authorize(OAUTH_USER_ID);
+                    clearCachedClients();
+                } catch (Exception e) {
+                    log.warn("Google OAuth reconnect failed: {}", e.getMessage());
+                }
+            });
+
+            return new GoogleReconnectResponse(status(), authUrl);
+        }
+
+        if (hasServiceAccountCredentials()) {
+            requestInitializer = new HttpCredentialsAdapter(serviceAccountCredentials());
+            clearCachedClients();
+            return new GoogleReconnectResponse(status(), null);
+        }
+
+        return new GoogleReconnectResponse(status(), null);
+    }
+
+    public synchronized GoogleReconnectResponse beginReconnect() throws IOException, GeneralSecurityException {
+        return beginReconnect(null);
     }
 
     /** A Google API operation run inside {@link #guarded(GoogleCall)}. */
@@ -224,7 +340,158 @@ public class GoogleWorkspaceClientFactory {
         throw new IOException("No Google OAuth client secrets or service-account credentials configured.");
     }
 
+    private void clearCachedClients() {
+        docs = null;
+        sheets = null;
+        drive = null;
+        calendar = null;
+        gmail = null;
+        transport = null;
+    }
+
     private HttpRequestInitializer authorizeViaOAuth() throws IOException, GeneralSecurityException {
+        GoogleAuthorizationCodeFlow flow = oauthFlow();
+        Credential existing = flow.loadCredential(OAUTH_USER_ID);
+        if (existing != null) {
+            return existing;
+        }
+        LocalServerReceiver receiver = new LocalServerReceiver.Builder()
+                .setHost("127.0.0.1")
+                .setPort(properties.oauthLocalServerPort())
+                .build();
+        return new AuthorizationCodeInstalledApp(flow, receiver).authorize(OAUTH_USER_ID);
+    }
+
+    private String buildLandingPage(String returnTo, boolean success) {
+        String target = normalizeReturnTo(returnTo);
+        String headline = success ? "Google connected" : "Google connection failed";
+        String message = success
+                ? "Returning you to Hugin..."
+                : "The reconnect flow did not finish cleanly. Returning you to Hugin...";
+        String escapedTarget = escapeHtml(target);
+        String escapedMessage = escapeHtml(message);
+        String escapedHeadline = escapeHtml(headline);
+        String jsTarget = escapeJsString(target);
+
+        return """
+                <!doctype html>
+                <html lang="en">
+                  <head>
+                    <meta charset="utf-8" />
+                    <meta name="viewport" content="width=device-width, initial-scale=1" />
+                    <title>%s</title>
+                    <meta http-equiv="refresh" content="0;url=%s" />
+                    <style>
+                      body {
+                        font-family: Inter, Arial, sans-serif;
+                        background: #0b1220;
+                        color: #e5eefc;
+                        margin: 0;
+                        min-height: 100vh;
+                        display: grid;
+                        place-items: center;
+                      }
+                      .card {
+                        max-width: 520px;
+                        padding: 24px 28px;
+                        border-radius: 16px;
+                        background: rgba(15, 23, 42, 0.9);
+                        border: 1px solid rgba(148, 163, 184, 0.24);
+                        box-shadow: 0 24px 80px rgba(15, 23, 42, 0.45);
+                      }
+                      h1 {
+                        margin: 0 0 8px;
+                        font-size: 24px;
+                      }
+                      p {
+                        margin: 0 0 12px;
+                        line-height: 1.5;
+                        color: #bfd0ea;
+                      }
+                      code {
+                        display: block;
+                        word-break: break-all;
+                        padding: 10px 12px;
+                        border-radius: 10px;
+                        background: rgba(30, 41, 59, 0.9);
+                        color: #dbeafe;
+                      }
+                    </style>
+                  </head>
+                  <body>
+                    <div class="card">
+                      <h1>%s</h1>
+                      <p>%s</p>
+                      <code>%s</code>
+                    </div>
+                    <script>
+                      window.setTimeout(() => window.location.replace(%s), 100);
+                    </script>
+                  </body>
+                </html>
+                """.formatted(escapedHeadline, escapedTarget, escapedHeadline, escapedMessage, escapedTarget, jsTarget);
+    }
+
+    private String normalizeReturnTo(String returnTo) {
+        if (returnTo == null || returnTo.isBlank()) {
+            return "http://localhost:5173/";
+        }
+        try {
+            URI uri = URI.create(returnTo.trim());
+            if (!"http".equalsIgnoreCase(uri.getScheme()) && !"https".equalsIgnoreCase(uri.getScheme())) {
+                return "http://localhost:5173/";
+            }
+            return returnTo.trim();
+        } catch (IllegalArgumentException e) {
+            return "http://localhost:5173/";
+        }
+    }
+
+    private String escapeHtml(String value) {
+        return value
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
+    }
+
+    private String escapeJsString(String value) {
+        return value
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n");
+    }
+
+    private void clearOauthTokenCache() throws IOException {
+        Path tokenDir = expandHome(properties.oauthTokenDir());
+        if (!Files.exists(tokenDir)) {
+            return;
+        }
+        try (var paths = Files.walk(tokenDir)) {
+            paths.sorted(Comparator.reverseOrder())
+                    .filter(path -> !path.equals(tokenDir))
+                    .forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException e) {
+                            throw new RuntimeException("Failed to clear Google OAuth token cache", e);
+                        }
+                    });
+        } catch (RuntimeException e) {
+            if (e.getCause() instanceof IOException ioException) {
+                throw ioException;
+            }
+            throw e;
+        }
+    }
+
+    private boolean hasOAuthCredential() throws IOException, GeneralSecurityException {
+        return oauthFlow().loadCredential(OAUTH_USER_ID) != null;
+    }
+
+    private GoogleAuthorizationCodeFlow oauthFlow() throws IOException, GeneralSecurityException {
         Path secretsPath = expandHome(properties.oauthClientSecretsFile());
         Path tokenDir = expandHome(properties.oauthTokenDir());
         Files.createDirectories(tokenDir);
@@ -232,22 +499,11 @@ public class GoogleWorkspaceClientFactory {
         try (InputStreamReader reader = new InputStreamReader(new FileInputStream(secretsPath.toFile()),
                 StandardCharsets.UTF_8)) {
             GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(jsonFactory, reader);
-            GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
+            return new GoogleAuthorizationCodeFlow.Builder(
                     transport(), jsonFactory, clientSecrets, SCOPES)
                     .setDataStoreFactory(new FileDataStoreFactory(tokenDir.toFile()))
                     .setAccessType("offline")
                     .build();
-
-            Credential existing = flow.loadCredential(OAUTH_USER_ID);
-            if (existing != null) {
-                return existing;
-            }
-
-            LocalServerReceiver receiver = new LocalServerReceiver.Builder()
-                    .setHost("127.0.0.1")
-                    .setPort(properties.oauthLocalServerPort())
-                    .build();
-            return new AuthorizationCodeInstalledApp(flow, receiver).authorize(OAUTH_USER_ID);
         }
     }
 
