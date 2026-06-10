@@ -156,7 +156,7 @@ download_release_bundle() {
 
 install_release_bundle() {
   local bundle_dir="$1"
-  cp "$bundle_dir"/mcp-integration.jar "$HUGIN_HOME/bin/mcp-integration.jar"
+  cp "$bundle_dir"/hugin-server.jar "$HUGIN_HOME/bin/hugin-server.jar"
   if [[ -f "$bundle_dir/agent-discord.jar" ]]; then
     cp "$bundle_dir/agent-discord.jar" "$HUGIN_HOME/bin/agent-discord.jar"
   fi
@@ -243,7 +243,7 @@ if [[ "$OS_TYPE" == "macos" ]]; then
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>set -a; source ${ENV_FILE}; set +a; export PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar --spring.config.additional-location=file:${CONFIG_YML}</string>
+    <string>set -a; source ${ENV_FILE}; set +a; export PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin; exec /usr/bin/java -jar ${HUGIN_HOME}/bin/hugin-server.jar --spring.config.additional-location=file:${CONFIG_YML}</string>
   </array>
   <key>WorkingDirectory</key>  <string>${HUGIN_HOME}</string>
   <key>StandardOutPath</key>   <string>${HUGIN_HOME}/logs/hugin.log</string>
@@ -461,7 +461,7 @@ Environment=AGENT_HOME=${HUGIN_HOME}
 EnvironmentFile=${ENV_FILE}
 Environment=PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=${HUGIN_HOME}
-ExecStart=/usr/bin/java -jar ${HUGIN_HOME}/bin/mcp-integration.jar \
+ExecStart=/usr/bin/java -jar ${HUGIN_HOME}/bin/hugin-server.jar \
   --spring.config.additional-location=file:${HUGIN_HOME}/config/application.yml
 StandardOutput=append:${HUGIN_HOME}/logs/hugin.log
 StandardError=append:${HUGIN_HOME}/logs/hugin.log
@@ -593,7 +593,7 @@ ALREADY_INSTALLED=false
 SKIP_BUILD=false
 SKIP_CREDENTIALS=false
 
-if [[ -f "$HUGIN_HOME/bin/mcp-integration.jar" ]]; then
+if [[ -f "$HUGIN_HOME/bin/hugin-server.jar" ]]; then
   ALREADY_INSTALLED=true
   if [[ "$_force_reinstall" == "true" ]]; then
     SKIP_CREDENTIALS=true
@@ -651,6 +651,7 @@ if [[ "$OS_TYPE" == "macos" ]]; then
   require_cmd git     || pkg_install git
   require_cmd mvn     || pkg_install maven
   require_cmd curl    || pkg_install curl
+  require_cmd node    || pkg_install node
 
 else
   # Linux: apt-based installs
@@ -671,6 +672,7 @@ else
   require_cmd git     || pkgs_to_install+=(git)
   require_cmd mvn     || pkgs_to_install+=(maven)
   require_cmd curl    || pkgs_to_install+=(curl)
+  require_cmd node    || pkgs_to_install+=(nodejs)
 
   if [[ ${#pkgs_to_install[@]} -gt 0 ]]; then
     info "Installing system packages: ${pkgs_to_install[*]}"
@@ -1121,10 +1123,8 @@ else
   info "Building fat jars — this may take a few minutes..."
   MAVEN_OPTS="${MAVEN_OPTS:--Xmx512m}" \
     mvn -f "$REPO_DIR/pom.xml" \
-        -pl mcp-integration,agent-discord -am \
         clean package -DskipTests -q
-  cp "$REPO_DIR"/mcp-integration/target/mcp-integration-*.jar  "$HUGIN_HOME/bin/mcp-integration.jar"
-  cp "$REPO_DIR"/agent-discord/target/agent-discord-*.jar       "$HUGIN_HOME/bin/agent-discord.jar"
+  cp "$REPO_DIR"/backend/target/hugin-backend-*.jar  "$HUGIN_HOME/bin/hugin-server.jar"
   success "Jars built and copied to $HUGIN_HOME/bin/"
 fi
 
@@ -1252,7 +1252,7 @@ cmd_run() {
 
 cmd_serve() {
   load_env
-  exec java -jar "$HUGIN_HOME/bin/mcp-integration.jar" \
+  exec java -jar "$HUGIN_HOME/bin/hugin-server.jar" \
     "--spring.config.additional-location=file:${CONFIG_YML}"
 }
 
@@ -1379,7 +1379,7 @@ download_release_bundle() {
 
 install_release_bundle() {
   local bundle_dir="$1"
-  cp "$bundle_dir"/mcp-integration.jar "$HUGIN_HOME/bin/mcp-integration.jar"
+  cp "$bundle_dir"/hugin-server.jar "$HUGIN_HOME/bin/hugin-server.jar"
   if [[ -f "$bundle_dir/agent-discord.jar" ]]; then
     cp "$bundle_dir/agent-discord.jar" "$HUGIN_HOME/bin/agent-discord.jar"
   fi
@@ -1552,11 +1552,11 @@ cmd_doctor() {
     _dr_fixed "Created empty mcp-servers.json"
   fi
 
-  if [[ -f "$HUGIN_HOME/bin/mcp-integration.jar" ]]; then
-    local _sz; _sz=$(du -sh "$HUGIN_HOME/bin/mcp-integration.jar" | cut -f1)
-    _dr_pass "mcp-integration.jar ($_sz)"
+  if [[ -f "$HUGIN_HOME/bin/hugin-server.jar" ]]; then
+    local _sz; _sz=$(du -sh "$HUGIN_HOME/bin/hugin-server.jar" | cut -f1)
+    _dr_pass "hugin-server.jar ($_sz)"
   else
-    _dr_fail "mcp-integration.jar not found — rebuild: mvn clean package -DskipTests && re-run install.sh"
+    _dr_fail "hugin-server.jar not found — rebuild: mvn clean package -DskipTests && re-run install.sh"
   fi
 
   if [[ -f "$HUGIN_HOME/bin/openrouter-search-mcp.py" ]]; then
@@ -1710,7 +1710,7 @@ cmd_update() {
     info "Repo checkout is on branch '$checkout_branch' — skipping git sync and updating the installed runtime from the current checkout."
   fi
 
-  local current_head bundle_ready=false release_dir="" was_running=false discord_was_running=false
+  local current_head bundle_ready=false release_dir="" was_running=false
   current_head="$(git -C "$REPO_DIR" rev-parse HEAD)"
 
   if download_release_bundle; then
@@ -1732,30 +1732,22 @@ cmd_update() {
     info "Building jars (this may take a minute)..."
     MAVEN_OPTS="${MAVEN_OPTS:--Xmx512m}" \
       mvn -f "$REPO_DIR/pom.xml" \
-          -pl mcp-integration,agent-discord -am \
-          clean package -DskipTests -q \
+        clean package -DskipTests -q \
       || die "Maven build failed — check output above."
   fi
 
   if svc_is_active 2>/dev/null; then
     was_running=true
+
     info "Stopping service to swap jars..."
     svc_stop
-    sleep 1
-  fi
-
-  if discord_svc_is_active 2>/dev/null; then
-    discord_was_running=true
-    info "Stopping Discord bot service to swap jar..."
-    discord_svc_stop
     sleep 1
   fi
 
   if [[ "$bundle_ready" == "true" ]]; then
     install_release_bundle "$release_dir"
   else
-    cp "$REPO_DIR"/mcp-integration/target/mcp-integration-*.jar  "$HUGIN_HOME/bin/mcp-integration.jar"
-    cp "$REPO_DIR"/agent-discord/target/agent-discord-*.jar       "$HUGIN_HOME/bin/agent-discord.jar" 2>/dev/null || true
+    cp "$REPO_DIR"/backend/target/hugin-backend-*.jar  "$HUGIN_HOME/bin/hugin-server.jar"
     cp "$REPO_DIR/openrouter-search-mcp.py"                       "$HUGIN_HOME/bin/openrouter-search-mcp.py"
   fi
 
@@ -1797,14 +1789,6 @@ cmd_update() {
     success "Service restarted and healthy."
   else
     info "Service was not running — start it with: hugin start"
-  fi
-
-  if [[ "$discord_was_running" == "true" ]]; then
-    info "Restarting Discord bot service..."
-    discord_svc_start
-    success "Discord bot service restarted."
-  elif discord_has_token && [[ -f "$HUGIN_HOME/bin/agent-discord.jar" ]]; then
-    info "Discord bot was not running — start it with: hugin discord start"
   fi
 
   if [[ -n "${RELEASE_BUNDLE_TMP:-}" ]]; then
