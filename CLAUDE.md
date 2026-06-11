@@ -3,6 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 When you finish a coding task in this repo, default to publishing the change as a pull request unless the user explicitly says not to. Keep the PR focused on the requested scope.
+Every UI change must be accompanied by at least one current screenshot in the PR showing the affected state. If the change is responsive, include mobile and desktop screenshots when both are affected.
 
 ## Build & Test
 

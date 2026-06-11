@@ -14,29 +14,6 @@ import { loadGuildState, saveGuildState, getThread, createBlankThread, addThread
 import type { GuildState, Route } from "./lib/types";
 import { parseHashRoute, toHash } from "./lib/routing";
 
-const promptLinks = [
-  {
-    label: "Check server status",
-    subtitle: "View production health",
-    route: { screen: "check-server-status" } as Route
-  },
-  {
-    label: "Summarize emails",
-    subtitle: "Turn unread mail into a digest",
-    route: { screen: "summarize-emails" } as Route
-  },
-  {
-    label: "Research on AI agents",
-    subtitle: "Open the research chat",
-    route: { screen: "research-ai-agents" } as Route
-  },
-  {
-    label: "New chat",
-    subtitle: "Start from scratch",
-    route: { screen: "new-chat" } as Route
-  }
-];
-
 export default function App() {
   const [state, setState] = useState<GuildState>(() => loadGuildState());
   const [routeState, setRouteState] = useState(() => parseHashRoute(window.location.hash));
@@ -142,7 +119,7 @@ export default function App() {
       </nav>
 
       <nav className="sidebar-nav">
-        <SidebarSection title="Suggested prompts" />
+        <SidebarSection title="Tools" />
         <SidebarLink label="Check Server Status" active={route.screen === "check-server-status"} onClick={() => navigate({ screen: "check-server-status" })} />
         <SidebarLink label="Summarize Emails" active={route.screen === "summarize-emails"} onClick={() => navigate({ screen: "summarize-emails" })} />
         <SidebarLink label="Research on AI Agents" active={route.screen === "research-ai-agents"} onClick={() => navigate({ screen: "research-ai-agents" })} />
@@ -166,7 +143,6 @@ export default function App() {
         title="Hugin"
         subtitle="How can I help?"
         thread={null}
-        promptLinks={promptLinks}
         isHome
         draft={homeDraft}
         disabled={busyThreadId !== null}
@@ -174,13 +150,12 @@ export default function App() {
         onSend={() => void sendFromHome(homeDraft)}
         onNavigate={(next) => navigate(next)}
         onStartNewChat={startNewChat}
-        onOpenDrawer={() => setDrawerOpen(true)}
       />
     );
   } else if (route.screen === "new-chat") {
-    content = <NewChatScreen onNavigate={navigate} onStartNewChat={startNewChat} onOpenDrawer={() => setDrawerOpen(true)} />;
+    content = <NewChatScreen onNavigate={navigate} onStartNewChat={startNewChat} />;
   } else if (route.screen === "history") {
-    content = <HistoryScreen threads={state.threads} onOpenThread={(threadId) => navigate({ screen: "history-chat", threadId })} onNavigate={navigate} onOpenDrawer={() => setDrawerOpen(true)} />;
+    content = <HistoryScreen threads={state.threads} onOpenThread={(threadId) => navigate({ screen: "history-chat", threadId })} onNavigate={navigate} />;
   } else if (route.screen === "history-chat") {
     content = activeThread ? (
       <ChatScreen
@@ -193,7 +168,6 @@ export default function App() {
         onSend={() => void sendPromptForThread(activeThread.id, draftByThread[activeThread.id] || "")}
         onNavigate={navigate}
         onStartNewChat={startNewChat}
-        onOpenDrawer={() => setDrawerOpen(true)}
       />
     ) : null;
   } else if (route.screen === "check-server-status" || route.screen === "summarize-emails" || route.screen === "research-ai-agents") {
@@ -214,13 +188,12 @@ export default function App() {
         onSend={() => void sendPromptForThread(thread.id, draftByThread[thread.id] || "")}
         onNavigate={navigate}
         onStartNewChat={startNewChat}
-        onOpenDrawer={() => setDrawerOpen(true)}
       />
     ) : null;
   } else if (route.screen === "settings") {
-    content = <SettingsScreen onNavigate={navigate} onOpenClearHistory={openClearHistory} onOpenDrawer={() => setDrawerOpen(true)} />;
+    content = <SettingsScreen onNavigate={navigate} onOpenClearHistory={openClearHistory} />;
   } else if (route.screen === "integrations") {
-    content = <IntegrationsScreen integrations={state.integrations.list} onNavigate={navigate} onOpenDrawer={() => setDrawerOpen(true)} />;
+    content = <IntegrationsScreen integrations={state.integrations.list} onNavigate={navigate} />;
   } else if (route.screen === "google-workspace") {
     content = (
       <IntegrationDetailScreen
@@ -229,7 +202,6 @@ export default function App() {
         onRefresh={() => setState((current) => refreshGoogleWorkspace(current))}
         onReconnect={() => setState((current) => reconnectGoogleWorkspace(current))}
         onDisconnect={() => setState((current) => disconnectGoogleWorkspace(current))}
-        onOpenDrawer={() => setDrawerOpen(true)}
       />
     );
   } else if (route.screen === "appearance") {
@@ -240,7 +212,6 @@ export default function App() {
           onTextSizeChange={(size) => setState((current) => setTextSize(current, size))}
           onReduceMotionChange={(value) => setState((current) => setReduceMotion(current, value))}
           onNavigate={navigate}
-          onOpenDrawer={() => setDrawerOpen(true)}
         />
       );
   } else if (route.screen === "data-privacy") {
@@ -249,7 +220,6 @@ export default function App() {
         state={state}
         onClearHistory={openClearHistory}
         onNavigate={navigate}
-        onOpenDrawer={() => setDrawerOpen(true)}
       />
     );
   }

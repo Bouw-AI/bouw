@@ -5,26 +5,21 @@ import { ChatComposer } from "../components/ChatComposer";
 import { MessageList } from "../components/MessageList";
 import { RavenMark } from "../components/RavenMark";
 
-type PromptLink = { label: string; subtitle: string; route: Route };
-
 export function ChatScreen({
   title,
   subtitle,
   thread,
-  promptLinks,
   isHome = false,
   draft,
   disabled = false,
   onDraftChange,
   onSend,
   onNavigate,
-  onStartNewChat,
-  onOpenDrawer
+  onStartNewChat
 }: {
   title: string;
   subtitle?: string;
   thread: ChatThread | null;
-  promptLinks?: PromptLink[];
   isHome?: boolean;
   draft: string;
   disabled?: boolean;
@@ -32,7 +27,6 @@ export function ChatScreen({
   onSend: () => void;
   onNavigate: (route: Route) => void;
   onStartNewChat?: () => void;
-  onOpenDrawer: () => void;
 }) {
   return (
     <section className="screen-frame">
@@ -55,9 +49,6 @@ export function ChatScreen({
               New Chat
             </Button>
           ) : null}
-          <Button variant="ghost" className="mobile-only-inline" onClick={onOpenDrawer}>
-            Menu
-          </Button>
         </div>
       </div>
 
@@ -73,17 +64,6 @@ export function ChatScreen({
         </Card>
       ) : null}
 
-      {promptLinks?.length ? (
-        <div className="prompt-grid">
-          {promptLinks.map((prompt) => (
-            <button className="prompt-card" key={prompt.label} onClick={() => onNavigate(prompt.route)}>
-              <div className="prompt-title">{prompt.label}</div>
-              <div className="prompt-subtitle">{prompt.subtitle}</div>
-            </button>
-          ))}
-        </div>
-      ) : null}
-
       {thread ? (
         <Card className="conversation-card">
           <MessageList thread={thread} />
@@ -97,7 +77,6 @@ export function ChatScreen({
         </Card>
       ) : isHome ? (
         <Card className="conversation-card">
-          <div className="home-composer-hint">Ask Hugin anything, or choose one of the prompts above.</div>
           <ChatComposer
             value={draft}
             placeholder="Ask Hugin anything..."

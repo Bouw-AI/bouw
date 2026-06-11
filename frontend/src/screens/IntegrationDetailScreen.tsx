@@ -8,15 +8,13 @@ export function IntegrationDetailScreen({
   onNavigate,
   onRefresh,
   onReconnect,
-  onDisconnect,
-  onOpenDrawer
+  onDisconnect
 }: {
   googleWorkspace: GoogleWorkspaceState;
   onNavigate: (route: Route) => void;
   onRefresh: () => void;
   onReconnect: () => void;
   onDisconnect: () => void;
-  onOpenDrawer: () => void;
 }) {
   return (
     <section className="screen-frame">
@@ -30,9 +28,6 @@ export function IntegrationDetailScreen({
           <h1>Google Workspace</h1>
           <p>Auth status, connected services, and account controls.</p>
         </div>
-        <Button variant="ghost" className="mobile-only-inline" onClick={onOpenDrawer}>
-          Menu
-        </Button>
       </div>
 
       <Card className="integration-detail-card">

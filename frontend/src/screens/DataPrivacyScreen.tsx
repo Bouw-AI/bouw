@@ -6,13 +6,11 @@ import { downloadStateSnapshot } from "../services/guildService";
 export function DataPrivacyScreen({
   state,
   onClearHistory,
-  onNavigate,
-  onOpenDrawer
+  onNavigate
 }: {
   state: GuildState;
   onClearHistory: () => void;
   onNavigate: (route: Route) => void;
-  onOpenDrawer: () => void;
 }) {
   return (
     <section className="screen-frame">
@@ -26,9 +24,6 @@ export function DataPrivacyScreen({
           <h1>Data & Privacy</h1>
           <p>See what lives in the app and clear it when needed.</p>
         </div>
-        <Button variant="ghost" className="mobile-only-inline" onClick={onOpenDrawer}>
-          Menu
-        </Button>
       </div>
 
       <Card className="privacy-card">
