@@ -10,21 +10,51 @@ import { IntegrationDetailScreen } from "./screens/IntegrationDetailScreen";
 import { AppearanceScreen } from "./screens/AppearanceScreen";
 import { DataPrivacyScreen } from "./screens/DataPrivacyScreen";
 import { ClearHistoryDialog } from "./screens/ClearHistoryDialog";
-import { loadGuildState, saveGuildState, getThread, createBlankThread, addThread, submitPrompt, clearHistory, refreshGoogleWorkspace, reconnectGoogleWorkspace, disconnectGoogleWorkspace, setAppearanceTheme, setTextSize, setReduceMotion } from "./services/guildService";
-import type { GuildState, Route } from "./lib/types";
+import { SignInScreen } from "./screens/SignInScreen";
+import {
+  appendAssistantReply,
+  addThread,
+  clearHistory,
+  createBlankThread,
+  disconnectGoogleWorkspace,
+  ensureThread,
+  fetchCurrentUser,
+  fetchGoogleWorkspaceStatus,
+  getThread,
+  loadAuthSession,
+  loadGuildState,
+  login,
+  reconnectGoogleWorkspace,
+  saveAuthSession,
+  saveGuildState,
+  sendPrompt,
+  setAppearanceTheme,
+  setGoogleWorkspaceState,
+  setReduceMotion,
+  setTextSize
+} from "./services/guildService";
+import type { AuthSession, GuildState, Route } from "./lib/types";
 import { parseHashRoute, toHash } from "./lib/routing";
 
 export default function App() {
   const [state, setState] = useState<GuildState>(() => loadGuildState());
+  const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession());
   const [routeState, setRouteState] = useState(() => parseHashRoute(window.location.hash));
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [draftByThread, setDraftByThread] = useState<Record<string, string>>({});
   const [homeDraft, setHomeDraft] = useState("");
   const [busyThreadId, setBusyThreadId] = useState<string | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [initializing, setInitializing] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     saveGuildState(state);
   }, [state]);
+
+  useEffect(() => {
+    saveAuthSession(session);
+  }, [session]);
 
   useEffect(() => {
     const onHashChange = () => setRouteState(parseHashRoute(window.location.hash));
@@ -38,8 +68,42 @@ export default function App() {
     document.documentElement.dataset.reduceMotion = state.appearance.reduceMotion ? "true" : "false";
   }, [state.appearance]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initialize() {
+      if (!session?.token) {
+        setInitializing(false);
+        return;
+      }
+
+      try {
+        const currentUser = await fetchCurrentUser(session.token);
+        const googleWorkspace = await fetchGoogleWorkspaceStatus(session.token);
+        if (cancelled) return;
+        setSession(currentUser);
+        setState((current) => setGoogleWorkspaceState(current, googleWorkspace));
+      } catch (error) {
+        if (cancelled) return;
+        setSession(null);
+        setErrorMessage(error instanceof Error ? error.message : "Could not authenticate.");
+      } finally {
+        if (!cancelled) setInitializing(false);
+      }
+    }
+
+    void initialize();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const route = routeState.route;
   const dialog = routeState.dialog;
+  const historyThreads = useMemo(
+    () => state.threads.filter((thread) => thread.messages.length > 0 || thread.source === "draft"),
+    [state.threads]
+  );
 
   const activeThread = useMemo(() => {
     if (route.screen === "history-chat") return getThread(state, route.threadId);
@@ -67,12 +131,19 @@ export default function App() {
   }
 
   async function sendPromptForThread(threadId: string, prompt: string) {
-    if (!prompt.trim()) return;
+    if (!prompt.trim() || !session?.token) return;
     setBusyThreadId(threadId);
+    setErrorMessage(null);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 320));
-      setState((current) => submitPrompt(current, threadId, prompt));
+      const response = await sendPrompt(session.token, threadId, prompt);
+      setState((current) => appendAssistantReply(current, threadId, prompt, response));
       setDraftByThread((current) => ({ ...current, [threadId]: "" }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Request failed.";
+      setErrorMessage(message);
+      if ((error as { status?: number }).status === 401) {
+        setSession(null);
+      }
     } finally {
       setBusyThreadId(null);
     }
@@ -99,6 +170,27 @@ export default function App() {
   function confirmClearHistory() {
     setState((current) => clearHistory(current));
     window.location.hash = toHash({ screen: "history" });
+  }
+
+  async function handleSignIn(username: string, password: string) {
+    setAuthBusy(true);
+    setErrorMessage(null);
+    try {
+      const nextSession = await login(username, password);
+      const googleWorkspace = await fetchGoogleWorkspaceStatus(nextSession.token);
+      setSession(nextSession);
+      setState((current) => setGoogleWorkspaceState(current, googleWorkspace));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Sign-in failed.");
+    } finally {
+      setAuthBusy(false);
+      setInitializing(false);
+    }
+  }
+
+  function handleSignOut() {
+    setSession(null);
+    setErrorMessage(null);
   }
 
   useEffect(() => {
@@ -155,7 +247,7 @@ export default function App() {
   } else if (route.screen === "new-chat") {
     content = <NewChatScreen onNavigate={navigate} onStartNewChat={startNewChat} />;
   } else if (route.screen === "history") {
-    content = <HistoryScreen threads={state.threads} onOpenThread={(threadId) => navigate({ screen: "history-chat", threadId })} onNavigate={navigate} />;
+    content = <HistoryScreen threads={historyThreads} onOpenThread={(threadId) => navigate({ screen: "history-chat", threadId })} onNavigate={navigate} />;
   } else if (route.screen === "history-chat") {
     content = activeThread ? (
       <ChatScreen
@@ -199,9 +291,36 @@ export default function App() {
       <IntegrationDetailScreen
         googleWorkspace={state.integrations.googleWorkspace}
         onNavigate={navigate}
-        onRefresh={() => setState((current) => refreshGoogleWorkspace(current))}
-        onReconnect={() => setState((current) => reconnectGoogleWorkspace(current))}
-        onDisconnect={() => setState((current) => disconnectGoogleWorkspace(current))}
+        onRefresh={async () => {
+          if (!session?.token) return;
+          setErrorMessage(null);
+          try {
+            const googleWorkspace = await fetchGoogleWorkspaceStatus(session.token);
+            setState((current) => setGoogleWorkspaceState(current, googleWorkspace));
+          } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : "Refresh failed.");
+          }
+        }}
+        onReconnect={async () => {
+          if (!session?.token) return;
+          setErrorMessage(null);
+          try {
+            const googleWorkspace = await reconnectGoogleWorkspace(session.token);
+            setState((current) => setGoogleWorkspaceState(current, googleWorkspace));
+          } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : "Reconnect failed.");
+          }
+        }}
+        onDisconnect={async () => {
+          if (!session?.token) return;
+          setErrorMessage(null);
+          try {
+            const googleWorkspace = await disconnectGoogleWorkspace(session.token);
+            setState((current) => setGoogleWorkspaceState(current, googleWorkspace));
+          } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : "Disconnect failed.");
+          }
+        }}
       />
     );
   } else if (route.screen === "appearance") {
@@ -224,6 +343,22 @@ export default function App() {
     );
   }
 
+  useEffect(() => {
+    setState((current) => {
+      let next = ensureThread(current, "check-server-status", "Check Server Status", "scenario");
+      next = ensureThread(next, "summarize-emails", "Summarize Emails", "scenario");
+      return ensureThread(next, "research-ai-agents", "Research on AI Agents", "scenario");
+    });
+  }, []);
+
+  if (initializing) {
+    return <SignInScreen busy message="Checking your Hugin session..." onSubmit={() => Promise.resolve()} />;
+  }
+
+  if (!session) {
+    return <SignInScreen busy={authBusy} message={errorMessage} onSubmit={handleSignIn} />;
+  }
+
   return (
     <Layout
       route={route}
@@ -235,6 +370,11 @@ export default function App() {
       }}
       sidebarContent={sidebar}
     >
+      <div className="session-banner">
+        <div>Signed in as {session.username}</div>
+        <Button variant="ghost" onClick={handleSignOut}>Sign Out</Button>
+      </div>
+      {errorMessage ? <div className="app-alert">{errorMessage}</div> : null}
       {content}
       {dialog === "clear-history" ? (
         <ClearHistoryDialog onConfirm={confirmClearHistory} onCancel={() => (window.location.hash = toHash({ screen: "settings" }))} />

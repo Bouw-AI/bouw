@@ -47,6 +47,7 @@ export function IntegrationDetailScreen({
               label={googleWorkspace.authStatus === "connected" ? "Connected" : googleWorkspace.authStatus === "attention" ? "Needs attention" : "Not connected"}
             />
             <div className="status-note">Last refreshed {formatDateLabel(googleWorkspace.lastRefreshedAt)}</div>
+            <div className="status-note">{googleWorkspace.message}</div>
           </div>
 
           <div className="status-block">
@@ -70,14 +71,18 @@ export function IntegrationDetailScreen({
             <RefreshCw size={16} />
             Refresh Status
           </Button>
-          <Button variant="ghost" onClick={onReconnect}>
-            <RotateCcw size={16} />
-            Reconnect Google
-          </Button>
-          <Button variant="danger" onClick={onDisconnect}>
-            <Trash2 size={16} />
-            Disconnect
-          </Button>
+          {googleWorkspace.reconnectable ? (
+            <Button variant="ghost" onClick={onReconnect}>
+              <RotateCcw size={16} />
+              Reconnect Google
+            </Button>
+          ) : null}
+          {googleWorkspace.authMode === "oauth" ? (
+            <Button variant="danger" onClick={onDisconnect}>
+              <Trash2 size={16} />
+              Disconnect
+            </Button>
+          ) : null}
         </div>
       </Card>
     </section>

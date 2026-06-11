@@ -82,4 +82,20 @@ class GoogleWorkspaceControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.authUrl").value("https://accounts.google.com/o/oauth2/v2/auth?test"));
     }
+
+    @Test
+    void disconnectReturnsLatestStatus() throws Exception {
+        when(google.disconnect()).thenReturn(new GoogleWorkspaceStatus(
+                false,
+                true,
+                true,
+                "oauth",
+                "Google OAuth client secrets are configured, but consent has not completed yet."));
+
+        mockMvc.perform(post("/api/google/disconnect"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.active").value(false))
+                .andExpect(jsonPath("$.configured").value(true))
+                .andExpect(jsonPath("$.authMode").value("oauth"));
+    }
 }

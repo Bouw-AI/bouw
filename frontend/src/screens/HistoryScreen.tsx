@@ -28,7 +28,7 @@ export function HistoryScreen({
       </div>
 
       <Card className="history-card">
-        {groups.map((group) => (
+        {groups.length ? groups.map((group) => (
           <div className="history-group" key={group.label}>
             <div className="history-group-label">{group.label}</div>
             <div className="history-list">
@@ -46,7 +46,7 @@ export function HistoryScreen({
               ))}
             </div>
           </div>
-        ))}
+        )) : <p className="history-preview">Your saved conversations will appear here after you start chatting.</p>}
       </Card>
     </section>
   );

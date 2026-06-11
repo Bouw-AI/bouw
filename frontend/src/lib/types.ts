@@ -62,6 +62,10 @@ export type GoogleWorkspaceState = {
   accountName: string;
   authStatus: "connected" | "attention" | "not-connected";
   lastRefreshedAt: string;
+  authMode: "oauth" | "service-account" | "none";
+  configured: boolean;
+  reconnectable: boolean;
+  message: string;
   connectedServices: Array<{
     label: string;
     status: ConnectedServiceStatus;
@@ -75,4 +79,11 @@ export type GuildState = {
     list: IntegrationItem[];
     googleWorkspace: GoogleWorkspaceState;
   };
+};
+
+export type AuthSession = {
+  token: string;
+  username: string;
+  roles: string[];
+  expiresAt: string;
 };

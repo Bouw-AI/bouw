@@ -1,21 +1,51 @@
-import type { AppearanceSettings, ChatMessage, ChatThread, GuildState, IntegrationItem } from "../lib/types";
+import type {
+  AppearanceSettings,
+  AuthSession,
+  ChatMessage,
+  ChatThread,
+  ConnectedServiceStatus,
+  GoogleWorkspaceState,
+  GuildState,
+  IntegrationItem
+} from "../lib/types";
 
-const STORAGE_KEY = "guild-app-state-v1";
+const STORAGE_KEY = "guild-app-state-v2";
+const AUTH_STORAGE_KEY = "guild-auth-session-v1";
+
+type AgentResponse = {
+  response: string;
+};
+
+type GoogleWorkspaceStatusResponse = {
+  active: boolean;
+  configured: boolean;
+  reconnectable: boolean;
+  authMode: "oauth" | "service-account" | "none";
+  message: string;
+};
+
+type GoogleReconnectResponse = {
+  status: GoogleWorkspaceStatusResponse;
+  authUrl: string | null;
+};
+
+type AuthLoginResponse = {
+  token: string;
+  tokenType: string;
+  expiresAt: string;
+  username: string;
+  roles: string[];
+};
+
+type AuthMeResponse = {
+  username: string;
+  roles: string[];
+  issuedAt: string;
+  expiresAt: string;
+};
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function minutesAgo(minutes: number) {
-  return new Date(Date.now() - minutes * 60_000).toISOString();
-}
-
-function hoursAgo(hours: number) {
-  return new Date(Date.now() - hours * 60 * 60_000).toISOString();
-}
-
-function daysAgo(days: number) {
-  return new Date(Date.now() - days * 24 * 60 * 60_000).toISOString();
 }
 
 function uid(prefix = "id") {
@@ -29,211 +59,255 @@ function threadMessage(role: ChatMessage["role"], content: string, createdAt: st
   return { id: uid(role), role, content, createdAt };
 }
 
-function makeThread(
-  id: string,
-  title: string,
-  createdAt: string,
-  updatedAt: string,
-  source: ChatThread["source"],
-  messages: ChatMessage[]
-): ChatThread {
-  return { id, title, createdAt, updatedAt, source, messages };
+function makeThread(id: string, title: string, source: ChatThread["source"]): ChatThread {
+  const createdAt = nowIso();
+  return { id, title, createdAt, updatedAt: createdAt, source, messages: [] };
 }
 
-function buildSeedThreads(): ChatThread[] {
-  return [
-    makeThread(
-      "check-server-status",
-      "Check Server Status",
-      daysAgo(2),
-      hoursAgo(3),
-      "scenario",
-      [
-        threadMessage("user", "What is the status of my production servers?", hoursAgo(3)),
-        threadMessage(
-          "assistant",
-          "All systems are operational.\n\n- Web servers: 4 healthy\n- API servers: 3 healthy\n- Database: 1 healthy\n- Cache: 2 healthy\n\nEverything is running normally.\n\nLast updated: just now",
-          hoursAgo(3)
-        )
-      ]
-    ),
-    makeThread(
-      "summarize-emails",
-      "Summarize Emails",
-      daysAgo(2),
-      hoursAgo(8),
-      "scenario",
-      [
-        threadMessage("user", "Summarize my unread emails from today", hoursAgo(8)),
-        threadMessage(
-          "assistant",
-          "Here is a summary of your unread emails from today:\n\n- Project update from Alex\n- Meeting request with Sarah\n- Invoice approval needed\n- New design assets shared by the team",
-          hoursAgo(8)
-        )
-      ]
-    ),
-    makeThread(
-      "research-ai-agents",
-      "Research on AI Agents",
-      daysAgo(3),
-      hoursAgo(11),
-      "scenario",
-      [
-        threadMessage("user", "What are the latest advances in AI agents?", hoursAgo(11)),
-        threadMessage(
-          "assistant",
-          "Here are some areas that continue to move quickly:\n\n1. Better tool use and function calling\n2. Longer context and retrieval\n3. Multi-agent collaboration\n4. More reliable planning and verification\n\nIf you want, I can turn this into a one-page brief or a comparison table.",
-          hoursAgo(11)
-        )
-      ]
-    ),
-    makeThread(
-      "project-roadmap",
-      "Project Roadmap",
-      daysAgo(4),
-      daysAgo(1),
-      "history",
-      [
-        threadMessage("user", "Can you review the project roadmap?", daysAgo(1)),
-        threadMessage(
-          "assistant",
-          "Absolutely. Here is the current roadmap:\n\n- Q1: Planning and research\n- Q2: Core development\n- Q3: Testing and QA\n- Q4: Rollout and optimization\n\nTell me if you want this broken into milestones or risks.",
-          daysAgo(1)
-        )
-      ]
-    ),
-    makeThread(
-      "database-optimization",
-      "Database Optimization",
-      daysAgo(5),
-      daysAgo(2),
-      "history",
-      [
-        threadMessage("user", "Can you review the database optimization plan?", daysAgo(2)),
-        threadMessage(
-          "assistant",
-          "Key items to keep in the plan:\n\n- Index the high-traffic query paths\n- Reduce duplicate writes\n- Add query tracing to the slowest endpoints\n- Revisit cache TTLs after the next release",
-          daysAgo(2)
-        )
-      ]
-    ),
-    makeThread(
-      "meeting-notes",
-      "Meeting Notes",
-      daysAgo(7),
-      daysAgo(3),
-      "history",
-      [
-        threadMessage("user", "Summarize the meeting notes", daysAgo(3)),
-        threadMessage(
-          "assistant",
-          "Summary:\n\n- Alignment on the release timeline\n- Open question around external sign-in\n- Follow-up needed on design review\n- One owner assigned per action item",
-          daysAgo(3)
-        )
-      ]
-    )
-  ];
-}
-
-function buildSeedIntegrations(): IntegrationItem[] {
-  return [
-    {
-      id: "google-workspace",
-      label: "Google Workspace",
-      subtitle: "Gmail, Calendar, Drive, Contacts",
-      status: "connected",
-      detail: "Connected"
-    },
-    {
-      id: "slack",
-      label: "Slack",
-      subtitle: "Workspace messages",
-      status: "connected",
-      detail: "Connected"
-    },
-    {
-      id: "notion",
-      label: "Notion",
-      subtitle: "Docs and databases",
-      status: "attention",
-      detail: "Needs attention"
-    },
-    {
-      id: "github",
-      label: "GitHub",
-      subtitle: "Repos, issues, pull requests",
-      status: "connected",
-      detail: "Connected"
-    },
-    {
-      id: "microsoft-outlook",
-      label: "Microsoft Outlook",
-      subtitle: "Mail, calendar, contacts",
-      status: "not-connected",
-      detail: "Not connected"
-    }
-  ];
+function createGoogleWorkspaceState(overrides: Partial<GoogleWorkspaceState> = {}): GoogleWorkspaceState {
+  return {
+    accountName: "Not connected",
+    authStatus: "not-connected",
+    lastRefreshedAt: nowIso(),
+    authMode: "none",
+    configured: false,
+    reconnectable: false,
+    message: "Google Workspace is not configured.",
+    connectedServices: [
+      { label: "Gmail", status: "not-connected" },
+      { label: "Calendar", status: "not-connected" },
+      { label: "Docs", status: "not-connected" },
+      { label: "Sheets", status: "not-connected" }
+    ],
+    ...overrides
+  };
 }
 
 function buildSeedState(): GuildState {
   return {
-    threads: buildSeedThreads(),
+    threads: [
+      makeThread("check-server-status", "Check Server Status", "scenario"),
+      makeThread("summarize-emails", "Summarize Emails", "scenario"),
+      makeThread("research-ai-agents", "Research on AI Agents", "scenario")
+    ],
     appearance: {
       theme: "light",
       textSize: "medium",
       reduceMotion: false
     },
     integrations: {
-      list: buildSeedIntegrations(),
-      googleWorkspace: {
-        accountName: "guild.workspace@company.com",
-        authStatus: "connected",
-        lastRefreshedAt: minutesAgo(12),
-        connectedServices: [
-          { label: "Gmail", status: "connected" },
-          { label: "Calendar", status: "connected" },
-          { label: "Drive", status: "connected" },
-          { label: "Contacts", status: "connected" }
-        ]
-      }
+      list: [],
+      googleWorkspace: createGoogleWorkspaceState()
+    }
+  };
+}
+
+function withDerivedIntegrations(state: GuildState): GuildState {
+  return {
+    ...state,
+    integrations: {
+      ...state.integrations,
+      list: [googleIntegrationItem(state.integrations.googleWorkspace)]
     }
   };
 }
 
 export function loadGuildState(): GuildState {
-  if (typeof window === "undefined") return buildSeedState();
+  if (typeof window === "undefined") return withDerivedIntegrations(buildSeedState());
 
   const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) return buildSeedState();
+  if (!raw) return withDerivedIntegrations(buildSeedState());
 
   try {
     const parsed = JSON.parse(raw) as Partial<GuildState>;
     const seed = buildSeedState();
-
-    return {
-      threads: Array.isArray(parsed.threads) && parsed.threads.length ? (parsed.threads as ChatThread[]) : seed.threads,
+    return withDerivedIntegrations({
+      threads: Array.isArray(parsed.threads) ? (parsed.threads as ChatThread[]) : seed.threads,
       appearance: {
         ...seed.appearance,
         ...(parsed.appearance || {})
       } as AppearanceSettings,
       integrations: {
-        list: Array.isArray(parsed.integrations?.list) && parsed.integrations?.list.length
-          ? (parsed.integrations.list as IntegrationItem[])
-          : seed.integrations.list,
-        googleWorkspace: {
-          ...seed.integrations.googleWorkspace,
-          ...(parsed.integrations?.googleWorkspace || {})
-        }
+        list: [],
+        googleWorkspace: createGoogleWorkspaceState(parsed.integrations?.googleWorkspace || {})
       }
-    };
+    });
   } catch {
-    return buildSeedState();
+    return withDerivedIntegrations(buildSeedState());
   }
 }
 
 export function saveGuildState(state: GuildState) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    threads: state.threads,
+    appearance: state.appearance,
+    integrations: {
+      googleWorkspace: state.integrations.googleWorkspace
+    }
+  }));
+}
+
+export function loadAuthSession(): AuthSession | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.sessionStorage.getItem(AUTH_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as AuthSession;
+    if (!parsed.token || !parsed.username) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function saveAuthSession(session: AuthSession | null) {
+  if (typeof window === "undefined") return;
+  if (!session) {
+    window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+    return;
+  }
+  window.sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+}
+
+async function apiFetch<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
+  const headers = new Headers(init.headers || {});
+  headers.set("Accept", "application/json");
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const response = await fetch(path, { ...init, headers });
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body && typeof body.error === "string" && body.error) {
+        message = body.error;
+      }
+    } catch {
+      // Ignore parse errors and keep the status text fallback.
+    }
+    const error = new Error(message) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+  return (await response.json()) as T;
+}
+
+export async function login(username: string, password: string): Promise<AuthSession> {
+  const response = await apiFetch<AuthLoginResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password })
+  });
+  return {
+    token: response.token,
+    username: response.username,
+    roles: response.roles,
+    expiresAt: response.expiresAt
+  };
+}
+
+export async function fetchCurrentUser(token: string): Promise<AuthSession> {
+  const response = await apiFetch<AuthMeResponse>("/api/auth/me", {}, token);
+  return {
+    token,
+    username: response.username,
+    roles: response.roles,
+    expiresAt: response.expiresAt
+  };
+}
+
+export async function sendPrompt(token: string, threadId: string, prompt: string): Promise<string> {
+  const response = await apiFetch<AgentResponse>("/api/agent/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      prompt,
+      sessionId: threadId
+    })
+  }, token);
+  return response.response || "";
+}
+
+export async function fetchGoogleWorkspaceStatus(token: string): Promise<GoogleWorkspaceState> {
+  const response = await apiFetch<GoogleWorkspaceStatusResponse>("/api/google/status", {}, token);
+  return mapGoogleWorkspaceStatus(response);
+}
+
+export async function reconnectGoogleWorkspace(token: string): Promise<GoogleWorkspaceState> {
+  const response = await apiFetch<GoogleReconnectResponse>("/api/google/reconnect", {
+    method: "POST",
+    body: JSON.stringify({ returnTo: window.location.href })
+  }, token);
+  if (response.authUrl) {
+    window.location.assign(response.authUrl);
+  }
+  return mapGoogleWorkspaceStatus(response.status);
+}
+
+export async function disconnectGoogleWorkspace(token: string): Promise<GoogleWorkspaceState> {
+  const response = await apiFetch<GoogleWorkspaceStatusResponse>("/api/google/disconnect", {
+    method: "POST"
+  }, token);
+  return mapGoogleWorkspaceStatus(response);
+}
+
+function mapGoogleWorkspaceStatus(status: GoogleWorkspaceStatusResponse): GoogleWorkspaceState {
+  const serviceStatus: ConnectedServiceStatus = status.active
+    ? "connected"
+    : status.configured
+      ? "attention"
+      : "not-connected";
+
+  return createGoogleWorkspaceState({
+    accountName: googleAccountLabel(status),
+    authStatus: status.active ? "connected" : status.configured ? "attention" : "not-connected",
+    lastRefreshedAt: nowIso(),
+    authMode: status.authMode,
+    configured: status.configured,
+    reconnectable: status.reconnectable,
+    message: status.message,
+    connectedServices: [
+      { label: "Gmail", status: serviceStatus },
+      { label: "Calendar", status: serviceStatus },
+      { label: "Docs", status: serviceStatus },
+      { label: "Sheets", status: serviceStatus }
+    ]
+  });
+}
+
+function googleAccountLabel(status: GoogleWorkspaceStatusResponse) {
+  if (!status.configured) return "Not configured";
+  if (status.authMode === "service-account") return "Service account";
+  if (status.active) return "OAuth connected";
+  return "OAuth needs consent";
+}
+
+function googleIntegrationItem(googleWorkspace: GoogleWorkspaceState): IntegrationItem {
+  return {
+    id: "google-workspace",
+    label: "Google Workspace",
+    subtitle: googleWorkspace.message,
+    status: googleWorkspace.authStatus,
+    detail: googleWorkspace.authStatus === "connected"
+      ? "Connected"
+      : googleWorkspace.authStatus === "attention"
+        ? "Needs attention"
+        : "Not connected"
+  };
+}
+
+export function setGoogleWorkspaceState(state: GuildState, googleWorkspace: GoogleWorkspaceState): GuildState {
+  return withDerivedIntegrations({
+    ...state,
+    integrations: {
+      ...state.integrations,
+      googleWorkspace
+    }
+  });
 }
 
 export function getThread(state: GuildState, threadId: string) {
@@ -270,28 +344,25 @@ export function createBlankThread() {
   };
 }
 
-function createReply(prompt: string) {
-  const lower = prompt.toLowerCase();
-  if (lower.includes("server") || lower.includes("status")) {
-    return "All systems are operational.\n\n- Web servers: 4 healthy\n- API servers: 3 healthy\n- Database: 1 healthy\n- Cache: 2 healthy\n\nEverything is running normally.\n\nLast updated: just now";
-  }
-  if (lower.includes("email") || lower.includes("inbox")) {
-    return "Here is a summary of your unread emails from today:\n\n- Project update from Alex\n- Meeting request with Sarah\n- Invoice approval needed\n- New design assets shared by the team";
-  }
-  if (lower.includes("agent") || lower.includes("research")) {
-    return "Recent advances worth tracking:\n\n1. Better tool use and function calling\n2. Longer context plus retrieval\n3. Multi-agent workflows\n4. More reliable planning and verification\n\nIf you want, I can turn this into a brief or a comparison table.";
-  }
-
-  return "I can help with that.\n\nIf you'd like, I can turn this into a summary, a plan, or a concise next-step checklist.";
+export function addThread(state: GuildState, thread: ChatThread) {
+  return {
+    ...state,
+    threads: [thread, ...state.threads]
+  };
 }
 
-export function submitPrompt(state: GuildState, threadId: string, prompt: string): GuildState {
+export function ensureThread(state: GuildState, threadId: string, title: string, source: ChatThread["source"]): GuildState {
+  if (getThread(state, threadId)) return state;
+  return addThread(state, makeThread(threadId, title, source));
+}
+
+export function appendAssistantReply(state: GuildState, threadId: string, prompt: string, response: string): GuildState {
   const thread = getThread(state, threadId);
   if (!thread) return state;
 
   const createdAt = nowIso();
   const userMessage = threadMessage("user", prompt, createdAt);
-  const assistantMessage = threadMessage("assistant", createReply(prompt), nowIso());
+  const assistantMessage = threadMessage("assistant", response, nowIso());
 
   return {
     ...state,
@@ -308,79 +379,13 @@ export function submitPrompt(state: GuildState, threadId: string, prompt: string
   };
 }
 
-export function addThread(state: GuildState, thread: ChatThread) {
-  return {
-    ...state,
-    threads: [thread, ...state.threads]
-  };
-}
-
-export function updateThread(state: GuildState, threadId: string, updater: (thread: ChatThread) => ChatThread) {
-  return {
-    ...state,
-    threads: state.threads.map((thread) => (thread.id === threadId ? updater(thread) : thread))
-  };
-}
-
 export function clearHistory(state: GuildState) {
-  const seed = buildSeedState();
   const keepIds = new Set(["check-server-status", "summarize-emails", "research-ai-agents"]);
   return {
     ...state,
-    threads: seed.threads.filter((thread) => keepIds.has(thread.id))
-  };
-}
-
-export function resetToSeededState() {
-  return buildSeedState();
-}
-
-export function refreshGoogleWorkspace(state: GuildState): GuildState {
-  return {
-    ...state,
-    integrations: {
-      ...state.integrations,
-      googleWorkspace: {
-        ...state.integrations.googleWorkspace,
-        authStatus: "connected" as const,
-        lastRefreshedAt: nowIso(),
-        connectedServices: state.integrations.googleWorkspace.connectedServices.map((service) => ({
-          ...service,
-          status: "connected" as const
-        }))
-      }
-    }
-  };
-}
-
-export function reconnectGoogleWorkspace(state: GuildState): GuildState {
-  return refreshGoogleWorkspace({
-    ...state,
-    integrations: {
-      ...state.integrations,
-      googleWorkspace: {
-        ...state.integrations.googleWorkspace,
-        authStatus: "connected" as const
-      }
-    }
-  });
-}
-
-export function disconnectGoogleWorkspace(state: GuildState): GuildState {
-  return {
-    ...state,
-    integrations: {
-      ...state.integrations,
-      googleWorkspace: {
-        ...state.integrations.googleWorkspace,
-        authStatus: "not-connected" as const,
-        lastRefreshedAt: nowIso(),
-        connectedServices: state.integrations.googleWorkspace.connectedServices.map((service) => ({
-          ...service,
-          status: service.label === "Gmail" ? ("attention" as const) : ("not-connected" as const)
-        }))
-      }
-    }
+    threads: state.threads
+      .filter((thread) => keepIds.has(thread.id))
+      .map((thread) => ({ ...thread, messages: [], updatedAt: thread.createdAt }))
   };
 }
 

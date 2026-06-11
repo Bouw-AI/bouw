@@ -255,6 +255,26 @@ a {
   min-width: 0;
 }
 
+.session-banner,
+.app-alert {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.88);
+  margin-bottom: 12px;
+}
+
+.session-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app-alert {
+  color: var(--red);
+}
+
 .mobile-only,
 .mobile-only-inline,
 .mobile-drawer,
@@ -784,6 +804,66 @@ a {
   padding: 0;
   background: #fff;
   border-color: var(--line);
+}
+
+.ui-field {
+  display: grid;
+  gap: 8px;
+}
+
+.ui-field span {
+  font-weight: 600;
+}
+
+.ui-field input,
+.ui-field textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #fff;
+  outline: none;
+}
+
+.ui-field small {
+  color: var(--muted);
+}
+
+.signin-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.signin-card {
+  width: min(480px, 100%);
+  display: grid;
+  gap: 18px;
+}
+
+.signin-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.signin-brand h1 {
+  margin: 4px 0 8px;
+  font-size: clamp(2rem, 5vw, 2.6rem);
+  letter-spacing: -0.05em;
+}
+
+.signin-brand p,
+.signin-message {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.signin-form {
+  display: grid;
+  gap: 14px;
 }
 
 .back-button {
