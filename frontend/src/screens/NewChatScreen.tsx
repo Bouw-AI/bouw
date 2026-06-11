@@ -5,12 +5,10 @@ import { RavenMark } from "../components/RavenMark";
 
 export function NewChatScreen({
   onNavigate,
-  onStartNewChat,
-  onOpenDrawer
+  onStartNewChat
 }: {
   onNavigate: (route: Route) => void;
   onStartNewChat: () => void;
-  onOpenDrawer: () => void;
 }) {
   return (
     <section className="screen-frame">
@@ -24,9 +22,6 @@ export function NewChatScreen({
           <h1>New Chat</h1>
           <p>Start a fresh conversation with Hugin.</p>
         </div>
-        <Button variant="ghost" className="mobile-only-inline" onClick={onOpenDrawer}>
-          Menu
-        </Button>
       </div>
 
       <Card className="new-chat-card large">

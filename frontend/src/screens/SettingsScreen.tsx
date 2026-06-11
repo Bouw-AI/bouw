@@ -5,12 +5,10 @@ import type { Route } from "../lib/types";
 
 export function SettingsScreen({
   onNavigate,
-  onOpenClearHistory,
-  onOpenDrawer
+  onOpenClearHistory
 }: {
   onNavigate: (route: Route) => void;
   onOpenClearHistory: () => void;
-  onOpenDrawer: () => void;
 }) {
   return (
     <section className="screen-frame">
@@ -24,9 +22,6 @@ export function SettingsScreen({
           <h1>Settings</h1>
           <p>General preferences, integrations, and data controls.</p>
         </div>
-        <Button variant="ghost" className="mobile-only-inline" onClick={onOpenDrawer}>
-          Menu
-        </Button>
       </div>
 
       <Card className="settings-card">

@@ -6,13 +6,11 @@ import { formatRelative } from "../services/guildService";
 export function HistoryScreen({
   threads,
   onOpenThread,
-  onNavigate,
-  onOpenDrawer
+  onNavigate
 }: {
   threads: ChatThread[];
   onOpenThread: (threadId: string) => void;
   onNavigate: (route: Route) => void;
-  onOpenDrawer: () => void;
 }) {
   const groups = groupThreads(threads);
   return (
@@ -27,9 +25,6 @@ export function HistoryScreen({
           <h1>History</h1>
           <p>Open any saved conversation. Selecting a row opens the full chat.</p>
         </div>
-        <Button variant="ghost" className="mobile-only-inline" onClick={onOpenDrawer}>
-          Menu
-        </Button>
       </div>
 
       <Card className="history-card">

@@ -8,15 +8,13 @@ export function AppearanceScreen({
   onThemeChange,
   onTextSizeChange,
   onReduceMotionChange,
-  onNavigate,
-  onOpenDrawer
+  onNavigate
 }: {
   appearance: AppearanceSettings;
   onThemeChange: (theme: AppearanceSettings["theme"]) => void;
   onTextSizeChange: (size: AppearanceSettings["textSize"]) => void;
   onReduceMotionChange: (value: boolean) => void;
   onNavigate: (route: Route) => void;
-  onOpenDrawer: () => void;
 }) {
   return (
     <section className="screen-frame">
@@ -30,9 +28,6 @@ export function AppearanceScreen({
           <h1>Appearance</h1>
           <p>Keep the interface minimal and readable.</p>
         </div>
-        <Button variant="ghost" className="mobile-only-inline" onClick={onOpenDrawer}>
-          Menu
-        </Button>
       </div>
 
       <Card className="appearance-card">

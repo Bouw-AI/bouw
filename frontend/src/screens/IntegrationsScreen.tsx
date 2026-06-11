@@ -4,12 +4,10 @@ import type { IntegrationItem, Route } from "../lib/types";
 
 export function IntegrationsScreen({
   integrations,
-  onNavigate,
-  onOpenDrawer
+  onNavigate
 }: {
   integrations: IntegrationItem[];
   onNavigate: (route: Route) => void;
-  onOpenDrawer: () => void;
 }) {
   return (
     <section className="screen-frame">
@@ -23,9 +21,6 @@ export function IntegrationsScreen({
           <h1>Integrations</h1>
           <p>Connect the services Guild can use.</p>
         </div>
-        <Button variant="ghost" className="mobile-only-inline" onClick={onOpenDrawer}>
-          Menu
-        </Button>
       </div>
 
       <Card className="integrations-card">
