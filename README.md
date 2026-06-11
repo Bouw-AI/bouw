@@ -65,7 +65,7 @@ mvn -q -DskipTests package
 ./scripts/install-launchd-jobs.sh
 ```
 
-The launchd updater lives at [`scripts/hugin-launchd-update.sh`](/Users/jnku/code/hugin/scripts/hugin-launchd-update.sh) and:
+The launchd updater lives at [`scripts/hugin-launchd-update.sh`](scripts/hugin-launchd-update.sh) and:
 
 - fetches `origin/main`
 - fast-forwards the checkout when there are new commits
