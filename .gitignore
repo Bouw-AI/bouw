@@ -10,3 +10,8 @@ mcp-servers-user.json
 application-local.yml
 node_modules/
 data/
+
+# Frontend build artifacts
+frontend/dist/
+frontend/node_modules/
+backend/src/main/resources/static/

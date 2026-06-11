@@ -12,69 +12,17 @@
     </parent>
 
     <groupId>com.example</groupId>
-    <artifactId>mcp-parent</artifactId>
+    <artifactId>hugin-server</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <name>mcp-parent</name>
-    <description>MCP Client + AI Agent – parent POM</description>
+    <name>hugin-server</name>
+    <description>Hugin – monorepo: Spring Boot server + React frontend</description>
 
     <modules>
-        <module>agent-core</module>
+        <module>backend</module>
     </modules>
 
     <properties>
         <java.version>21</java.version>
-        <spring-ai.version>1.1.7</spring-ai.version>
-        <jacoco.version>0.8.12</jacoco.version>
-        <tomcat.version>10.1.55</tomcat.version>
     </properties>
-
-    <!--
-        Code-coverage instrumentation is opt-in via the "coverage" profile (mvn -Pcoverage ...).
-        Keeping JaCoCo off the default lifecycle avoids agent attachment + report generation on
-        every build, which measurably speeds up ordinary `mvn install` / test runs. Nothing in the
-        default pipeline consumes the coverage report, so it was pure overhead before.
-    -->
-    <profiles>
-        <profile>
-            <id>coverage</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.jacoco</groupId>
-                        <artifactId>jacoco-maven-plugin</artifactId>
-                        <version>${jacoco.version}</version>
-                        <executions>
-                            <execution>
-                                <id>prepare-agent</id>
-                                <goals><goal>prepare-agent</goal></goals>
-                            </execution>
-                            <execution>
-                                <id>report</id>
-                                <goals><goal>report</goal></goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.ai</groupId>
-                <artifactId>spring-ai-bom</artifactId>
-                <version>${spring-ai.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!-- Internal modules -->
-            <dependency>
-                <groupId>com.example</groupId>
-                <artifactId>agent-core</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 </project>
