@@ -3,7 +3,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ArrowRight,
+  ArrowUpRight,
   Bot,
+  Bird,
   Check,
   ChevronDown,
   ChevronRight,
@@ -825,6 +827,11 @@ function App() {
   }
 
   const toolCount = tools.length;
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) || null;
+  const routingLabel =
+    settings.decision.trim() && settings.complex.trim() && settings.simple.trim()
+      ? `Routing · ${settings.decision}`
+      : settings.model || "default model";
 
   if (authState !== "signed_in") {
     return (
@@ -843,190 +850,227 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <div className="app-grid">
-        <aside className="sidebar">
-          <div className="brand-card">
-            <div className="brand-mark">
-              <Sparkles size={18} />
-            </div>
-            <div>
-              <div className="eyebrow">Hugin</div>
-              <h1>Olympus Atelier</h1>
-            </div>
-          </div>
+    <div className="flow-shell">
+      <div className="flow-orb flow-orb-a" />
+      <div className="flow-orb flow-orb-b" />
 
-          <div className={`status-card status-${health}`}>
-            <div className="status-row">
-              <span className="status-indicator" />
-              <div>
-                <div className="status-title">
-                  {health === "healthy" ? "Connected" : health === "checking" ? "Checking" : "Disconnected"}
+      <header className="flow-header">
+        <div className="flow-brand">
+          <div className="brand-mark flow-mark">
+            <Bird size={22} />
+          </div>
+          <div>
+            <div className="eyebrow">Screen flow & navigation</div>
+            <h1>Hugin</h1>
+          </div>
+        </div>
+
+        <div className="flow-header-copy">
+          <p>
+            A diagram-like front end that keeps the drawer, home chat, and detail screens visible
+            in one connected flow.
+          </p>
+          <div className="flow-header-badges">
+            <Badge tone="slate" label={authProfile?.username ? `Signed in as ${authProfile.username}` : "signed in"} />
+            <Badge tone={health === "healthy" ? "green" : health === "checking" ? "amber" : "slate"} label={health === "healthy" ? "Connected" : health === "checking" ? "Checking" : "Offline"} />
+            <Badge tone="teal" label={routingLabel} />
+          </div>
+        </div>
+      </header>
+
+      <div className="flow-board">
+        <aside className="flow-column flow-left">
+          <ScreenCard number="1" title="Left Menu (Drawer)" subtitle="Primary navigation and session switching" compact>
+            <div className="drawer-shell">
+              <div className="drawer-profile">
+                <div className="drawer-avatar">{authProfile?.username?.slice(0, 1).toUpperCase() || "J"}</div>
+                <div>
+                  <strong>{authProfile?.username || "Jeremy"}</strong>
+                  <p>{authProfile?.baseUrl || settings.baseUrl}</p>
                 </div>
-                <div className="status-subtitle">{healthMessage}</div>
+                <button className="icon-button" onClick={() => setTab("settings")} title="Settings">
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+
+              <div className="drawer-nav">
+                <button className="drawer-action" onClick={createSession}>
+                  <Plus size={16} />
+                  New Chat
+                </button>
+                <button className="drawer-action" onClick={() => setTab("chat")}>
+                  <MessageSquare size={16} />
+                  History
+                </button>
+                <button className="drawer-action" onClick={() => setTab("settings")}>
+                  <Settings2 size={16} />
+                  Settings
+                </button>
+              </div>
+
+              <div className="drawer-divider" />
+
+              <div className="drawer-section">
+                <div className="drawer-section-head">
+                  <span>Active agent</span>
+                  <button className="icon-button" onClick={() => setTab("agents")} title="Agents">
+                    <ArrowUpRight size={15} />
+                  </button>
+                </div>
+                {selectedAgent ? (
+                  <div className="drawer-meta">
+                    <strong>{selectedAgent.name}</strong>
+                    <p>{selectedAgent.purpose}</p>
+                  </div>
+                ) : (
+                  <div className="empty-state compact">
+                    {agents.length ? "Select an agent to continue." : "Create an agent to personalize chat."}
+                  </div>
+                )}
+              </div>
+
+              <div className="drawer-divider" />
+
+              <div className="drawer-tools">
+                <button className="drawer-action subtle" onClick={() => void refreshMetadata()}>
+                  <RefreshCw size={16} />
+                  Refresh status
+                </button>
+                <button className="drawer-action subtle" onClick={handleLogout}>
+                  <LogOut size={16} />
+                  Sign out
+                </button>
               </div>
             </div>
-            <div className="sidebar-actions">
-              <button className="ghost-button" onClick={() => void refreshMetadata()}>
-                <RefreshCw size={14} />
-                Refresh
-              </button>
-              <button className="ghost-button" onClick={handleLogout}>
-                <LogOut size={14} />
-                Logout
-              </button>
-            </div>
-          </div>
+          </ScreenCard>
 
-          <div className="sidebar-panel">
-            <div className="panel-header">
-              <span>Agents</span>
-              <button className="icon-button" onClick={() => setTab("agents")} title="Manage agents">
-                <Plus size={15} />
-              </button>
-            </div>
-            <div className="session-list">
-              {agents.length ? (
-                agents.map((agent) => (
-                  <button
-                    key={agent.id}
-                    className={`session-item ${agent.id === selectedAgentId ? "active" : ""}`}
-                    onClick={() => {
-                      selectAgent(agent.id);
-                      setTab("chat");
-                    }}
-                  >
-                    <div className="session-title">{agent.name}</div>
-                    <div className="session-meta">{agent.purpose}</div>
-                  </button>
-                ))
-              ) : (
-                <div className="empty-state compact">
-                  No agents yet. Create one in the Agents tab to personalize chat.
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="sidebar-panel">
-            <div className="panel-header">
-              <span>Conversations</span>
-              <button className="icon-button" onClick={createSession} title="New conversation">
-                <Plus size={15} />
-              </button>
-            </div>
-            <div className="session-list">
+          <ScreenCard number="7" title="History" subtitle="Open a previous conversation" compact>
+            <div className="history-list">
               {sessions.map((session) => (
                 <button
                   key={session.id}
-                  className={`session-item ${session.id === activeSessionId ? "active" : ""}`}
+                  className={`history-item ${session.id === activeSessionId ? "active" : ""}`}
                   onClick={() => {
                     setActiveSessionId(session.id);
                     setTab("chat");
                   }}
                 >
-                  <div className="session-title">{session.title}</div>
-                  <div className="session-meta">{session.messages.length - 1} messages</div>
+                  <div className="history-item-head">
+                    <span>{session.title}</span>
+                    <span>{session.messages.length - 1} msgs</span>
+                  </div>
+                  <div className="history-item-sub">
+                    {formatRelativeTime(new Date(session.createdAt).toISOString())}
+                  </div>
                 </button>
               ))}
             </div>
-          </div>
+          </ScreenCard>
 
-          <div className="sidebar-panel">
-            <div className="panel-header">
-              <span>Endpoints</span>
-              <button className="ghost-button compact" onClick={() => void refreshTools()}>
-                <LoaderCircle size={14} />
-                Sync
-              </button>
-            </div>
-            <div className="endpoint-list">
-              <EndpointRow label="/api/agent/tools" value={`${toolCount} tools`} icon={Wrench} />
-              <EndpointRow label="/api/agent/agents" value={`${agents.length} agents`} icon={Bot} />
-              <EndpointRow label="/api/agent/stream" value="Streaming chat" icon={MessageSquare} />
-            </div>
-          </div>
-
-          <nav className="tab-nav">
-            <TabButton current={tab} id="chat" label="Chat" icon={MessageSquare} onClick={setTab} />
-            <TabButton current={tab} id="agents" label="Agents" icon={Bot} onClick={setTab} />
-            <TabButton current={tab} id="settings" label="Settings" icon={Settings2} onClick={setTab} />
-          </nav>
+          <NotesPanel />
         </aside>
 
-        <main className="content">
-          <header className="topbar">
-            <div>
-              <div className="eyebrow">Olympian overview</div>
-              <h2>
-                {tab === "chat" && "Audience with Hugin"}
-                {tab === "agents" && "Agent council"}
-                {tab === "settings" && "Connection settings"}
-              </h2>
+        <main className="flow-column flow-center">
+          <div className="stage-grid">
+            <ScreenCard
+              number={tab === "settings" ? "8" : tab === "agents" ? "2" : "2"}
+              title={tab === "settings" ? "Settings (Overview)" : tab === "agents" ? "Agents (Workbench)" : "Chat (Home)"}
+              subtitle={tab === "settings" ? "Connection and model controls" : tab === "agents" ? "Create and select agents" : "The primary chat home screen"}
+              large
+            >
+              {tab === "chat" && (
+                <ChatPanel
+                  session={activeSession}
+                  onPrompt={sendPromptWithValue}
+                  onSettings={() => setTab("settings")}
+                  onNewSession={createSession}
+                  settings={settings}
+                  tools={tools}
+                  selectedAgent={selectedAgent}
+                  hasAgents={agents.length > 0}
+                  onOpenAgents={() => setTab("agents")}
+                />
+              )}
+
+              {tab === "agents" && (
+                <AgentsPanel
+                  agents={agents}
+                  selectedAgentId={selectedAgentId}
+                  onSelectAgent={selectAgent}
+                  onCreateAgent={createAgent}
+                  onDeleteAgent={deleteAgent}
+                  busy={agentActionBusy}
+                  draftName={agentDraftName}
+                  draftPurpose={agentDraftPurpose}
+                  draftModel={agentDraftModel}
+                  onChangeDraftName={setAgentDraftName}
+                  onChangeDraftPurpose={setAgentDraftPurpose}
+                  onChangeDraftModel={setAgentDraftModel}
+                  onOpenChat={() => setTab("chat")}
+                />
+              )}
+
+              {tab === "settings" && (
+                <SettingsPanel
+                  settings={settings}
+                  onChange={handleSettingsChange}
+                  onRefresh={refreshMetadata}
+                  onRefreshTools={refreshTools}
+                  tools={tools}
+                  username={authProfile?.username || ""}
+                />
+              )}
+            </ScreenCard>
+
+            <div className="screen-index-shell">
+              <ScreenIndex
+                current={tab}
+                onSelect={setTab}
+                routingLabel={routingLabel}
+                toolCount={toolCount}
+                agentCount={agents.length}
+              />
             </div>
-            <div className="topbar-meta">
-              <Badge
-                tone="slate"
-                label={authProfile?.username ? `Signed in as ${authProfile.username}` : "signed in"}
-              />
-              <Badge
-                tone={health === "healthy" ? "green" : health === "checking" ? "amber" : "slate"}
-                label={health === "healthy" ? "Live" : health === "checking" ? "Syncing" : "Offline"}
-              />
-              <Badge
-                tone="teal"
-                label={
-                  settings.decision.trim() && settings.complex.trim() && settings.simple.trim()
-                    ? `Routing · ${settings.decision}`
-                    : settings.model || "default model"
-                }
-              />
-            </div>
-          </header>
-
-          {tab === "chat" && (
-            <ChatPanel
-              session={activeSession}
-              onPrompt={sendPromptWithValue}
-              onSettings={() => setTab("settings")}
-              onNewSession={createSession}
-              settings={settings}
-              tools={tools}
-              selectedAgent={agents.find((agent) => agent.id === selectedAgentId) || null}
-              hasAgents={agents.length > 0}
-              onOpenAgents={() => setTab("agents")}
-            />
-          )}
-
-          {tab === "agents" && (
-            <AgentsPanel
-              agents={agents}
-              selectedAgentId={selectedAgentId}
-              onSelectAgent={selectAgent}
-              onCreateAgent={createAgent}
-              onDeleteAgent={deleteAgent}
-              busy={agentActionBusy}
-              draftName={agentDraftName}
-              draftPurpose={agentDraftPurpose}
-              draftModel={agentDraftModel}
-              onChangeDraftName={setAgentDraftName}
-              onChangeDraftPurpose={setAgentDraftPurpose}
-              onChangeDraftModel={setAgentDraftModel}
-              onOpenChat={() => setTab("chat")}
-            />
-          )}
-
-          {tab === "settings" && (
-            <SettingsPanel
-              settings={settings}
-              onChange={handleSettingsChange}
-              onRefresh={refreshMetadata}
-              onRefreshTools={refreshTools}
-              tools={tools}
-              username={authProfile?.username || ""}
-            />
-          )}
+          </div>
         </main>
+
+        <aside className="flow-column flow-right">
+          <ScreenCard number="3" title="New Chat" subtitle="Starts a fresh conversation" compact>
+            <MiniActionCard
+              icon={MessageSquare}
+              headline="Start a new conversation"
+              body="You can launch a fresh session and keep the current one in history."
+              actionLabel="Start New Chat"
+              onAction={createSession}
+            />
+          </ScreenCard>
+
+          <ScreenCard number="4" title="Research on AI agents" subtitle="A sample assistant exchange" compact>
+            <TranscriptPreview
+              prompt="What are the latest advancements in AI agents?"
+              response="Use and function calling are getting more reliable, memory layers are becoming easier to tune, and multi-agent workflows are shifting from demos toward practical orchestration."
+            />
+          </ScreenCard>
+
+          <ScreenCard number="5" title="Check server status" subtitle="Backend health and API readiness" compact>
+            <StatusPreview health={health} healthMessage={healthMessage} toolCount={toolCount} />
+          </ScreenCard>
+
+          <ScreenCard number="6" title="Summarize emails" subtitle="A compact response preview" compact>
+            <TranscriptPreview
+              prompt="Summarize my unread emails from today."
+              response="Unread email themes: project planning, a team meeting request, a budget approval follow-up, and one infrastructure alert."
+            />
+          </ScreenCard>
+
+          <ScreenCard number="8" title="Settings (Overview)" subtitle="Connections, model routing, and account state" compact>
+            <SettingsSnapshot settings={settings} username={authProfile?.username || "unknown"} />
+          </ScreenCard>
+
+          <ScreenCard number="9" title="Integrations (List)" subtitle="Available services and tool endpoints" compact>
+            <IntegrationList tools={tools} />
+          </ScreenCard>
+        </aside>
       </div>
     </div>
   );
@@ -1036,27 +1080,6 @@ function summarizePrompt(prompt: string) {
   const trimmed = prompt.trim();
   if (trimmed.length <= 36) return trimmed;
   return `${trimmed.slice(0, 33).trimEnd()}…`;
-}
-
-function TabButton({
-  current,
-  id,
-  label,
-  icon: Icon,
-  onClick
-}: {
-  current: TabId;
-  id: TabId;
-  label: string;
-  icon: typeof MessageSquare;
-  onClick: (tab: TabId) => void;
-}) {
-  return (
-    <button className={`tab-button ${current === id ? "active" : ""}`} onClick={() => onClick(id)}>
-      <Icon size={18} />
-      <span>{label}</span>
-    </button>
-  );
 }
 
 function Badge({ tone, label }: { tone: "green" | "amber" | "slate" | "teal"; label: string }) {
@@ -1079,6 +1102,219 @@ function EndpointRow({
         {label}
       </div>
       <div className="endpoint-value">{value}</div>
+    </div>
+  );
+}
+
+function ScreenCard({
+  number,
+  title,
+  subtitle,
+  children,
+  compact = false,
+  large = false
+}: {
+  number: string;
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+  compact?: boolean;
+  large?: boolean;
+}) {
+  return (
+    <section className={`screen-card ${compact ? "compact" : ""} ${large ? "large" : ""}`}>
+      <div className="screen-card-head">
+        <div className="screen-card-number">{number}</div>
+        <div>
+          <div className="screen-card-title">{title}</div>
+          <div className="screen-card-subtitle">{subtitle}</div>
+        </div>
+      </div>
+      <div className="screen-card-body">{children}</div>
+    </section>
+  );
+}
+
+function NotesPanel() {
+  return (
+    <ScreenCard number="Notes" title="Notes" subtitle="Reference notes for the flow" compact>
+      <ul className="notes-list">
+        <li>All chats return to Chat (Home) when starting a new conversation.</li>
+        <li>History items open an existing conversation.</li>
+        <li>Settings opens sub pages and integrations.</li>
+        <li>Integrations show authentication status for external services.</li>
+        <li>All screens stay responsive across desktop and mobile.</li>
+      </ul>
+    </ScreenCard>
+  );
+}
+
+function ScreenIndex({
+  current,
+  onSelect,
+  routingLabel,
+  toolCount,
+  agentCount
+}: {
+  current: TabId;
+  onSelect: (tab: TabId) => void;
+  routingLabel: string;
+  toolCount: number;
+  agentCount: number;
+}) {
+  return (
+    <section className="screen-index">
+      <div className="screen-index-head">
+        <div>
+          <div className="eyebrow">Screen index</div>
+          <h3>Navigation map</h3>
+        </div>
+        <Badge tone="slate" label={`${toolCount} tools`} />
+      </div>
+
+      <div className="screen-index-grid">
+        <button className={`screen-index-item ${current === "chat" ? "active" : ""}`} onClick={() => onSelect("chat")}>
+          <span className="screen-index-dot">2</span>
+          <div>
+            <strong>Chat</strong>
+            <span>Home screen</span>
+          </div>
+        </button>
+        <button className={`screen-index-item ${current === "agents" ? "active" : ""}`} onClick={() => onSelect("agents")}>
+          <span className="screen-index-dot">3</span>
+          <div>
+            <strong>Agents</strong>
+            <span>{agentCount} saved</span>
+          </div>
+        </button>
+        <button className={`screen-index-item ${current === "settings" ? "active" : ""}`} onClick={() => onSelect("settings")}>
+          <span className="screen-index-dot">8</span>
+          <div>
+            <strong>Settings</strong>
+            <span>{routingLabel}</span>
+          </div>
+        </button>
+      </div>
+
+      <div className="status-legend">
+        <LegendDot tone="green" label="Connected" />
+        <LegendDot tone="amber" label="Needs attention" />
+        <LegendDot tone="slate" label="Not connected" />
+      </div>
+    </section>
+  );
+}
+
+function LegendDot({ tone, label }: { tone: "green" | "amber" | "slate"; label: string }) {
+  return (
+    <span className={`legend-dot ${tone}`}>
+      <span />
+      {label}
+    </span>
+  );
+}
+
+function MiniActionCard({
+  icon: Icon,
+  headline,
+  body,
+  actionLabel,
+  onAction
+}: {
+  icon: typeof MessageSquare;
+  headline: string;
+  body: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <div className="mini-action-card">
+      <div className="mini-action-icon">
+        <Icon size={18} />
+      </div>
+      <div className="mini-action-copy">
+        <strong>{headline}</strong>
+        <p>{body}</p>
+      </div>
+      <button className="ghost-button compact" onClick={onAction}>
+        {actionLabel}
+      </button>
+    </div>
+  );
+}
+
+function TranscriptPreview({ prompt, response }: { prompt: string; response: string }) {
+  return (
+    <div className="transcript-preview">
+      <div className="transcript-prompt">{prompt}</div>
+      <div className="transcript-response">
+        <div className="transcript-avatar">H</div>
+        <p>{response}</p>
+      </div>
+    </div>
+  );
+}
+
+function StatusPreview({
+  health,
+  healthMessage,
+  toolCount
+}: {
+  health: "idle" | "checking" | "healthy" | "offline" | "error";
+  healthMessage: string;
+  toolCount: number;
+}) {
+  return (
+    <div className="status-preview">
+      <div className={`status-preview-pill ${health}`}>
+        <span />
+        {health === "healthy" ? "Connected" : health === "checking" ? "Checking" : "Offline"}
+      </div>
+      <div className="status-preview-line">
+        <strong>{toolCount} tools available</strong>
+        <span>{healthMessage}</span>
+      </div>
+      <EndpointRow label="/api/agent/stream" value="Streaming chat" icon={MessageSquare} />
+      <EndpointRow label="/api/agent/tools" value={`${toolCount} tools`} icon={Wrench} />
+    </div>
+  );
+}
+
+function SettingsSnapshot({
+  settings,
+  username
+}: {
+  settings: AppSettings;
+  username: string;
+}) {
+  return (
+    <div className="settings-snapshot">
+      <SummaryRow label="Signed in as" value={username} />
+      <SummaryRow label="Backend" value={settings.baseUrl} />
+      <SummaryRow label="Routing" value={settings.decision || settings.model || "default model"} />
+      <SummaryRow label="Complex model" value={settings.complex || "n/a"} />
+      <SummaryRow label="Simple model" value={settings.simple || "n/a"} />
+    </div>
+  );
+}
+
+function IntegrationList({ tools }: { tools: ToolSummary[] }) {
+  const preview = tools.slice(0, 4);
+  return (
+    <div className="integration-list">
+      {preview.length ? (
+        preview.map((tool) => (
+          <div key={`${tool.server}-${tool.name}`} className="integration-row">
+            <div>
+              <strong>{tool.name}</strong>
+              <span>{tool.server}</span>
+            </div>
+            <Badge tone="green" label={tool.transport} />
+          </div>
+        ))
+      ) : (
+        <div className="empty-state compact">No tools loaded yet. Sync the backend to refresh.</div>
+      )}
     </div>
   );
 }
