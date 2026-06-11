@@ -30,4 +30,9 @@ public class GoogleWorkspaceController {
     public GoogleReconnectResponse reconnect(@RequestBody(required = false) GoogleReconnectRequest request) throws Exception {
         return google.beginReconnect(request == null ? null : request.returnTo());
     }
+
+    @PostMapping("/disconnect")
+    public GoogleWorkspaceStatus disconnect() throws Exception {
+        return google.disconnect();
+    }
 }

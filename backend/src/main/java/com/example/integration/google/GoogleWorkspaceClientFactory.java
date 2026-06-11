@@ -160,6 +160,19 @@ public class GoogleWorkspaceClientFactory {
     }
 
     /**
+     * Disconnects an OAuth-backed Google Workspace session by clearing the cached consent tokens.
+     * Service-account setups remain configured because there is no user session to revoke here.
+     */
+    public synchronized GoogleWorkspaceStatus disconnect() throws IOException {
+        if (hasOauthClientSecrets()) {
+            clearOauthTokenCache();
+            requestInitializer = null;
+            clearCachedClients();
+        }
+        return status();
+    }
+
+    /**
      * Starts an OAuth reconnect and returns the URL the browser should open.
      */
     public synchronized GoogleReconnectResponse beginReconnect(String returnTo) throws IOException, GeneralSecurityException {
