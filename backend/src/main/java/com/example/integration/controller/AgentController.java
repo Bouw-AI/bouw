@@ -78,20 +78,12 @@ public class AgentController {
         return agentService.availableTools();
     }
 
-    public ResponseEntity<?> chat(@RequestBody AgentRequest request) {
-        return chat(request, null);
-    }
-
     @PostMapping("/chat")
     public ResponseEntity<?> chat(@RequestBody AgentRequest request, @AuthenticationPrincipal Jwt jwt) {
         String owner = owner(jwt);
         AgentRequest scoped = scopedRequest(request, owner);
         AgentResponse response = agentService.chat(scoped, memoryOwner(owner, scoped.agentId()));
         return ResponseEntity.ok(response);
-    }
-
-    public SseEmitter chatStream(@RequestBody AgentRequest request) {
-        return chatStream(request, null);
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

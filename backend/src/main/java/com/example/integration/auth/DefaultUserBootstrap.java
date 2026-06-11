@@ -35,7 +35,8 @@ public class DefaultUserBootstrap implements ApplicationRunner {
 
     private String resolvePassword() {
         if (password == null || password.isBlank()) {
-            return new String(new char[]{'p', 'a', 's', 's', 'w', 'o', 'r', 'd'});
+            throw new IllegalStateException(
+                    "auth.bootstrap.password must be set; refusing to start with a default password");
         }
         return password;
     }

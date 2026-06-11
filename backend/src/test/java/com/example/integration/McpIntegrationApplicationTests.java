@@ -51,7 +51,8 @@ import static org.mockito.Mockito.when;
         "search.provider=none",
         "spring.datasource.url=jdbc:h2:mem:hugin;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa",
-        "spring.datasource.password="
+        "spring.datasource.password=",
+        "auth.bootstrap.password=password"
 })
 class McpIntegrationApplicationTests {
 

@@ -66,7 +66,7 @@ class AgentControllerTest {
         var agentResponse = new AgentResponse("Hi there!", List.of());
         when(agentService.chat(any(AgentRequest.class), eq("global"))).thenReturn(agentResponse);
 
-        ResponseEntity<?> result = controller.chat(request);
+        ResponseEntity<?> result = controller.chat(request, null);
 
         assertThat(result.getStatusCode().value()).isEqualTo(200);
         assertThat(result.getBody()).isEqualTo(agentResponse);
@@ -78,7 +78,7 @@ class AgentControllerTest {
         var agentResponse = new AgentResponse("It is noon.", List.of());
         when(agentService.chat(any(AgentRequest.class), eq("global"))).thenReturn(agentResponse);
 
-        controller.chat(request);
+        controller.chat(request, null);
 
         verify(agentService).chat(any(AgentRequest.class), eq("global"));
     }
@@ -103,7 +103,7 @@ class AgentControllerTest {
         ));
         when(agentService.chat(any(AgentRequest.class), eq("global"))).thenReturn(agentResponse);
 
-        ResponseEntity<?> result = controller.chat(request);
+        ResponseEntity<?> result = controller.chat(request, null);
 
         assertThat(result.getStatusCode().value()).isEqualTo(200);
         assertThat(result.getBody()).isEqualTo(agentResponse);
@@ -117,7 +117,7 @@ class AgentControllerTest {
     void chatStreamReturnsSseEmitter() {
         var request = new AgentRequest("Hello", "llama3.2");
 
-        SseEmitter emitter = controller.chatStream(request);
+        SseEmitter emitter = controller.chatStream(request, null);
 
         assertThat(emitter).isNotNull();
     }
@@ -132,7 +132,7 @@ class AgentControllerTest {
             return null;
         }).when(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
 
-        controller.chatStream(request);
+        controller.chatStream(request, null);
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         verify(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
@@ -152,7 +152,7 @@ class AgentControllerTest {
             return null;
         }).when(agentService).chatStream(any(AgentRequest.class), listenerCaptor.capture(), anyString());
 
-        SseEmitter emitter = controller.chatStream(request);
+        SseEmitter emitter = controller.chatStream(request, null);
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         // If we get here without exception, the listener was called successfully
@@ -171,7 +171,7 @@ class AgentControllerTest {
             return null;
         }).when(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
 
-        SseEmitter emitter = controller.chatStream(request);
+        SseEmitter emitter = controller.chatStream(request, null);
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(emitter).isNotNull();
@@ -189,7 +189,7 @@ class AgentControllerTest {
             return null;
         }).when(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
 
-        SseEmitter emitter = controller.chatStream(request);
+        SseEmitter emitter = controller.chatStream(request, null);
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(emitter).isNotNull();
@@ -206,7 +206,7 @@ class AgentControllerTest {
             return null;
         }).when(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
 
-        SseEmitter emitter = controller.chatStream(request);
+        SseEmitter emitter = controller.chatStream(request, null);
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(emitter).isNotNull();
@@ -222,7 +222,7 @@ class AgentControllerTest {
             throw new RuntimeException("LLM connection failed");
         }).when(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
 
-        SseEmitter emitter = controller.chatStream(request);
+        SseEmitter emitter = controller.chatStream(request, null);
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(emitter).isNotNull();
@@ -239,7 +239,7 @@ class AgentControllerTest {
             throw new NullPointerException();
         }).when(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
 
-        SseEmitter emitter = controller.chatStream(request);
+        SseEmitter emitter = controller.chatStream(request, null);
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         // Should not throw; error event uses class simple name as fallback
@@ -290,7 +290,7 @@ class AgentControllerTest {
         doAnswer(invocation -> { latch.countDown(); return null; })
                 .when(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
 
-        controller.chatStream(request);
+        controller.chatStream(request, null);
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         verify(developerModeService).isEnabled();
@@ -305,7 +305,7 @@ class AgentControllerTest {
         doAnswer(invocation -> { latch.countDown(); return null; })
                 .when(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
 
-        controller.chatStream(request);
+        controller.chatStream(request, null);
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         verify(developerModeService).isEnabled();
@@ -326,7 +326,7 @@ class AgentControllerTest {
             return null;
         }).when(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
 
-        SseEmitter emitter = controller.chatStream(request);
+        SseEmitter emitter = controller.chatStream(request, null);
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(emitter).isNotNull();
