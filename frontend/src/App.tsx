@@ -151,13 +151,17 @@ export default function App() {
     setDraftByThread((current) => ({ ...current, [threadId]: value }));
   }
 
-  function openClearHistory() {
-    navigate({ screen: "settings" }, "clear-history");
+  function openClearHistory(fromRoute: Route = route) {
+    navigate(fromRoute, "clear-history");
   }
 
   function confirmClearHistory() {
     setState((current) => clearHistory(current));
-    window.location.hash = toHash({ screen: "history" });
+    if (route.screen === "history-chat") {
+      window.location.hash = toHash({ screen: "history" });
+      return;
+    }
+    window.location.hash = toHash(route);
   }
 
   async function handleSignIn(username: string, password: string) {
@@ -308,19 +312,21 @@ export default function App() {
       drawerOpen={drawerOpen}
       onOpenDrawer={() => setDrawerOpen(true)}
       onCloseDrawer={() => setDrawerOpen(false)}
+      username={session.username}
+      onSignOut={handleSignOut}
       onNavigate={(hash) => {
         window.location.hash = hash;
       }}
       sidebarContent={sidebar}
     >
-      <div className="session-banner">
+      <div className="session-banner desktop-session-banner">
         <div>Signed in as {session.username}</div>
         <Button variant="ghost" onClick={handleSignOut}>Sign Out</Button>
       </div>
       {errorMessage ? <div className="app-alert">{errorMessage}</div> : null}
       {content}
       {dialog === "clear-history" ? (
-        <ClearHistoryDialog onConfirm={confirmClearHistory} onCancel={() => (window.location.hash = toHash({ screen: "settings" }))} />
+        <ClearHistoryDialog onConfirm={confirmClearHistory} onCancel={() => (window.location.hash = toHash(route))} />
       ) : null}
     </Layout>
   );
