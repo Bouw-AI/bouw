@@ -16,6 +16,7 @@ export function ChatComposer({
   onSubmit: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const canSubmit = !disabled && value.trim().length > 0;
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -33,15 +34,15 @@ export function ChatComposer({
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
+          if (event.key === "Enter" && !event.shiftKey && canSubmit) {
             event.preventDefault();
-            if (!disabled && value.trim()) onSubmit();
+            onSubmit();
           }
         }}
         rows={3}
         disabled={disabled}
       />
-      <Button className="composer-send" onClick={onSubmit} disabled={disabled || !value.trim()}>
+      <Button className="composer-send" onClick={onSubmit} disabled={!canSubmit}>
         <Send size={16} />
         Send
       </Button>
