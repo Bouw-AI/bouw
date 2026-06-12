@@ -76,6 +76,7 @@ public class GoogleWorkspaceClientFactory {
 
     private NetHttpTransport transport;
     private HttpRequestInitializer requestInitializer;
+    private GoogleAuthorizationCodeFlow cachedOauthFlow;
     private Calendar calendar;
     private Docs docs;
     private Gmail gmail;
@@ -360,6 +361,7 @@ public class GoogleWorkspaceClientFactory {
         calendar = null;
         gmail = null;
         transport = null;
+        cachedOauthFlow = null;
     }
 
     private HttpRequestInitializer authorizeViaOAuth() throws IOException, GeneralSecurityException {
@@ -477,7 +479,10 @@ public class GoogleWorkspaceClientFactory {
                 .replace("\n", "\\n");
     }
 
-    private void clearOauthTokenCache() throws IOException {
+    private synchronized void clearOauthTokenCache() throws IOException {
+        // Drop the cached flow: its FileDataStoreFactory keeps token files cached in memory, so a
+        // flow built before the wipe would still report the deleted credential as present.
+        cachedOauthFlow = null;
         Path tokenDir = expandHome(properties.oauthTokenDir());
         if (!Files.exists(tokenDir)) {
             return;
@@ -504,7 +509,16 @@ public class GoogleWorkspaceClientFactory {
         return oauthFlow().loadCredential(OAUTH_USER_ID) != null;
     }
 
-    private GoogleAuthorizationCodeFlow oauthFlow() throws IOException, GeneralSecurityException {
+    /**
+     * Builds (and caches) the OAuth flow. The flow is rebuilt after {@link #clearCachedClients()}
+     * or {@link #clearOauthTokenCache()}, since its file-backed credential store caches token files
+     * in memory and would otherwise serve stale state. Caching avoids re-reading and re-parsing the
+     * client secrets file on every status check or tool call.
+     */
+    private synchronized GoogleAuthorizationCodeFlow oauthFlow() throws IOException, GeneralSecurityException {
+        if (cachedOauthFlow != null) {
+            return cachedOauthFlow;
+        }
         Path secretsPath = expandHome(properties.oauthClientSecretsFile());
         Path tokenDir = expandHome(properties.oauthTokenDir());
         Files.createDirectories(tokenDir);
@@ -512,11 +526,12 @@ public class GoogleWorkspaceClientFactory {
         try (InputStreamReader reader = new InputStreamReader(new FileInputStream(secretsPath.toFile()),
                 StandardCharsets.UTF_8)) {
             GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(jsonFactory, reader);
-            return new GoogleAuthorizationCodeFlow.Builder(
+            cachedOauthFlow = new GoogleAuthorizationCodeFlow.Builder(
                     transport(), jsonFactory, clientSecrets, SCOPES)
                     .setDataStoreFactory(new FileDataStoreFactory(tokenDir.toFile()))
                     .setAccessType("offline")
                     .build();
+            return cachedOauthFlow;
         }
     }
 

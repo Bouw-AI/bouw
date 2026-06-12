@@ -7,9 +7,14 @@ import com.google.api.services.gmail.model.MessagePartHeader;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /** Utility methods for formatting Gmail message payloads and headers for tool output. */
 public final class GmailMessageFormatter {
+
+    private static final Pattern BR_TAG = Pattern.compile("(?i)<br\\s*/?>");
+    private static final Pattern PARAGRAPH_CLOSE = Pattern.compile("(?i)</p>");
+    private static final Pattern HTML_TAG = Pattern.compile("<[^>]+>");
 
     private GmailMessageFormatter() {
     }
@@ -112,10 +117,9 @@ public final class GmailMessageFormatter {
     }
 
     private static String stripHtml(String html) {
-        String text = html
-                .replaceAll("(?i)<br\\s*/?>", "\n")
-                .replaceAll("(?i)</p>", "\n\n")
-                .replaceAll("(?i)<[^>]+>", "");
+        String text = BR_TAG.matcher(html).replaceAll("\n");
+        text = PARAGRAPH_CLOSE.matcher(text).replaceAll("\n\n");
+        text = HTML_TAG.matcher(text).replaceAll("");
         return text
                 .replace("&nbsp;", " ")
                 .replace("&amp;", "&")

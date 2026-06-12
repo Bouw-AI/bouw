@@ -49,6 +49,9 @@ public class AgentService {
     private final Optional<ConversationMemoryService> conversationMemory;
     private final Optional<SystemFactsService> systemFactsService;
     private final Optional<StartupAnnouncementService> startupAnnouncement;
+    /** Built-in tool definitions never change after startup, so they are converted once. */
+    private final List<ToolDefinition> builtinToolDefinitions;
+    private final Set<String> builtinToolNames;
 
     public AgentService(
             OpenAiClient llmClient,
@@ -75,6 +78,14 @@ public class AgentService {
         this.conversationMemory = conversationMemory;
         this.systemFactsService = systemFactsService;
         this.startupAnnouncement = startupAnnouncement;
+        List<ToolDefinition> definitions = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
+        for (LocalTool tool : localTools.tools()) {
+            definitions.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
+            names.add(tool.name());
+        }
+        this.builtinToolDefinitions = List.copyOf(definitions);
+        this.builtinToolNames = Set.copyOf(names);
     }
 
     public record ToolSummary(String name, String description, String server, String transport) {}
@@ -127,7 +138,7 @@ public class AgentService {
 
         log.debug("Agent chat: model={}, route={}, decisionModel={}, tools available={} (local={}), stream={}",
                 model, routing.route(), routing.decisionModel(), initialToolDefinitions.size(),
-                localTools.tools().size() + jitTools.tools(workspace).size(), stream);
+                localTools.tools().size(), stream);
 
         List<ChatMessage> messages = new ArrayList<>();
         systemFactsService.ifPresent(sfs -> {
@@ -256,14 +267,13 @@ public class AgentService {
      * format list. Built-in local tools are advertised first and take precedence on name collisions.
      */
     private List<ToolDefinition> collectTools(Workspace workspace) {
-        List<ToolDefinition> toolDefinitions = new ArrayList<>();
-        Set<String> toolNames = new LinkedHashSet<>();
-        for (LocalTool tool : localTools.tools()) {
-            toolDefinitions.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
-            toolNames.add(tool.name());
+        List<LocalTool> workspaceTools = jitTools.tools(workspace);
+        if (workspaceTools.isEmpty()) {
+            return builtinToolDefinitions;
         }
-        for (LocalTool tool : jitTools.tools(workspace)) {
-            if (!toolNames.add(tool.name())) {
+        List<ToolDefinition> toolDefinitions = new ArrayList<>(builtinToolDefinitions);
+        for (LocalTool tool : workspaceTools) {
+            if (builtinToolNames.contains(tool.name())) {
                 log.warn("JIT tool '{}' in workspace {} is shadowed by a built-in local tool",
                         tool.name(), workspace.root());
                 continue;

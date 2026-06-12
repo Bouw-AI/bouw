@@ -18,7 +18,6 @@ import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -70,7 +69,7 @@ class RedisMemoryStoreTest {
 
     @Test
     void searchReturnsEmptyWhenNoEntries() {
-        when(hashOps.entries(hashKey("global"))).thenReturn(Map.of());
+        when(hashOps.values(hashKey("global"))).thenReturn(List.of());
 
         List<ScoredMemory> results = store.search(new float[]{0.1f}, 5, 0.0);
 
@@ -81,7 +80,7 @@ class RedisMemoryStoreTest {
     void searchRanksAndFiltersByScore() throws Exception {
         var record = new MemoryRecord("id1", "user", new float[]{1.0f, 0.0f}, Instant.now());
         String json = objectMapper.writeValueAsString(record);
-        when(hashOps.entries(hashKey("global"))).thenReturn(Map.of("id1", json));
+        when(hashOps.values(hashKey("global"))).thenReturn(List.of(json));
 
         // Query with same direction = cosine similarity 1.0
         List<ScoredMemory> results = store.search(new float[]{1.0f, 0.0f}, 5, 0.0);
@@ -96,7 +95,7 @@ class RedisMemoryStoreTest {
         // Record embedding perpendicular to query => cosine similarity = 0.0
         var record = new MemoryRecord("id1", "irrelevant", new float[]{0.0f, 1.0f}, Instant.now());
         String json = objectMapper.writeValueAsString(record);
-        when(hashOps.entries(hashKey("global"))).thenReturn(Map.of("id1", json));
+        when(hashOps.values(hashKey("global"))).thenReturn(List.of(json));
 
         // Require minimum score of 0.5 – perpendicular vectors have similarity 0.0
         List<ScoredMemory> results = store.search(new float[]{1.0f, 0.0f}, 5, 0.5);
@@ -112,9 +111,7 @@ class RedisMemoryStoreTest {
         String json1 = objectMapper.writeValueAsString(record1);
         String json2 = objectMapper.writeValueAsString(record2);
         String json3 = objectMapper.writeValueAsString(record3);
-        when(hashOps.entries(hashKey("global"))).thenReturn(Map.of(
-                "id1", json1, "id2", json2, "id3", json3
-        ));
+        when(hashOps.values(hashKey("global"))).thenReturn(List.of(json1, json2, json3));
 
         // TopK=2, so only 2 results should be returned
         List<ScoredMemory> results = store.search(new float[]{1.0f, 0.0f}, 2, 0.0);
@@ -126,10 +123,7 @@ class RedisMemoryStoreTest {
 
     @Test
     void searchSkipsMalformedJsonEntries() {
-        when(hashOps.entries(hashKey("global"))).thenReturn(Map.of(
-                "bad", "not-valid-json{{{",
-                "also-bad", "null"
-        ));
+        when(hashOps.values(hashKey("global"))).thenReturn(List.of("not-valid-json{{{", "null"));
 
         List<ScoredMemory> results = store.search(new float[]{1.0f}, 5, 0.0);
 
@@ -180,11 +174,10 @@ class RedisMemoryStoreTest {
         var record1 = new MemoryRecord("id1", "best", new float[]{1.0f, 0.0f}, Instant.now());
         var record2 = new MemoryRecord("id2", "medium", new float[]{0.707f, 0.707f}, Instant.now());
         var record3 = new MemoryRecord("id3", "worst", new float[]{0.5f, 0.866f}, Instant.now());
-        when(hashOps.entries(hashKey("global"))).thenReturn(Map.of(
-                "id1", objectMapper.writeValueAsString(record1),
-                "id2", objectMapper.writeValueAsString(record2),
-                "id3", objectMapper.writeValueAsString(record3)
-        ));
+        when(hashOps.values(hashKey("global"))).thenReturn(List.of(
+                objectMapper.writeValueAsString(record1),
+                objectMapper.writeValueAsString(record2),
+                objectMapper.writeValueAsString(record3)));
 
         List<ScoredMemory> results = store.search(new float[]{1.0f, 0.0f}, 5, 0.0);
 
