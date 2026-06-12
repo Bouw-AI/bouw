@@ -1,81 +1,49 @@
-export type Route =
-  | { screen: "new-chat" }
-  | { screen: "history" }
-  | { screen: "history-chat"; threadId: string }
-  | { screen: "settings" }
-  | { screen: "integrations" }
-  | { screen: "google-workspace" }
-  | { screen: "appearance" }
-  | { screen: "data-privacy" };
-
-export type DrawerScreen =
-  | "new-chat"
-  | "history"
-  | "settings"
-  | "integrations"
-  | "appearance"
-  | "data-privacy";
-
-export type ChatRole = "user" | "assistant";
-
-export type ChatMessage = {
-  id: string;
-  role: ChatRole;
-  content: string;
-  createdAt: string;
+export type AuthSession = {
+  token: string;
+  username: string;
+  roles: string[];
+  expiresAt: string;
 };
+
+export type StreamToolEvent = {
+  id: string;
+  name: string;
+  args: string;
+  result: string;
+  startedAt: string;
+  finishedAt?: string;
+};
+
+export type ChatEntry =
+  | {
+      id: string;
+      type: "user";
+      content: string;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "assistant";
+      content: string;
+      reasoning: string;
+      createdAt: string;
+      completedAt?: string;
+    }
+  | {
+      id: string;
+      type: "tool";
+      tool: StreamToolEvent;
+      createdAt: string;
+    };
 
 export type ChatThread = {
   id: string;
   title: string;
   createdAt: string;
   updatedAt: string;
-  messages: ChatMessage[];
-  source: "history" | "draft";
+  entries: ChatEntry[];
 };
 
-export type AppearanceSettings = {
-  theme: "light";
-  textSize: "small" | "medium" | "large";
-  reduceMotion: boolean;
-};
-
-export type ConnectedServiceStatus = "connected" | "attention" | "not-connected";
-
-export type IntegrationItem = {
-  id: string;
-  label: string;
-  subtitle: string;
-  status: ConnectedServiceStatus;
-  detail: string;
-};
-
-export type GoogleWorkspaceState = {
-  accountName: string;
-  authStatus: "connected" | "attention" | "not-connected";
-  lastRefreshedAt: string;
-  authMode: "oauth" | "service-account" | "none";
-  configured: boolean;
-  reconnectable: boolean;
-  message: string;
-  connectedServices: Array<{
-    label: string;
-    status: ConnectedServiceStatus;
-  }>;
-};
-
-export type GuildState = {
+export type AppState = {
   threads: ChatThread[];
-  appearance: AppearanceSettings;
-  integrations: {
-    list: IntegrationItem[];
-    googleWorkspace: GoogleWorkspaceState;
-  };
-};
-
-export type AuthSession = {
-  token: string;
-  username: string;
-  roles: string[];
-  expiresAt: string;
 };

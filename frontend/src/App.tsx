@@ -1,54 +1,46 @@
-import { useEffect, useMemo, useState } from "react";
-import { Button } from "./components/Ui";
-import { Layout } from "./components/Layout";
-import { ChatScreen } from "./screens/ChatScreen";
-import { HistoryScreen } from "./screens/HistoryScreen";
-import { NewChatScreen } from "./screens/NewChatScreen";
-import { SettingsScreen } from "./screens/SettingsScreen";
-import { IntegrationsScreen } from "./screens/IntegrationsScreen";
-import { IntegrationDetailScreen } from "./screens/IntegrationDetailScreen";
-import { AppearanceScreen } from "./screens/AppearanceScreen";
-import { DataPrivacyScreen } from "./screens/DataPrivacyScreen";
-import { ClearHistoryDialog } from "./screens/ClearHistoryDialog";
-import { SignInScreen } from "./screens/SignInScreen";
+import { useEffect, useRef, useState } from "react";
+import { LogOut, Menu, MessageSquarePlus, Wrench } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { RavenMark } from "./components/RavenMark";
+import type { AppState, AuthSession, ChatEntry } from "./lib/types";
 import {
-  appendAssistantReply,
   addThread,
-  clearHistory,
-  createThreadFromPrompt,
-  disconnectGoogleWorkspace,
+  appendAssistantDelta,
+  appendEntries,
+  appendReasoningDelta,
+  appendToolCall,
+  attachToolResult,
+  buildAssistantEntry,
+  buildUserEntry,
+  completeAssistantEntry,
+  createEmptyState,
+  createThread,
   fetchCurrentUser,
-  fetchGoogleWorkspaceStatus,
-  getThread,
+  formatTimestamp,
+  getThreadTitle,
+  loadAppState,
   loadAuthSession,
-  loadGuildState,
   login,
-  reconnectGoogleWorkspace,
+  saveAppState,
   saveAuthSession,
-  saveGuildState,
-  sendPrompt,
-  setAppearanceTheme,
-  setGoogleWorkspaceState,
-  setReduceMotion,
-  setTextSize
+  streamPrompt
 } from "./services/guildService";
-import type { AuthSession, GuildState, Route } from "./lib/types";
-import { parseHashRoute, toHash } from "./lib/routing";
 
 export default function App() {
-  const [state, setState] = useState<GuildState>(() => loadGuildState());
+  const [state, setState] = useState<AppState>(() => loadAppState());
   const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession());
-  const [routeState, setRouteState] = useState(() => parseHashRoute(window.location.hash));
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(() => loadAppState().threads[0]?.id ?? null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [newChatDraft, setNewChatDraft] = useState("");
-  const [draftByThread, setDraftByThread] = useState<Record<string, string>>({});
-  const [busyThreadId, setBusyThreadId] = useState<string | null>(null);
-  const [authBusy, setAuthBusy] = useState(false);
-  const [initializing, setInitializing] = useState(true);
+  const [draft, setDraft] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [initializing, setInitializing] = useState(true);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    saveGuildState(state);
+    saveAppState(state);
   }, [state]);
 
   useEffect(() => {
@@ -56,16 +48,22 @@ export default function App() {
   }, [session]);
 
   useEffect(() => {
-    const onHashChange = () => setRouteState(parseHashRoute(window.location.hash));
-    window.addEventListener("hashchange", onHashChange);
-    if (!window.location.hash) window.location.hash = toHash({ screen: "new-chat" });
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
+    if (!state.threads.length) {
+      setActiveThreadId(null);
+      return;
+    }
+
+    if (!activeThreadId || !state.threads.some((thread) => thread.id === activeThreadId)) {
+      setActiveThreadId(state.threads[0].id);
+    }
+  }, [activeThreadId, state.threads]);
 
   useEffect(() => {
-    document.documentElement.dataset.textSize = state.appearance.textSize;
-    document.documentElement.dataset.reduceMotion = state.appearance.reduceMotion ? "true" : "false";
-  }, [state.appearance]);
+    transcriptRef.current?.scrollTo({
+      top: transcriptRef.current.scrollHeight,
+      behavior: "smooth"
+    });
+  }, [state, sending]);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,15 +75,15 @@ export default function App() {
       }
 
       try {
-        const currentUser = await fetchCurrentUser(session.token);
-        const googleWorkspace = await fetchGoogleWorkspaceStatus(session.token);
-        if (cancelled) return;
-        setSession(currentUser);
-        setState((current) => setGoogleWorkspaceState(current, googleWorkspace));
+        const current = await fetchCurrentUser(session.token);
+        if (!cancelled) {
+          setSession(current);
+        }
       } catch (error) {
-        if (cancelled) return;
-        setSession(null);
-        setErrorMessage(error instanceof Error ? error.message : "Could not authenticate.");
+        if (!cancelled) {
+          setSession(null);
+          setErrorMessage(error instanceof Error ? error.message : "Could not authenticate.");
+        }
       } finally {
         if (!cancelled) setInitializing(false);
       }
@@ -95,47 +93,78 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [session?.token]);
 
-  const route = routeState.route;
-  const dialog = routeState.dialog;
-  const historyThreads = useMemo(
-    () => state.threads.filter((thread) => thread.messages.length > 0),
-    [state.threads]
-  );
+  const activeThread = state.threads.find((thread) => thread.id === activeThreadId) ?? null;
 
-  const activeThread = useMemo(() => {
-    if (route.screen === "history-chat") return getThread(state, route.threadId);
-    return null;
-  }, [route, state]);
-
-  useEffect(() => {
-    if (route.screen === "history-chat" && !activeThread && state.threads.length) {
-      window.location.hash = toHash({ screen: "history" });
-    }
-  }, [activeThread, route.screen, state.threads.length]);
-
-  function navigate(next: Route, nextDialog: string | null = null) {
-    window.location.hash = toHash(next, nextDialog);
-  }
-
-  async function handleNewChatSend(prompt: string) {
-    if (!prompt.trim() || !session?.token) return;
-    const thread = createThreadFromPrompt(prompt);
-    setState((current) => addThread(current, thread));
-    setNewChatDraft("");
-    navigate({ screen: "history-chat", threadId: thread.id });
-    await sendPromptForThread(thread.id, prompt);
-  }
-
-  async function sendPromptForThread(threadId: string, prompt: string) {
-    if (!prompt.trim() || !session?.token) return;
-    setBusyThreadId(threadId);
+  async function handleSignIn(username: string, password: string) {
+    setAuthBusy(true);
     setErrorMessage(null);
     try {
-      const response = await sendPrompt(session.token, threadId, prompt);
-      setState((current) => appendAssistantReply(current, threadId, prompt, response));
-      setDraftByThread((current) => ({ ...current, [threadId]: "" }));
+      const nextSession = await login(username, password);
+      setSession(nextSession);
+      setInitializing(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Sign in failed.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  function handleNewChat() {
+    const nextThread = createThread();
+    setState((current) => addThread(current, nextThread));
+    setActiveThreadId(nextThread.id);
+    setDrawerOpen(false);
+    setDraft("");
+    setErrorMessage(null);
+  }
+
+  async function handleSend() {
+    if (!session?.token || sending || !draft.trim()) return;
+
+    const prompt = draft.trim();
+    const thread = activeThread ?? createThread();
+    const assistant = buildAssistantEntry();
+    const userEntry = buildUserEntry(prompt);
+    const title = thread.entries.length ? thread.title : getThreadTitle(prompt);
+
+    setErrorMessage(null);
+    setSending(true);
+    setDrawerOpen(false);
+    setDraft("");
+
+    setState((current) => {
+      const hasThread = current.threads.some((item) => item.id === thread.id);
+      const next = hasThread ? current : addThread(current, thread);
+      return appendEntries(next, thread.id, [userEntry, assistant], title);
+    });
+    setActiveThreadId(thread.id);
+
+    try {
+      await streamPrompt(session.token, thread.id, prompt, {
+        onEvent: (event) => {
+          setState((current) => {
+            switch (event.type) {
+              case "token":
+                return appendAssistantDelta(current, thread.id, assistant.id, event.text);
+              case "reasoning":
+                return appendReasoningDelta(current, thread.id, assistant.id, event.text);
+              case "tool":
+                return appendToolCall(current, thread.id, event.name, event.args);
+              case "tool_result":
+                return attachToolResult(current, thread.id, event.name, event.result);
+              case "done":
+                return completeAssistantEntry(current, thread.id, assistant.id);
+              case "error":
+                setErrorMessage(event.message);
+                return current;
+              case "config":
+                return current;
+            }
+          });
+        }
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Request failed.";
       setErrorMessage(message);
@@ -143,180 +172,21 @@ export default function App() {
         setSession(null);
       }
     } finally {
-      setBusyThreadId(null);
-    }
-  }
-
-  function updateCurrentThreadDraft(threadId: string, value: string) {
-    setDraftByThread((current) => ({ ...current, [threadId]: value }));
-  }
-
-  function openClearHistory(fromRoute: Route = route) {
-    navigate(fromRoute, "clear-history");
-  }
-
-  function clearHistoryCancelRoute(currentRoute: Route): Route {
-    switch (currentRoute.screen) {
-      case "history-chat":
-      case "data-privacy":
-      case "settings":
-      case "history":
-      case "new-chat":
-        return currentRoute;
-      case "integrations":
-      case "google-workspace":
-      case "appearance":
-        return currentRoute;
-    }
-  }
-
-  function clearHistoryConfirmRoute(currentRoute: Route): Route {
-    return currentRoute.screen === "history-chat"
-      ? { screen: "history" }
-      : clearHistoryCancelRoute(currentRoute);
-  }
-
-  function confirmClearHistory() {
-    setState((current) => clearHistory(current));
-    window.location.hash = toHash(clearHistoryConfirmRoute(route));
-  }
-
-  async function handleSignIn(username: string, password: string) {
-    setAuthBusy(true);
-    setErrorMessage(null);
-    try {
-      const nextSession = await login(username, password);
-      const googleWorkspace = await fetchGoogleWorkspaceStatus(nextSession.token);
-      setSession(nextSession);
-      setState((current) => setGoogleWorkspaceState(current, googleWorkspace));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Sign-in failed.");
-    } finally {
-      setAuthBusy(false);
-      setInitializing(false);
+      setSending(false);
     }
   }
 
   function handleSignOut() {
     setSession(null);
+    setState(createEmptyState());
+    setActiveThreadId(null);
+    setDrawerOpen(false);
+    setDraft("");
     setErrorMessage(null);
   }
 
-  useEffect(() => {
-    if (route.screen !== "settings" || dialog !== "clear-history") return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") window.location.hash = toHash({ screen: "settings" });
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dialog, route.screen]);
-
-  const sidebar = (
-    <div className="sidebar-stack">
-      <nav className="sidebar-nav">
-        <SidebarLink label="New Chat" active={route.screen === "new-chat"} onClick={() => navigate({ screen: "new-chat" })} />
-        <SidebarLink label="History" active={route.screen === "history" || route.screen === "history-chat"} onClick={() => navigate({ screen: "history" })} />
-      </nav>
-
-      <nav className="sidebar-nav">
-        <SidebarSection title="Settings" />
-        <SidebarLink label="Overview" active={route.screen === "settings"} onClick={() => navigate({ screen: "settings" })} />
-        <SidebarLink label="Integrations" active={route.screen === "integrations" || route.screen === "google-workspace"} onClick={() => navigate({ screen: "integrations" })} />
-        <SidebarLink label="Appearance" active={route.screen === "appearance"} onClick={() => navigate({ screen: "appearance" })} />
-        <SidebarLink label="Data & Privacy" active={route.screen === "data-privacy"} onClick={() => navigate({ screen: "data-privacy" })} />
-      </nav>
-    </div>
-  );
-
-  let content = null;
-
-  if (route.screen === "new-chat") {
-    content = (
-      <NewChatScreen
-        draft={newChatDraft}
-        disabled={busyThreadId !== null}
-        onDraftChange={setNewChatDraft}
-        onSend={() => handleNewChatSend(newChatDraft)}
-      />
-    );
-  } else if (route.screen === "history") {
-    content = <HistoryScreen threads={historyThreads} onOpenThread={(threadId) => navigate({ screen: "history-chat", threadId })} onNavigate={navigate} />;
-  } else if (route.screen === "history-chat") {
-    content = activeThread ? (
-      <ChatScreen
-        title={activeThread.title}
-        subtitle="Saved conversation"
-        thread={activeThread}
-        draft={draftByThread[activeThread.id] || ""}
-        disabled={busyThreadId === activeThread.id}
-        onDraftChange={(value) => updateCurrentThreadDraft(activeThread.id, value)}
-        onSend={() => void sendPromptForThread(activeThread.id, draftByThread[activeThread.id] || "")}
-        onNavigate={navigate}
-      />
-    ) : null;
-  } else if (route.screen === "settings") {
-    content = <SettingsScreen onNavigate={navigate} onOpenClearHistory={openClearHistory} />;
-  } else if (route.screen === "integrations") {
-    content = <IntegrationsScreen integrations={state.integrations.list} onNavigate={navigate} />;
-  } else if (route.screen === "google-workspace") {
-    content = (
-      <IntegrationDetailScreen
-        googleWorkspace={state.integrations.googleWorkspace}
-        onNavigate={navigate}
-        onRefresh={async () => {
-          if (!session?.token) return;
-          setErrorMessage(null);
-          try {
-            const googleWorkspace = await fetchGoogleWorkspaceStatus(session.token);
-            setState((current) => setGoogleWorkspaceState(current, googleWorkspace));
-          } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : "Refresh failed.");
-          }
-        }}
-        onReconnect={async () => {
-          if (!session?.token) return;
-          setErrorMessage(null);
-          try {
-            const googleWorkspace = await reconnectGoogleWorkspace(session.token);
-            setState((current) => setGoogleWorkspaceState(current, googleWorkspace));
-          } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : "Reconnect failed.");
-          }
-        }}
-        onDisconnect={async () => {
-          if (!session?.token) return;
-          setErrorMessage(null);
-          try {
-            const googleWorkspace = await disconnectGoogleWorkspace(session.token);
-            setState((current) => setGoogleWorkspaceState(current, googleWorkspace));
-          } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : "Disconnect failed.");
-          }
-        }}
-      />
-    );
-  } else if (route.screen === "appearance") {
-    content = (
-        <AppearanceScreen
-          appearance={state.appearance}
-          onThemeChange={(theme) => setState((current) => setAppearanceTheme(current, theme))}
-          onTextSizeChange={(size) => setState((current) => setTextSize(current, size))}
-          onReduceMotionChange={(value) => setState((current) => setReduceMotion(current, value))}
-          onNavigate={navigate}
-        />
-      );
-  } else if (route.screen === "data-privacy") {
-    content = (
-      <DataPrivacyScreen
-        state={state}
-        onClearHistory={openClearHistory}
-        onNavigate={navigate}
-      />
-    );
-  }
-
   if (initializing) {
-    return <SignInScreen busy message="Checking your Hugin session..." onSubmit={() => Promise.resolve()} />;
+    return <div className="app-loading">Loading Hugin...</div>;
   }
 
   if (!session) {
@@ -324,47 +194,227 @@ export default function App() {
   }
 
   return (
-    <Layout
-      route={route}
-      drawerOpen={drawerOpen}
-      onOpenDrawer={() => setDrawerOpen(true)}
-      onCloseDrawer={() => setDrawerOpen(false)}
-      username={session.username}
-      onSignOut={handleSignOut}
-      onNavigate={(hash) => {
-        window.location.hash = hash;
-      }}
-      sidebarContent={sidebar}
-    >
-      <div className="session-banner desktop-session-banner">
-        <div>Signed in as {session.username}</div>
-        <Button variant="ghost" onClick={handleSignOut}>Sign Out</Button>
-      </div>
-      {errorMessage ? <div className="app-alert">{errorMessage}</div> : null}
-      {content}
-      {dialog === "clear-history" ? (
-        <ClearHistoryDialog onConfirm={confirmClearHistory} onCancel={() => (window.location.hash = toHash(clearHistoryCancelRoute(route)))} />
-      ) : null}
-    </Layout>
+    <main className="app-shell">
+      <button className={`app-backdrop ${drawerOpen ? "visible" : ""}`} onClick={() => setDrawerOpen(false)} aria-label="Close chat history" />
+
+      <aside className={`history-drawer ${drawerOpen ? "open" : ""}`}>
+        <div className="history-header">
+          <div>
+            <div className="history-label">History</div>
+            <h2>Chats</h2>
+          </div>
+          <button className="icon-button" onClick={handleNewChat} aria-label="Start a new chat">
+            <MessageSquarePlus size={18} />
+          </button>
+        </div>
+
+        <div className="history-list">
+          {state.threads.length ? (
+            state.threads.map((thread) => (
+              <button
+                key={thread.id}
+                className={`history-item ${thread.id === activeThreadId ? "active" : ""}`}
+                onClick={() => {
+                  setActiveThreadId(thread.id);
+                  setDrawerOpen(false);
+                }}
+              >
+                <span className="history-item-title">{thread.title}</span>
+                <span className="history-item-time">{formatTimestamp(thread.updatedAt)}</span>
+              </button>
+            ))
+          ) : (
+            <div className="history-empty">No chat history yet.</div>
+          )}
+        </div>
+      </aside>
+
+      <section className="chat-shell">
+        <header className="topbar">
+          <div className="topbar-left">
+            <button className="icon-button" onClick={() => setDrawerOpen((open) => !open)} aria-label="Toggle chat history">
+              <Menu size={18} />
+            </button>
+            <div className="brand-lockup">
+              <div className="brand-mark">
+                <RavenMark className="brand-mark-icon" />
+              </div>
+              <div>
+                <div className="brand-kicker">Hugin</div>
+                <div className="brand-title">Agent chat</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="topbar-right">
+            <span className="session-chip">{session.username}</span>
+            <button className="icon-button" onClick={handleSignOut} aria-label="Sign out">
+              <LogOut size={18} />
+            </button>
+          </div>
+        </header>
+
+        <div className="chat-panel">
+          {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
+
+          <div className="chat-transcript" ref={transcriptRef}>
+            {activeThread ? (
+              activeThread.entries.length ? (
+                activeThread.entries.map((entry) => <ChatEntryCard key={entry.id} entry={entry} />)
+              ) : (
+                <EmptyChatState />
+              )
+            ) : (
+              <EmptyChatState />
+            )}
+          </div>
+
+          <form
+            className="chat-composer"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleSend();
+            }}
+          >
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="Send a prompt to the agent..."
+              rows={1}
+              disabled={sending}
+            />
+            <button type="submit" disabled={sending || !draft.trim()}>
+              {sending ? "Streaming..." : "Send"}
+            </button>
+          </form>
+        </div>
+      </section>
+    </main>
   );
 }
 
-function SidebarLink({
-  label,
-  active,
-  onClick
+function SignInScreen({
+  busy,
+  message,
+  onSubmit
 }: {
-  label: string;
-  active?: boolean;
-  onClick: () => void;
+  busy: boolean;
+  message: string | null;
+  onSubmit: (username: string, password: string) => Promise<void>;
 }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+
   return (
-    <Button variant={active ? "ghost" : "ghost"} className={`sidebar-link ${active ? "active" : ""}`} onClick={onClick}>
-      {label}
-    </Button>
+    <main className="signin-shell">
+      <section className="signin-card">
+        <div className="signin-brand">
+          <div className="signin-mark">
+            <RavenMark className="brand-mark-icon" />
+          </div>
+          <div>
+            <div className="brand-kicker">Hugin</div>
+            <h1>Sign in</h1>
+            <p>The frontend has been reduced to the essentials: authenticate, open a chat, stream the run.</p>
+          </div>
+        </div>
+
+        <form
+          className="signin-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onSubmit(username, password);
+          }}
+        >
+          <label>
+            <span>Username</span>
+            <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
+          </label>
+          <label>
+            <span>Password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+          {message ? <div className="error-banner compact">{message}</div> : null}
+          <button type="submit" disabled={busy || !username.trim() || !password}>
+            {busy ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
+      </section>
+    </main>
   );
 }
 
-function SidebarSection({ title }: { title: string }) {
-  return <div className="sidebar-section">{title}</div>;
+function EmptyChatState() {
+  return (
+    <div className="empty-chat">
+      <div className="empty-chat-mark">
+        <RavenMark className="brand-mark-icon" />
+      </div>
+      <h2>Start a chat</h2>
+      <p>Send a prompt to open a thread. Agent replies stream live, and tool calls appear inline as expandable records.</p>
+    </div>
+  );
+}
+
+function ChatEntryCard({ entry }: { entry: ChatEntry }) {
+  if (entry.type === "tool") {
+    return (
+      <article className="entry-card tool">
+        <div className="entry-head">
+          <div className="entry-icon">
+            <Wrench size={16} />
+          </div>
+          <div>
+            <strong>{entry.tool.name}</strong>
+            <div className="entry-time">{formatTimestamp(entry.createdAt)}</div>
+          </div>
+        </div>
+        <details className="tool-disclosure">
+          <summary>Open full tool call</summary>
+          <pre>{entry.tool.args || "(no arguments)"}</pre>
+          {entry.tool.result ? (
+            <>
+              <div className="tool-result-label">Result</div>
+              <pre>{entry.tool.result}</pre>
+            </>
+          ) : (
+            <div className="tool-result-label">Running...</div>
+          )}
+        </details>
+      </article>
+    );
+  }
+
+  return (
+    <article className={`entry-card ${entry.type}`}>
+      <div className="entry-head">
+        <div className="entry-icon">{entry.type === "assistant" ? <RavenMark className="entry-raven" /> : "You"}</div>
+        <div>
+          <strong>{entry.type === "assistant" ? "Hugin" : "You"}</strong>
+          <div className="entry-time">{formatTimestamp(entry.createdAt)}</div>
+        </div>
+      </div>
+
+      <div className="entry-body">
+        {entry.type === "assistant" ? (
+          <>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.content || " "}</ReactMarkdown>
+            {entry.reasoning ? (
+              <details className="tool-disclosure">
+                <summary>Open reasoning stream</summary>
+                <pre>{entry.reasoning}</pre>
+              </details>
+            ) : null}
+          </>
+        ) : (
+          <p>{entry.content}</p>
+        )}
+      </div>
+    </article>
+  );
 }
