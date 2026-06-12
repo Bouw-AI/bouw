@@ -36,6 +36,9 @@ public class AgentService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
     private static final Pattern ROUTING_PATTERN = Pattern.compile("\\b(simple|complex)\\b");
+    /** How long a routing decision is reused for an identical prompt + context. */
+    private static final Duration ROUTING_CACHE_TTL = Duration.ofSeconds(30);
+    private static final int ROUTING_CACHE_MAX_ENTRIES = 256;
     private final int maxIterations;
 
     private final OpenAiClient llmClient;
@@ -49,6 +52,12 @@ public class AgentService {
     private final Optional<ConversationMemoryService> conversationMemory;
     private final Optional<SystemFactsService> systemFactsService;
     private final Optional<StartupAnnouncementService> startupAnnouncement;
+    /** Built-in tool definitions never change after startup, so they are converted once. */
+    private final List<ToolDefinition> builtinToolDefinitions;
+    private final Set<String> builtinToolNames;
+    private final Map<String, CachedRoute> routingCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record CachedRoute(String route, Instant expiresAt) {}
 
     public AgentService(
             OpenAiClient llmClient,
@@ -75,6 +84,14 @@ public class AgentService {
         this.conversationMemory = conversationMemory;
         this.systemFactsService = systemFactsService;
         this.startupAnnouncement = startupAnnouncement;
+        List<ToolDefinition> definitions = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
+        for (LocalTool tool : localTools.tools()) {
+            definitions.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
+            names.add(tool.name());
+        }
+        this.builtinToolDefinitions = List.copyOf(definitions);
+        this.builtinToolNames = Set.copyOf(names);
     }
 
     public record ToolSummary(String name, String description, String server, String transport) {}
@@ -127,7 +144,7 @@ public class AgentService {
 
         log.debug("Agent chat: model={}, route={}, decisionModel={}, tools available={} (local={}), stream={}",
                 model, routing.route(), routing.decisionModel(), initialToolDefinitions.size(),
-                localTools.tools().size() + jitTools.tools(workspace).size(), stream);
+                localTools.tools().size(), stream);
 
         List<ChatMessage> messages = new ArrayList<>();
         systemFactsService.ifPresent(sfs -> {
@@ -256,14 +273,13 @@ public class AgentService {
      * format list. Built-in local tools are advertised first and take precedence on name collisions.
      */
     private List<ToolDefinition> collectTools(Workspace workspace) {
-        List<ToolDefinition> toolDefinitions = new ArrayList<>();
-        Set<String> toolNames = new LinkedHashSet<>();
-        for (LocalTool tool : localTools.tools()) {
-            toolDefinitions.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
-            toolNames.add(tool.name());
+        List<LocalTool> workspaceTools = jitTools.tools(workspace);
+        if (workspaceTools.isEmpty()) {
+            return builtinToolDefinitions;
         }
-        for (LocalTool tool : jitTools.tools(workspace)) {
-            if (!toolNames.add(tool.name())) {
+        List<ToolDefinition> toolDefinitions = new ArrayList<>(builtinToolDefinitions);
+        for (LocalTool tool : workspaceTools) {
+            if (builtinToolNames.contains(tool.name())) {
                 log.warn("JIT tool '{}' in workspace {} is shadowed by a built-in local tool",
                         tool.name(), workspace.root());
                 continue;
@@ -309,6 +325,15 @@ public class AgentService {
     }
 
     private String classifyRequest(AgentRequest request, String decisionModel) {
+        // Identical prompt + context within the TTL gets the cached route, skipping a whole
+        // decision-model round trip (retries, stream + non-stream pairs, repeated commands).
+        String cacheKey = routingCacheKey(request, decisionModel);
+        CachedRoute cached = routingCache.get(cacheKey);
+        if (cached != null && cached.expiresAt().isAfter(Instant.now())) {
+            log.debug("Routing decision '{}' served from cache", cached.route());
+            return cached.route();
+        }
+
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.system(Prompts.ROUTING_DECISION));
         if (request.recentMessages() != null && !request.recentMessages().isEmpty()) {
@@ -323,13 +348,37 @@ public class AgentService {
             String route = parseRoutingChoice(content);
             if (route != null) {
                 log.debug("Routing decision model selected '{}'", route);
+                cacheRoute(cacheKey, route);
                 return route;
             }
             log.warn("Routing decision model returned an unparseable response: {}", content);
         } catch (Exception e) {
             log.warn("Routing decision model '{}' failed; defaulting to complex: {}", decisionModel, e.getMessage());
         }
+        // The fallback after a failure is deliberately not cached so a transient error doesn't
+        // pin requests to the complex model for the TTL.
         return "complex";
+    }
+
+    private void cacheRoute(String key, String route) {
+        if (routingCache.size() >= ROUTING_CACHE_MAX_ENTRIES) {
+            Instant now = Instant.now();
+            routingCache.values().removeIf(e -> !e.expiresAt().isAfter(now));
+            if (routingCache.size() >= ROUTING_CACHE_MAX_ENTRIES) {
+                routingCache.clear();
+            }
+        }
+        routingCache.put(key, new CachedRoute(route, Instant.now().plus(ROUTING_CACHE_TTL)));
+    }
+
+    private static String routingCacheKey(AgentRequest request, String decisionModel) {
+        StringBuilder key = new StringBuilder(decisionModel).append('\0').append(request.prompt());
+        if (request.recentMessages() != null && !request.recentMessages().isEmpty()) {
+            for (String message : request.recentMessages()) {
+                key.append('\0').append(message);
+            }
+        }
+        return key.toString();
     }
 
     private static String parseRoutingChoice(String content) {

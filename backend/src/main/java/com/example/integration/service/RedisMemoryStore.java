@@ -14,7 +14,6 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Redis-backed {@link MemoryStore}. Records are stored as JSON in a single Redis hash keyed by
@@ -54,12 +53,14 @@ public class RedisMemoryStore implements MemoryStore {
 
     @Override
     public List<ScoredMemory> search(String owner, float[] queryEmbedding, int topK, double minScore) {
-        Map<Object, Object> entries = redis.opsForHash().entries(hashKey(owner));
-        if (entries.isEmpty()) {
+        // HVALS instead of HGETALL: only the record JSON is needed, so skip transferring the field
+        // names (record ids) and building the intermediate map.
+        List<Object> values = redis.opsForHash().values(hashKey(owner));
+        if (values.isEmpty()) {
             return List.of();
         }
-        List<ScoredMemory> scored = new ArrayList<>();
-        for (Object value : entries.values()) {
+        List<ScoredMemory> scored = new ArrayList<>(values.size());
+        for (Object value : values) {
             MemoryRecord record = deserialize((String) value);
             if (record == null) {
                 continue;

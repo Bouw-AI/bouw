@@ -334,6 +334,22 @@ class AgentServiceTest {
     }
 
     @Test
+    void shouldReuseCachedRoutingDecisionForIdenticalPrompt() {
+        when(llmClient.chat(eq("decision-model"), anyList(), anyList()))
+                .thenReturn(responseWithContent("simple"));
+        when(llmClient.chat(eq("simple-model"), anyList(), anyList()))
+                .thenReturn(responseWithContent("Simple answer."));
+
+        var request = new AgentRequest(PROMPT, "decision-model", "complex-model", "simple-model");
+        agentService.chat(request);
+        agentService.chat(request);
+
+        // The second identical request hits the routing cache: one decision call, two answers.
+        verify(llmClient, times(1)).chat(eq("decision-model"), anyList(), anyList());
+        verify(llmClient, times(2)).chat(eq("simple-model"), anyList(), anyList());
+    }
+
+    @Test
     void shouldRouteToBuiltinLocalToolWithoutRemoteToolProvider() {
         var recordingTool = new RecordingLocalTool("local_echo", "echoed: ok");
         var localService = serviceWithTools(recordingTool);

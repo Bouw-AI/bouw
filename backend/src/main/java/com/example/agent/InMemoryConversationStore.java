@@ -12,11 +12,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * In-process {@link ConversationStore}: keeps each session's recent turns in a
- * {@link ConcurrentHashMap}. Idle sessions are evicted once they pass {@code ttl}, swept lazily on
- * access so abandoned conversations do not accumulate forever.
+ * {@link ConcurrentHashMap}. Expired sessions are never returned (each access checks the entry's
+ * own age), and a full sweep of idle sessions runs at most once per minute so abandoned
+ * conversations do not accumulate forever without paying a whole-map scan on every request.
  *
  * <p>This is the default and works without any external dependency. It is per-instance only, so
  * sessions are not shared across multiple server instances.
@@ -27,7 +29,10 @@ public class InMemoryConversationStore implements ConversationStore {
 
     private record Entry(List<ChatMessage> messages, Instant lastAccess) {}
 
+    private static final long SWEEP_INTERVAL_MILLIS = 60_000;
+
     private final Map<String, Entry> sessions = new ConcurrentHashMap<>();
+    private final AtomicLong lastSweepMillis = new AtomicLong(Long.MIN_VALUE);
     private final Duration ttl;
     private final Clock clock;
 
@@ -43,20 +48,24 @@ public class InMemoryConversationStore implements ConversationStore {
 
     @Override
     public List<ChatMessage> load(String sessionId) {
-        purgeExpired();
-        Entry entry = sessions.computeIfPresent(sessionId,
-                (id, e) -> new Entry(e.messages(), clock.instant()));
+        sweepIfDue();
+        Instant cutoff = clock.instant().minus(ttl);
+        // Returning null from computeIfPresent removes the mapping, so an expired session is
+        // evicted (and treated as absent) even between full sweeps.
+        Entry entry = sessions.computeIfPresent(sessionId, (id, e) ->
+                e.lastAccess().isBefore(cutoff) ? null : new Entry(e.messages(), clock.instant()));
         return entry == null ? List.of() : entry.messages();
     }
 
     @Override
     public void append(String sessionId, List<ChatMessage> newMessages, int maxMessages) {
-        purgeExpired();
+        sweepIfDue();
+        Instant cutoff = clock.instant().minus(ttl);
         // compute holds the per-bin lock for the duration of the remapping, so the append-and-trim
         // is atomic: two threads recording into the same session cannot lose each other's turns.
         sessions.compute(sessionId, (id, existing) -> {
-            List<ChatMessage> merged =
-                    new ArrayList<>(existing == null ? List.of() : existing.messages());
+            boolean expired = existing == null || existing.lastAccess().isBefore(cutoff);
+            List<ChatMessage> merged = new ArrayList<>(expired ? List.of() : existing.messages());
             merged.addAll(newMessages);
             if (merged.size() > maxMessages) {
                 merged = merged.subList(merged.size() - maxMessages, merged.size());
@@ -65,8 +74,16 @@ public class InMemoryConversationStore implements ConversationStore {
         });
     }
 
-    private void purgeExpired() {
-        Instant cutoff = clock.instant().minus(ttl);
-        sessions.values().removeIf(e -> e.lastAccess().isBefore(cutoff));
+    /** Sweeps idle sessions at most once per {@link #SWEEP_INTERVAL_MILLIS}. */
+    private void sweepIfDue() {
+        long now = clock.millis();
+        long last = lastSweepMillis.get();
+        if (now - last < SWEEP_INTERVAL_MILLIS) {
+            return;
+        }
+        if (lastSweepMillis.compareAndSet(last, now)) {
+            Instant cutoff = clock.instant().minus(ttl);
+            sessions.values().removeIf(e -> e.lastAccess().isBefore(cutoff));
+        }
     }
 }

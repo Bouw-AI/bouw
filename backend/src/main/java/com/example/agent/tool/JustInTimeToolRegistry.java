@@ -12,6 +12,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -19,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -27,15 +29,28 @@ import java.util.stream.Stream;
  *
  * <p>Tool manifests live under {@code .hugin/jit-tools/*.json} in each workspace. The agent
  * rescans that directory on every loop iteration, so once Hugin writes a manifest it becomes
- * available on the next reasoning pass without restarting the service.
+ * available on the next reasoning pass without restarting the service. To keep that rescan cheap,
+ * parsed manifests are cached per directory and only re-read when the directory listing or a
+ * manifest's modification time / size changes.
  */
 @Component
 public class JustInTimeToolRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(JustInTimeToolRegistry.class);
 
+    /** Stamp that never matches a real file, forcing a reload when a manifest cannot be stat'ed. */
+    private static final ManifestStamp UNREADABLE = new ManifestStamp(FileTime.fromMillis(-1), -1);
+    private static final CachedScan EMPTY = new CachedScan(Map.of(), List.of(), Map.of());
+
     private final LocalToolProperties properties;
     private final ObjectMapper objectMapper;
+    private final ConcurrentHashMap<Path, CachedScan> cache = new ConcurrentHashMap<>();
+
+    private record ManifestStamp(FileTime lastModified, long size) {}
+
+    private record CachedScan(Map<Path, ManifestStamp> fingerprint,
+                              List<LocalTool> tools,
+                              Map<String, LocalTool> byName) {}
 
     public JustInTimeToolRegistry(LocalToolProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
@@ -43,42 +58,68 @@ public class JustInTimeToolRegistry {
     }
 
     public List<LocalTool> tools(Workspace workspace) {
+        return scan(workspace).tools();
+    }
+
+    public LocalTool find(String name, Workspace workspace) {
+        return scan(workspace).byName().get(name);
+    }
+
+    /**
+     * Lists the manifest directory and compares its fingerprint (file names + mtimes + sizes)
+     * against the cached scan; manifests are parsed only when something actually changed.
+     */
+    private CachedScan scan(Workspace workspace) {
         if (!Boolean.TRUE.equals(properties.enabled())) {
-            return List.of();
+            return EMPTY;
         }
 
         Path manifestDir = manifestDirectory(workspace);
         if (!Files.isDirectory(manifestDir)) {
-            return List.of();
+            cache.remove(manifestDir);
+            return EMPTY;
+        }
+
+        Map<Path, ManifestStamp> fingerprint = new LinkedHashMap<>();
+        try (Stream<Path> stream = Files.list(manifestDir)) {
+            List<Path> manifests = stream
+                    .filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .sorted(Comparator.comparing(Path::toString))
+                    .toList();
+            for (Path path : manifests) {
+                fingerprint.put(path, stamp(path));
+            }
+        } catch (IOException e) {
+            log.warn("Could not scan JIT tool directory {}: {}", manifestDir, e.getMessage());
+            return EMPTY;
+        }
+
+        CachedScan cached = cache.get(manifestDir);
+        if (cached != null && cached.fingerprint().equals(fingerprint)) {
+            return cached;
         }
 
         Map<String, LocalTool> byName = new LinkedHashMap<>();
-        try (Stream<Path> stream = Files.list(manifestDir)) {
-            stream.filter(path -> path.getFileName().toString().endsWith(".json"))
-                    .sorted(Comparator.comparing(Path::toString))
-                    .forEach(path -> loadManifest(workspace, path)
-                            .ifPresent(tool -> {
-                                LocalTool previous = byName.put(tool.name(), tool);
-                                if (previous != null) {
-                                    log.warn("Duplicate JIT tool name '{}' in {}; keeping first definition",
-                                            tool.name(), manifestDir);
-                                }
-                            }));
-        } catch (IOException e) {
-            log.warn("Could not scan JIT tool directory {}: {}", manifestDir, e.getMessage());
-            return List.of();
+        for (Path path : fingerprint.keySet()) {
+            loadManifest(workspace, path).ifPresent(tool -> {
+                LocalTool previous = byName.putIfAbsent(tool.name(), tool);
+                if (previous != null) {
+                    log.warn("Duplicate JIT tool name '{}' in {}; keeping first definition",
+                            tool.name(), manifestDir);
+                }
+            });
         }
-
-        return List.copyOf(byName.values());
+        CachedScan fresh = new CachedScan(fingerprint, List.copyOf(byName.values()), Map.copyOf(byName));
+        cache.put(manifestDir, fresh);
+        return fresh;
     }
 
-    public LocalTool find(String name, Workspace workspace) {
-        for (LocalTool tool : tools(workspace)) {
-            if (tool.name().equals(name)) {
-                return tool;
-            }
+    private static ManifestStamp stamp(Path path) {
+        try {
+            return new ManifestStamp(Files.getLastModifiedTime(path), Files.size(path));
+        } catch (IOException e) {
+            return UNREADABLE;
         }
-        return null;
     }
 
     private java.util.Optional<LocalTool> loadManifest(Workspace workspace, Path path) {

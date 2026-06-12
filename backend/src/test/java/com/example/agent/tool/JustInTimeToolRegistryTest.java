@@ -98,4 +98,26 @@ class JustInTimeToolRegistryTest {
         assertThat(tool.execute(Map.of("a", 2, "b", 3), new ToolContext(workspace)))
                 .contains("5");
     }
+
+    @Test
+    void reloadsManifestWhenItChangesAndServesCacheWhenItDoesNot() throws Exception {
+        Files.createDirectories(tmp.resolve(".hugin/jit-tools"));
+        Path manifest = tmp.resolve(".hugin/jit-tools/greeter.tool.json");
+        Files.writeString(manifest, """
+                { "name": "greeter", "description": "first version", "command": "true" }
+                """);
+
+        assertThat(registry.find("greeter", workspace).description()).isEqualTo("first version");
+        // Unchanged directory: the cached scan is reused.
+        assertThat(registry.tools(workspace)).isSameAs(registry.tools(workspace));
+
+        Files.writeString(manifest, """
+                { "name": "greeter", "description": "second version, edited", "command": "true" }
+                """);
+        assertThat(registry.find("greeter", workspace).description()).isEqualTo("second version, edited");
+
+        Files.delete(manifest);
+        assertThat(registry.find("greeter", workspace)).isNull();
+        assertThat(registry.tools(workspace)).isEmpty();
+    }
 }
