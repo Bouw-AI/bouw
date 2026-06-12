@@ -947,32 +947,32 @@ a {
     margin-bottom: 12px;
   }
 
-.drawer-nav {
-  display: grid;
-  gap: 8px;
-}
+  .drawer-nav {
+    display: grid;
+    gap: 8px;
+  }
 
-.drawer-footer {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-  display: grid;
-  gap: 12px;
-}
+  .drawer-footer {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    display: grid;
+    gap: 12px;
+  }
 
-.drawer-account {
-  display: grid;
-  gap: 4px;
-}
+  .drawer-account {
+    display: grid;
+    gap: 4px;
+  }
 
-.drawer-account-label {
-  color: var(--muted);
-  font-size: 0.82rem;
-}
+  .drawer-account-label {
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
 
-.drawer-signout {
-  width: 100%;
-}
+  .drawer-signout {
+    width: 100%;
+  }
 }
 
 @media (max-width: 820px) {

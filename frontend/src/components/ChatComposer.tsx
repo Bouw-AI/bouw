@@ -34,7 +34,7 @@ export function ChatComposer({
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey && canSubmit) {
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && canSubmit) {
             event.preventDefault();
             onSubmit();
           }
