@@ -1,33 +1,7 @@
-import type {
-  AppearanceSettings,
-  AuthSession,
-  ChatMessage,
-  ChatThread,
-  ConnectedServiceStatus,
-  GoogleWorkspaceState,
-  GuildState,
-  IntegrationItem
-} from "../lib/types";
+import type { AppState, AuthSession, ChatEntry, ChatThread, StreamToolEvent } from "../lib/types";
 
-const STORAGE_KEY = "guild-app-state-v2";
-const AUTH_STORAGE_KEY = "guild-auth-session-v1";
-
-type AgentResponse = {
-  response: string;
-};
-
-type GoogleWorkspaceStatusResponse = {
-  active: boolean;
-  configured: boolean;
-  reconnectable: boolean;
-  authMode: "oauth" | "service-account" | "none";
-  message: string;
-};
-
-type GoogleReconnectResponse = {
-  status: GoogleWorkspaceStatusResponse;
-  authUrl: string | null;
-};
+const APP_STORAGE_KEY = "hugin-minimal-ui-state-v1";
+const AUTH_STORAGE_KEY = "hugin-auth-session-v1";
 
 type AuthLoginResponse = {
   token: string;
@@ -44,6 +18,19 @@ type AuthMeResponse = {
   expiresAt: string;
 };
 
+type StreamEvent =
+  | { type: "config"; developerMode: boolean }
+  | { type: "token"; text: string }
+  | { type: "reasoning"; text: string }
+  | { type: "tool"; name: string; args: string }
+  | { type: "tool_result"; name: string; result: string }
+  | { type: "done" }
+  | { type: "error"; message: string };
+
+type StreamHandlers = {
+  onEvent: (event: StreamEvent) => void;
+};
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -55,94 +42,35 @@ function uid(prefix = "id") {
   return `${prefix}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
-function threadMessage(role: ChatMessage["role"], content: string, createdAt: string): ChatMessage {
-  return { id: uid(role), role, content, createdAt };
+export function createEmptyState(): AppState {
+  return { threads: [] };
 }
 
-function createGoogleWorkspaceState(overrides: Partial<GoogleWorkspaceState> = {}): GoogleWorkspaceState {
-  return {
-    accountName: "Not connected",
-    authStatus: "not-connected",
-    lastRefreshedAt: nowIso(),
-    authMode: "none",
-    configured: false,
-    reconnectable: false,
-    message: "Google Workspace is not configured.",
-    connectedServices: [
-      { label: "Gmail", status: "not-connected" },
-      { label: "Calendar", status: "not-connected" },
-      { label: "Docs", status: "not-connected" },
-      { label: "Sheets", status: "not-connected" }
-    ],
-    ...overrides
-  };
-}
-
-function buildSeedState(): GuildState {
-  return {
-    threads: [],
-    appearance: {
-      theme: "light",
-      textSize: "medium",
-      reduceMotion: false
-    },
-    integrations: {
-      list: [],
-      googleWorkspace: createGoogleWorkspaceState()
-    }
-  };
-}
-
-function withDerivedIntegrations(state: GuildState): GuildState {
-  return {
-    ...state,
-    integrations: {
-      ...state.integrations,
-      list: [googleIntegrationItem(state.integrations.googleWorkspace)]
-    }
-  };
-}
-
-export function loadGuildState(): GuildState {
-  if (typeof window === "undefined") return withDerivedIntegrations(buildSeedState());
-
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) return withDerivedIntegrations(buildSeedState());
+export function loadAppState(): AppState {
+  if (typeof window === "undefined") return createEmptyState();
+  const raw = window.localStorage.getItem(APP_STORAGE_KEY);
+  if (!raw) return createEmptyState();
 
   try {
-    const parsed = JSON.parse(raw) as Partial<GuildState>;
-    const seed = buildSeedState();
-    return withDerivedIntegrations({
-      threads: Array.isArray(parsed.threads) ? (parsed.threads as ChatThread[]) : seed.threads,
-      appearance: {
-        ...seed.appearance,
-        ...(parsed.appearance || {})
-      } as AppearanceSettings,
-      integrations: {
-        list: [],
-        googleWorkspace: createGoogleWorkspaceState(parsed.integrations?.googleWorkspace || {})
-      }
-    });
+    const parsed = JSON.parse(raw) as Partial<AppState>;
+    return {
+      threads: Array.isArray(parsed.threads) ? parsed.threads : []
+    };
   } catch {
-    return withDerivedIntegrations(buildSeedState());
+    return createEmptyState();
   }
 }
 
-export function saveGuildState(state: GuildState) {
+export function saveAppState(state: AppState) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    threads: state.threads,
-    appearance: state.appearance,
-    integrations: {
-      googleWorkspace: state.integrations.googleWorkspace
-    }
-  }));
+  window.localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(state));
 }
 
 export function loadAuthSession(): AuthSession | null {
   if (typeof window === "undefined") return null;
   const raw = window.sessionStorage.getItem(AUTH_STORAGE_KEY);
   if (!raw) return null;
+
   try {
     const parsed = JSON.parse(raw) as AuthSession;
     if (!parsed.token || !parsed.username) return null;
@@ -164,12 +92,8 @@ export function saveAuthSession(session: AuthSession | null) {
 async function apiFetch<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers || {});
   headers.set("Accept", "application/json");
-  if (init.body && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const response = await fetch(path, { ...init, headers });
   if (!response.ok) {
@@ -180,7 +104,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, token?: string)
         message = body.error;
       }
     } catch {
-      // Ignore parse errors and keep the status text fallback.
+      // Keep the status fallback when no JSON body is available.
     }
     const error = new Error(message) as Error & { status?: number };
     error.status = response.status;
@@ -194,6 +118,7 @@ export async function login(username: string, password: string): Promise<AuthSes
     method: "POST",
     body: JSON.stringify({ username, password })
   });
+
   return {
     token: response.token,
     username: response.username,
@@ -212,209 +137,38 @@ export async function fetchCurrentUser(token: string): Promise<AuthSession> {
   };
 }
 
-export async function sendPrompt(token: string, threadId: string, prompt: string): Promise<string> {
-  const response = await apiFetch<AgentResponse>("/api/agent/chat", {
-    method: "POST",
-    body: JSON.stringify({
-      prompt,
-      sessionId: threadId
-    })
-  }, token);
-  return response.response || "";
-}
-
-export async function fetchGoogleWorkspaceStatus(token: string): Promise<GoogleWorkspaceState> {
-  const response = await apiFetch<GoogleWorkspaceStatusResponse>("/api/google/status", {}, token);
-  return mapGoogleWorkspaceStatus(response);
-}
-
-export async function reconnectGoogleWorkspace(token: string): Promise<GoogleWorkspaceState> {
-  const response = await apiFetch<GoogleReconnectResponse>("/api/google/reconnect", {
-    method: "POST",
-    body: JSON.stringify({ returnTo: window.location.href })
-  }, token);
-  if (response.authUrl) {
-    window.location.assign(response.authUrl);
-  }
-  return mapGoogleWorkspaceStatus(response.status);
-}
-
-export async function disconnectGoogleWorkspace(token: string): Promise<GoogleWorkspaceState> {
-  const response = await apiFetch<GoogleWorkspaceStatusResponse>("/api/google/disconnect", {
-    method: "POST"
-  }, token);
-  return mapGoogleWorkspaceStatus(response);
-}
-
-function mapGoogleWorkspaceStatus(status: GoogleWorkspaceStatusResponse): GoogleWorkspaceState {
-  const serviceStatus: ConnectedServiceStatus = status.active
-    ? "connected"
-    : status.configured
-      ? "attention"
-      : "not-connected";
-
-  return createGoogleWorkspaceState({
-    accountName: googleAccountLabel(status),
-    authStatus: status.active ? "connected" : status.configured ? "attention" : "not-connected",
-    lastRefreshedAt: nowIso(),
-    authMode: status.authMode,
-    configured: status.configured,
-    reconnectable: status.reconnectable,
-    message: status.message,
-    connectedServices: [
-      { label: "Gmail", status: serviceStatus },
-      { label: "Calendar", status: serviceStatus },
-      { label: "Docs", status: serviceStatus },
-      { label: "Sheets", status: serviceStatus }
-    ]
-  });
-}
-
-function googleAccountLabel(status: GoogleWorkspaceStatusResponse) {
-  if (!status.configured) return "Not configured";
-  if (status.authMode === "service-account") return "Service account";
-  if (status.active) return "OAuth connected";
-  return "OAuth needs consent";
-}
-
-function googleIntegrationItem(googleWorkspace: GoogleWorkspaceState): IntegrationItem {
-  return {
-    id: "google-workspace",
-    label: "Google Workspace",
-    subtitle: googleWorkspace.message,
-    status: googleWorkspace.authStatus,
-    detail: googleWorkspace.authStatus === "connected"
-      ? "Connected"
-      : googleWorkspace.authStatus === "attention"
-        ? "Needs attention"
-        : "Not connected"
-  };
-}
-
-export function setGoogleWorkspaceState(state: GuildState, googleWorkspace: GoogleWorkspaceState): GuildState {
-  return withDerivedIntegrations({
-    ...state,
-    integrations: {
-      ...state.integrations,
-      googleWorkspace
-    }
-  });
-}
-
-export function getThread(state: GuildState, threadId: string) {
-  return state.threads.find((thread) => thread.id === threadId) || null;
-}
-
-export function createThreadFromPrompt(prompt: string): ChatThread {
-  const title = prompt
-    .replace(/[?!.]+$/g, "")
-    .split(/\s+/)
-    .slice(0, 4)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(" ");
-
+export function createThread(): ChatThread {
   const createdAt = nowIso();
   return {
     id: uid("thread"),
-    title: title || "New Chat",
+    title: "New chat",
     createdAt,
     updatedAt: createdAt,
-    source: "draft",
-    messages: []
+    entries: []
   };
 }
 
-export function createBlankThread() {
-  return {
-    id: uid("thread"),
-    title: "New Chat",
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-    source: "draft" as const,
-    messages: [] as ChatMessage[]
-  };
+export function getThreadTitle(prompt: string) {
+  const normalized = prompt.trim().replace(/\s+/g, " ");
+  if (!normalized) return "New chat";
+  return normalized.length > 42 ? `${normalized.slice(0, 42).trimEnd()}...` : normalized;
 }
 
-export function addThread(state: GuildState, thread: ChatThread) {
+export function addThread(state: AppState, thread: ChatThread): AppState {
   return {
     ...state,
     threads: [thread, ...state.threads]
   };
 }
 
-export function appendAssistantReply(state: GuildState, threadId: string, prompt: string, response: string): GuildState {
-  const thread = getThread(state, threadId);
-  if (!thread) return state;
-
-  const createdAt = nowIso();
-  const userMessage = threadMessage("user", prompt, createdAt);
-  const assistantMessage = threadMessage("assistant", response, nowIso());
-
+export function updateThread(state: AppState, threadId: string, updater: (thread: ChatThread) => ChatThread): AppState {
   return {
     ...state,
-    threads: state.threads.map((item) =>
-      item.id === threadId
-        ? {
-            ...item,
-            updatedAt: assistantMessage.createdAt,
-            title: item.source === "draft" ? createThreadFromPrompt(prompt).title : item.title,
-            messages: [...item.messages, userMessage, assistantMessage]
-          }
-        : item
-    )
+    threads: state.threads.map((thread) => (thread.id === threadId ? updater(thread) : thread))
   };
 }
 
-export function clearHistory(state: GuildState) {
-  return {
-    ...state,
-    threads: state.threads
-      .map((thread) => ({ ...thread, messages: [], updatedAt: thread.createdAt }))
-  };
-}
-
-export function setAppearanceTheme(state: GuildState, theme: AppearanceSettings["theme"]) {
-  return {
-    ...state,
-    appearance: {
-      ...state.appearance,
-      theme
-    }
-  };
-}
-
-export function setTextSize(state: GuildState, textSize: AppearanceSettings["textSize"]) {
-  return {
-    ...state,
-    appearance: {
-      ...state.appearance,
-      textSize
-    }
-  };
-}
-
-export function setReduceMotion(state: GuildState, reduceMotion: boolean) {
-  return {
-    ...state,
-    appearance: {
-      ...state.appearance,
-      reduceMotion
-    }
-  };
-}
-
-export function formatRelative(iso: string) {
-  const value = new Date(iso).getTime();
-  const diff = value - Date.now();
-  const abs = Math.abs(diff);
-  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-  if (abs >= 24 * 60 * 60_000) return rtf.format(Math.round(diff / (24 * 60 * 60_000)), "day");
-  if (abs >= 60 * 60_000) return rtf.format(Math.round(diff / (60 * 60_000)), "hour");
-  if (abs >= 60_000) return rtf.format(Math.round(diff / 60_000), "minute");
-  return rtf.format(Math.round(diff / 1000), "second");
-}
-
-export function formatDateLabel(iso: string) {
+export function formatTimestamp(iso: string) {
   return new Intl.DateTimeFormat("en", {
     month: "short",
     day: "numeric",
@@ -423,13 +177,225 @@ export function formatDateLabel(iso: string) {
   }).format(new Date(iso));
 }
 
-export function downloadStateSnapshot(state: GuildState) {
-  if (typeof document === "undefined") return;
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `guild-state-${new Date().toISOString().slice(0, 10)}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
+export function buildUserEntry(content: string): ChatEntry {
+  return {
+    id: uid("user"),
+    type: "user",
+    content,
+    createdAt: nowIso()
+  };
+}
+
+export function buildAssistantEntry(): Extract<ChatEntry, { type: "assistant" }> {
+  return {
+    id: uid("assistant"),
+    type: "assistant",
+    content: "",
+    reasoning: "",
+    createdAt: nowIso()
+  };
+}
+
+function buildToolEvent(name: string, args: string): StreamToolEvent {
+  return {
+    id: uid("tool"),
+    name,
+    args,
+    result: "",
+    startedAt: nowIso()
+  };
+}
+
+export function appendEntries(
+  state: AppState,
+  threadId: string,
+  entries: ChatEntry[],
+  titleOverride?: string
+): AppState {
+  return updateThread(state, threadId, (thread) => ({
+    ...thread,
+    title: titleOverride ?? thread.title,
+    updatedAt: nowIso(),
+    entries: [...thread.entries, ...entries]
+  }));
+}
+
+export function appendAssistantDelta(state: AppState, threadId: string, assistantId: string, delta: string): AppState {
+  return updateThread(state, threadId, (thread) => ({
+    ...thread,
+    updatedAt: nowIso(),
+    entries: thread.entries.map((entry) =>
+      entry.type === "assistant" && entry.id === assistantId
+        ? { ...entry, content: `${entry.content}${delta}` }
+        : entry
+    )
+  }));
+}
+
+export function appendReasoningDelta(state: AppState, threadId: string, assistantId: string, delta: string): AppState {
+  return updateThread(state, threadId, (thread) => ({
+    ...thread,
+    updatedAt: nowIso(),
+    entries: thread.entries.map((entry) =>
+      entry.type === "assistant" && entry.id === assistantId
+        ? { ...entry, reasoning: `${entry.reasoning}${delta}` }
+        : entry
+    )
+  }));
+}
+
+export function appendToolCall(state: AppState, threadId: string, name: string, args: string): AppState {
+  return appendEntries(state, threadId, [
+    {
+      id: uid("entry-tool"),
+      type: "tool",
+      tool: buildToolEvent(name, args),
+      createdAt: nowIso()
+    }
+  ]);
+}
+
+export function attachToolResult(state: AppState, threadId: string, name: string, result: string): AppState {
+  return updateThread(state, threadId, (thread) => {
+    let updated = false;
+    return {
+      ...thread,
+      updatedAt: nowIso(),
+      entries: thread.entries.map((entry) => {
+        if (updated || entry.type !== "tool" || entry.tool.name !== name || entry.tool.finishedAt) return entry;
+        updated = true;
+        return {
+          ...entry,
+          tool: {
+            ...entry.tool,
+            result,
+            finishedAt: nowIso()
+          }
+        };
+      })
+    };
+  });
+}
+
+export function completeAssistantEntry(state: AppState, threadId: string, assistantId: string): AppState {
+  return updateThread(state, threadId, (thread) => ({
+    ...thread,
+    updatedAt: nowIso(),
+    entries: thread.entries.map((entry) =>
+      entry.type === "assistant" && entry.id === assistantId
+        ? { ...entry, completedAt: nowIso() }
+        : entry
+    )
+  }));
+}
+
+export async function streamPrompt(
+  token: string,
+  threadId: string,
+  prompt: string,
+  handlers: StreamHandlers
+) {
+  const response = await fetch("/api/agent/stream", {
+    method: "POST",
+    headers: {
+      Accept: "text/event-stream",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      prompt,
+      sessionId: threadId
+    })
+  });
+
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body && typeof body.error === "string" && body.error) {
+        message = body.error;
+      }
+    } catch {
+      // Keep the status fallback when no JSON body is available.
+    }
+    const error = new Error(message) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+
+  if (!response.body) {
+    throw new Error("Stream body was not available.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+
+    for (const rawEvent of parts) {
+      const event = parseSseEvent(rawEvent);
+      if (event) handlers.onEvent(event);
+    }
+  }
+
+  buffer += decoder.decode();
+  const finalEvent = parseSseEvent(buffer);
+  if (finalEvent) handlers.onEvent(finalEvent);
+}
+
+function parseSseEvent(rawEvent: string): StreamEvent | null {
+  const lines = rawEvent
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+
+  if (!lines.length) return null;
+
+  let eventName = "";
+  const dataLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trim());
+    }
+  }
+
+  if (!eventName || !dataLines.length) return null;
+
+  const payload = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
+  switch (eventName) {
+    case "config":
+      return { type: "config", developerMode: payload.developerMode === true };
+    case "token":
+      return { type: "token", text: String(payload.text ?? "") };
+    case "reasoning":
+      return { type: "reasoning", text: String(payload.text ?? "") };
+    case "tool":
+      return {
+        type: "tool",
+        name: String(payload.name ?? "tool"),
+        args: String(payload.args ?? "")
+      };
+    case "tool_result":
+      return {
+        type: "tool_result",
+        name: String(payload.name ?? "tool"),
+        result: String(payload.result ?? "")
+      };
+    case "done":
+      return { type: "done" };
+    case "error":
+      return { type: "error", message: String(payload.message ?? "Stream failed.") };
+    default:
+      return null;
+  }
 }
