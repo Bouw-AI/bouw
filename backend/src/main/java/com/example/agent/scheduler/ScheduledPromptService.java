@@ -190,16 +190,12 @@ public class ScheduledPromptService {
         if (future != null) {
             future.cancel(false);
         }
-        boolean existed = store.findAll().stream().anyMatch(p -> p.id().equals(id));
-        store.delete(id);
-        return existed || future != null;
+        return store.delete(id) || future != null;
     }
 
     /** All schedules currently registered for a given delivery target (origin session). */
     public List<ScheduledPrompt> listForTarget(String target) {
-        return store.findAll().stream()
-                .filter(p -> p.deliveryTarget() != null && p.deliveryTarget().equals(target))
-                .toList();
+        return store.findByTarget(target);
     }
 
     /** A human-readable description of when {@code sp} will next run. */

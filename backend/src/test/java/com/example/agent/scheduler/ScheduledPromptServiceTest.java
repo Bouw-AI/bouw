@@ -112,10 +112,27 @@ class ScheduledPromptServiceTest {
     void reloadReArmsPersistedCron() {
         newService(delivery).scheduleCron("x", "0 9 * * *", zone, "t", null);
 
-        // A fresh store + service over the same file simulates a restart.
+        // Closing flushes the debounced write; a fresh store + service over the same file then
+        // simulates a restart.
+        store.close();
         JsonFileScheduledPromptStore reopened =
                 new JsonFileScheduledPromptStore(mapper, tmp.resolve("schedules.json").toString());
         assertThat(reopened.findAll()).hasSize(1);
+    }
+
+    @Test
+    void listForTargetUsesTargetIndex() {
+        ScheduledPromptService service = newService(delivery);
+        ScheduledPrompt a = service.scheduleCron("a", "0 9 * * *", zone, "target-a", null);
+        ScheduledPrompt b = service.scheduleCron("b", "0 10 * * *", zone, "target-b", null);
+
+        assertThat(service.listForTarget("target-a")).extracting(ScheduledPrompt::id).containsExactly(a.id());
+        assertThat(service.listForTarget("target-b")).extracting(ScheduledPrompt::id).containsExactly(b.id());
+        assertThat(service.listForTarget("missing")).isEmpty();
+        assertThat(service.listForTarget(null)).isEmpty();
+
+        service.cancel(a.id());
+        assertThat(service.listForTarget("target-a")).isEmpty();
     }
 
     @Test
