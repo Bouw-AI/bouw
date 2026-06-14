@@ -125,6 +125,28 @@ agent:
     # Workspace-local just-in-time tool manifests. The agent rescans this directory on every
     # loop iteration, so tools created at runtime become available without restarting Hugin.
     jit-tool-directory: .hugin/jit-tools
+  # Per-session Docker sandboxes. POST /api/sandboxes starts a container whose bind-mounted working
+  # directory becomes the agent's confined workspace; chat/stream requests target it via "sandboxId"
+  # and run_bash is executed inside that container (docker exec). File tools operate on the host-side
+  # bind-mount, so file edits and shell commands share one workspace path.
+  sandbox:
+    # Master switch for the /api/sandboxes endpoints and sandbox-routed shell execution.
+    enabled: ${SANDBOX_ENABLED:true}
+    # Default container image used when a create request omits one. Must already be available to the
+    # Docker daemon (pulled or built locally); override per-request with the "image" field.
+    image: ${SANDBOX_IMAGE:ubuntu:24.04}
+    # Docker CLI binary used to manage containers.
+    docker-bin: ${SANDBOX_DOCKER_BIN:docker}
+    # Wall-clock limit for a single command run inside a sandbox.
+    exec-timeout: 120s
+    # Wall-clock limit for starting a sandbox container.
+    start-timeout: 120s
+    # Docker network for sandbox containers. Blank uses the default bridge; set to "none" to isolate.
+    network: ${SANDBOX_NETWORK:}
+    # Prefix for sandbox container names: <prefix><sandbox-id>.
+    container-prefix: hugin-sbx-
+    # Cap on the number of concurrently running sandboxes.
+    max-sandboxes: 25
 
 auth:
   jwt:

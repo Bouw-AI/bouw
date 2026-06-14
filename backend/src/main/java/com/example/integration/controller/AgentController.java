@@ -170,7 +170,8 @@ public class AgentController {
                 request.agentId(),
                 systemPrompt,
                 scopedSessionId,
-                request.recentMessages());
+                request.recentMessages(),
+                request.sandboxId());
     }
 
     private static String scopeSession(String owner, String agentId, String sessionId) {

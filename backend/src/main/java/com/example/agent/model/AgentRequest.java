@@ -23,6 +23,11 @@ import java.util.List;
  * context. When non-null the server treats the caller as managing its own short-term memory: it does
  * <b>not</b> replay or record server-side conversation memory for the request, and the messages are
  * exposed to the agent through the {@code read_discord_channel} tool.
+ *
+ * <p>{@code sandboxId} is optional; when present it selects the per-session sandbox (a Docker
+ * container created via {@code POST /api/sandboxes}) the agent's tools run inside. The agent resolves
+ * its workspace from this id and routes {@code run_bash} into that container. When blank the request
+ * runs against the default (host) workspace, preserving the previous behaviour.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AgentRequest(
@@ -34,7 +39,25 @@ public record AgentRequest(
         String agentId,
         String systemPrompt,
         String sessionId,
-        List<String> recentMessages) {
+        List<String> recentMessages,
+        String sandboxId) {
+
+    /**
+     * Backwards-compatible constructor without a sandbox (defaults {@code sandboxId} to {@code null}).
+     * Preserves the previous 9-argument canonical signature for existing callers.
+     */
+    public AgentRequest(
+            String prompt,
+            String model,
+            String decision,
+            String complex,
+            String simple,
+            String agentId,
+            String systemPrompt,
+            String sessionId,
+            List<String> recentMessages) {
+        this(prompt, model, decision, complex, simple, agentId, systemPrompt, sessionId, recentMessages, null);
+    }
 
     /** Stateless request with no session memory. */
     public AgentRequest(String prompt, String model) {
