@@ -22,13 +22,28 @@ import java.util.List;
  * caller's channel (oldest first). It is populated for front-ends like Discord that manage their own
  * short-term context, letting the {@code read_discord_channel} tool surface more history on demand.
  * It may be {@code null} when no such context was supplied.
+ *
+ * <p>{@code sandboxId} identifies the per-session sandbox (e.g. a Docker container) the request is
+ * bound to. Tools that execute shell commands ({@code run_bash}) route them into this sandbox when it
+ * is present; it may be {@code null} for requests that run against the default host workspace.
  */
 public record ToolContext(
         Workspace workspace,
         String sessionId,
         String username,
         String agentId,
-        List<String> channelMessages) {
+        List<String> channelMessages,
+        String sandboxId) {
+
+    /** Backwards-compatible context without a sandbox (defaults {@code sandboxId} to {@code null}). */
+    public ToolContext(
+            Workspace workspace,
+            String sessionId,
+            String username,
+            String agentId,
+            List<String> channelMessages) {
+        this(workspace, sessionId, username, agentId, channelMessages, null);
+    }
 
     /** Context with no session origin (stateless request). */
     public ToolContext(Workspace workspace) {

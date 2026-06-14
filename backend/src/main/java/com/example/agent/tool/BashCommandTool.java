@@ -1,5 +1,7 @@
 package com.example.agent.tool;
 
+import com.example.agent.sandbox.SandboxRuntime;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -10,6 +12,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -30,13 +33,22 @@ public class BashCommandTool implements LocalTool {
     private final int maxChars;
     private final String shell;
     private final boolean loginShell;
+    private final Optional<SandboxRuntime> sandboxRuntime;
 
-    public BashCommandTool(Workspace workspace, LocalToolProperties properties) {
+    @Autowired
+    public BashCommandTool(Workspace workspace, LocalToolProperties properties,
+                           Optional<SandboxRuntime> sandboxRuntime) {
         this.workspace = workspace;
         this.timeout = properties.bashTimeout();
         this.maxChars = properties.maxOutputChars();
         this.shell = resolveShell(properties.shell());
         this.loginShell = properties.loginShell();
+        this.sandboxRuntime = sandboxRuntime;
+    }
+
+    /** Convenience constructor for tests / hosts without a sandbox runtime (host execution only). */
+    public BashCommandTool(Workspace workspace, LocalToolProperties properties) {
+        this(workspace, properties, Optional.empty());
     }
 
     /**
@@ -90,6 +102,20 @@ public class BashCommandTool implements LocalTool {
     public String execute(Map<String, Object> arguments, ToolContext ctx) throws IOException, InterruptedException {
         String command = requiredString(arguments, "command");
 
+        // When the request is bound to a sandbox, run the command inside that container instead of
+        // on the host, so all shell execution is isolated to the per-session sandbox environment.
+        String sandboxId = ctx.sandboxId();
+        if (sandboxId != null && !sandboxId.isBlank()
+                && sandboxRuntime.isPresent() && sandboxRuntime.get().isActive(sandboxId)) {
+            SandboxRuntime.ExecResult result = sandboxRuntime.get().exec(sandboxId, command, timeout);
+            String output = clamp(result.output());
+            if (result.timedOut()) {
+                return "Error: command timed out after " + timeout.toSeconds() + "s.\n"
+                        + "Partial output:\n" + output;
+            }
+            return "exit code: " + result.exitCode() + (output.isBlank() ? " (no output)" : "\n" + output);
+        }
+
         List<String> commandLine = new ArrayList<>();
         commandLine.add(shell);
         if (loginShell) {
@@ -136,6 +162,17 @@ public class BashCommandTool implements LocalTool {
         } catch (IOException ignored) {
             // process output stream closed/interrupted — keep what we have
         }
+    }
+
+    /** Caps sandbox command output to the per-result character limit. */
+    private String clamp(String output) {
+        if (output == null) {
+            return "";
+        }
+        if (output.length() > maxChars) {
+            return output.substring(0, maxChars) + "\n... [output truncated at " + maxChars + " characters]";
+        }
+        return output;
     }
 
     private String render(StringBuilder output) {

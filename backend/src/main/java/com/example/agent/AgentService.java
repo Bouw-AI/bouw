@@ -139,7 +139,10 @@ public class AgentService {
         Instant deadline = Instant.now().plus(requestTimeout);
         RoutingSelection routing = resolveModel(request);
         String model = routing.model();
-        Workspace workspace = workspaceRegistry.resolve(request.sessionId());
+        // A sandbox-scoped request resolves its workspace (and tool execution context) from the
+        // sandbox id; otherwise fall back to the session id, preserving the previous behaviour.
+        String workspaceKey = firstNonBlank(request.sandboxId(), request.sessionId());
+        Workspace workspace = workspaceRegistry.resolve(workspaceKey);
         List<ToolDefinition> initialToolDefinitions = collectTools(workspace);
 
         log.debug("Agent chat: model={}, route={}, decisionModel={}, tools available={} (local={}), stream={}",
@@ -228,7 +231,8 @@ public class AgentService {
                 for (ToolCall toolCall : assistantMsg.toolCalls()) {
                     listener.onToolCall(toolCall.function().name(), toolCall.function().arguments());
                     String toolResult = executeToolCall(toolCall,
-                            workspace, request.sessionId(), owner, request.agentId(), request.recentMessages());
+                            workspace, request.sessionId(), owner, request.agentId(), request.recentMessages(),
+                            request.sandboxId());
                     listener.onToolResult(toolCall.function().name(), toolResult);
                     messages.add(ChatMessage.tool(toolCall.id(), toolResult));
                 }
@@ -431,7 +435,8 @@ public class AgentService {
 
     private String executeToolCall(ToolCall toolCall,
                                    Workspace workspace,
-                                   String sessionId, String owner, String agentId, List<String> channelMessages) {
+                                   String sessionId, String owner, String agentId, List<String> channelMessages,
+                                   String sandboxId) {
         String toolName = toolCall.function().name();
         Map<String, Object> args = parseArguments(toolCall.function().arguments());
 
@@ -442,7 +447,7 @@ public class AgentService {
         if (localTool != null) {
             log.debug("Executing built-in tool '{}' with args: {}", toolName, args);
             ToolContext ctx = new ToolContext(
-                    workspace, sessionId, owner, agentId, channelMessages);
+                    workspace, sessionId, owner, agentId, channelMessages, sandboxId);
             try {
                 return localTool.execute(args, ctx);
             } catch (Exception e) {
