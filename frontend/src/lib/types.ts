@@ -14,11 +14,19 @@ export type StreamToolEvent = {
   finishedAt?: string;
 };
 
+export type ChatAttachment = {
+  name: string;
+  mimeType: string;
+  dataUrl?: string;
+  size?: number;
+};
+
 export type ChatEntry =
   | {
       id: string;
       type: "user";
       content: string;
+      attachments?: ChatAttachment[];
       createdAt: string;
     }
   | {

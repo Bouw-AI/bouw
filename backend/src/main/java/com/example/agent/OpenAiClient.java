@@ -34,6 +34,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -277,6 +278,7 @@ public class OpenAiClient {
         ChatMessage message = new ChatMessage(
                 "assistant",
                 content.isEmpty() ? null : content.toString(),
+                null,
                 reasoningContent.isEmpty() ? null : reasoningContent.toString(),
                 assembledToolCalls.isEmpty() ? null : assembledToolCalls,
                 null);
@@ -339,9 +341,10 @@ public class OpenAiClient {
         boolean hasTools = tools != null && !tools.isEmpty();
         boolean deepSeek = deepSeekCompat || isDeepSeekModel(model);
         List<ChatMessage> normalizedMessages = deepSeek ? normalizeForDeepSeek(messages) : messages;
+        List<Map<String, Object>> wireMessages = toWireMessages(normalizedMessages);
         return new ChatRequest(
                 model,
-                normalizedMessages,
+                wireMessages,
                 hasTools ? tools : null,
                 deepSeek ? null : (hasTools ? "auto" : null),
                 deepSeek ? reasoningEffort : null,
@@ -376,6 +379,7 @@ public class OpenAiClient {
                 normalized.add(new ChatMessage(
                         message.role(),
                         message.content() == null ? "" : message.content(),
+                        message.attachments(),
                         message.reasoningContent() == null ? "" : message.reasoningContent(),
                         message.toolCalls(),
                         message.toolCallId()));
@@ -384,6 +388,46 @@ public class OpenAiClient {
             }
         }
         return normalized;
+    }
+
+    private static List<Map<String, Object>> toWireMessages(List<ChatMessage> messages) {
+        List<Map<String, Object>> wireMessages = new ArrayList<>(messages.size());
+        for (ChatMessage message : messages) {
+            Map<String, Object> wire = new LinkedHashMap<>();
+            wire.put("role", message.role());
+            wire.put("content", toWireContent(message));
+            if (message.reasoningContent() != null) {
+                wire.put("reasoning_content", message.reasoningContent());
+            }
+            if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {
+                wire.put("tool_calls", message.toolCalls());
+            }
+            if (message.toolCallId() != null) {
+                wire.put("tool_call_id", message.toolCallId());
+            }
+            wireMessages.add(wire);
+        }
+        return wireMessages;
+    }
+
+    private static Object toWireContent(ChatMessage message) {
+        if (!"user".equals(message.role()) || message.attachments() == null || message.attachments().isEmpty()) {
+            return message.content();
+        }
+        List<Map<String, Object>> parts = new ArrayList<>();
+        if (message.content() != null && !message.content().isBlank()) {
+            parts.add(Map.of("type", "text", "text", message.content()));
+        }
+        message.attachments().stream()
+                .filter(attachment -> attachment != null
+                        && attachment.dataUrl() != null
+                        && !attachment.dataUrl().isBlank())
+                .forEach(attachment -> {
+                    Map<String, Object> imageUrl = new HashMap<>();
+                    imageUrl.put("url", attachment.dataUrl());
+                    parts.add(Map.of("type", "image_url", "image_url", imageUrl));
+                });
+        return parts;
     }
 
     /** Accumulates streamed fragments of a single tool call into a complete {@link ToolCall}. */

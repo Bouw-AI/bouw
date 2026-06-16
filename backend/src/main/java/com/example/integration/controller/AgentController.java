@@ -165,6 +165,7 @@ public class AgentController {
         String scopedSessionId = scopeSession(owner, request.agentId(), sessionId);
         return new AgentRequest(
                 request.prompt(),
+                request.attachments(),
                 request.model(),
                 request.decision(),
                 request.complex(),

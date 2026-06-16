@@ -32,6 +32,7 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AgentRequest(
         String prompt,
+        List<ChatAttachment> attachments,
         String model,
         String decision,
         String complex,
@@ -48,6 +49,7 @@ public record AgentRequest(
      */
     public AgentRequest(
             String prompt,
+            List<ChatAttachment> attachments,
             String model,
             String decision,
             String complex,
@@ -56,32 +58,61 @@ public record AgentRequest(
             String systemPrompt,
             String sessionId,
             List<String> recentMessages) {
-        this(prompt, model, decision, complex, simple, agentId, systemPrompt, sessionId, recentMessages, null);
+        this(prompt, attachments, model, decision, complex, simple, agentId, systemPrompt, sessionId, recentMessages, null);
+    }
+
+    /** Backwards-compatible constructor without attachments or a sandbox. */
+    public AgentRequest(
+            String prompt,
+            String model,
+            String decision,
+            String complex,
+            String simple,
+            String agentId,
+            String systemPrompt,
+            String sessionId,
+            List<String> recentMessages) {
+        this(prompt, null, model, decision, complex, simple, agentId, systemPrompt, sessionId, recentMessages, null);
+    }
+
+    /** Backwards-compatible constructor without attachments. */
+    public AgentRequest(
+            String prompt,
+            String model,
+            String decision,
+            String complex,
+            String simple,
+            String agentId,
+            String systemPrompt,
+            String sessionId,
+            List<String> recentMessages,
+            String sandboxId) {
+        this(prompt, null, model, decision, complex, simple, agentId, systemPrompt, sessionId, recentMessages, sandboxId);
     }
 
     /** Stateless request with no session memory. */
     public AgentRequest(String prompt, String model) {
-        this(prompt, model, model, model, model, null, null, null, null);
+        this(prompt, (List<ChatAttachment>) null, model, model, model, model, null, null, null, null);
     }
 
     /** Session-scoped request that uses server-side short-term conversation memory. */
     public AgentRequest(String prompt, String model, String sessionId) {
-        this(prompt, model, model, model, model, null, null, sessionId, null);
+        this(prompt, (List<ChatAttachment>) null, model, model, model, model, null, null, sessionId, null);
     }
 
     /** Session-scoped request with client-managed recent message context. */
     public AgentRequest(String prompt, String model, String sessionId, List<String> recentMessages) {
-        this(prompt, model, model, model, model, null, null, sessionId, recentMessages);
+        this(prompt, (List<ChatAttachment>) null, model, model, model, model, null, null, sessionId, recentMessages);
     }
 
     /** Routing-aware request that uses a decision model to select between simple and complex. */
     public AgentRequest(String prompt, String decision, String complex, String simple) {
-        this(prompt, null, decision, complex, simple, null, null, null, null);
+        this(prompt, (List<ChatAttachment>) null, null, decision, complex, simple, null, null, null, null);
     }
 
     /** Routing-aware session request that uses a decision model to select between simple and complex. */
     public AgentRequest(String prompt, String decision, String complex, String simple,
                         String sessionId, List<String> recentMessages) {
-        this(prompt, null, decision, complex, simple, null, null, sessionId, recentMessages);
+        this(prompt, (List<ChatAttachment>) null, null, decision, complex, simple, null, null, sessionId, recentMessages);
     }
 }

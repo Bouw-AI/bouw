@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode, type RefObject } from "react";
 import {
   ArrowLeft,
   BatteryFull,
@@ -10,6 +10,7 @@ import {
   Folder,
   FolderOpen,
   History,
+  Image as ImageIcon,
   Lock,
   Menu,
   MessageCirclePlus,
@@ -51,6 +52,7 @@ import {
 import type {
   AppState,
   AuthSession,
+  ChatAttachment,
   ChatEntry,
   ChatThread,
   FileNode,
@@ -125,6 +127,8 @@ function formatBytes(size?: number) {
 function messageCount(thread: ChatThread) {
   return thread.entries.filter((entry) => entry.type !== "tool").length;
 }
+
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 /** Folds a streamed agent event into the working thread, keyed by the active assistant entry. */
 function applyStreamEvent(thread: ChatThread, assistantId: string, event: StreamEvent): ChatThread {
@@ -340,7 +344,24 @@ function Messages({
         if (entry.type === "user") {
           return (
             <div key={entry.id} className="message-row message-row-user fade-in">
-              <div className="message-bubble message-bubble-user">{entry.content}</div>
+              <div className="message-bubble message-bubble-user">
+                {entry.attachments?.map((attachment) =>
+                  attachment.dataUrl ? (
+                    <img
+                      key={`${entry.id}-${attachment.name}`}
+                      src={attachment.dataUrl}
+                      alt={attachment.name}
+                      className="message-image"
+                    />
+                  ) : (
+                    <div key={`${entry.id}-${attachment.name}`} className="message-attachment-placeholder">
+                      <ImageIcon size={14} strokeWidth={2} />
+                      <span>{attachment.name}</span>
+                    </div>
+                  )
+                )}
+                {entry.content ? <div>{entry.content}</div> : null}
+              </div>
             </div>
           );
         }
@@ -378,23 +399,46 @@ function Messages({
 function InputBar(props: {
   value: string;
   disabled: boolean;
+  attachment: ChatAttachment | null;
   onChange: (value: string) => void;
+  onPickImage: () => void;
+  onClearImage: () => void;
   onSend: () => void;
 }) {
-  const { value, disabled, onChange, onSend } = props;
+  const { value, disabled, attachment, onChange, onPickImage, onClearImage, onSend } = props;
 
   return (
     <div className="input-wrap">
+      {attachment ? (
+        <div className="composer-attachment">
+          {attachment.dataUrl ? <img src={attachment.dataUrl} alt={attachment.name} className="composer-attachment-thumb" /> : null}
+          <div className="composer-attachment-copy">
+            <span>{attachment.name}</span>
+            <span>{formatBytes(attachment.size)}</span>
+          </div>
+          <button type="button" className="composer-attachment-remove" onClick={onClearImage} aria-label="Remove image">
+            <X size={14} strokeWidth={2.4} />
+          </button>
+        </div>
+      ) : null}
       <div className="input-bar">
+        <button type="button" onClick={onPickImage} disabled={disabled} aria-label="Add image">
+          <ImageIcon size={18} strokeWidth={2} color={COLORS.ink} />
+        </button>
         <input
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !disabled) onSend();
+            if (event.key === "Enter" && !disabled && (value.trim() || attachment)) onSend();
           }}
-          placeholder="Message Hugin…"
+          placeholder={attachment ? "Ask about this image..." : "Message Hugin…"}
         />
-        <button type="button" onClick={onSend} disabled={disabled || !value.trim()} aria-label="Send message">
+        <button
+          type="button"
+          onClick={onSend}
+          disabled={disabled || (!value.trim() && !attachment)}
+          aria-label="Send message"
+        >
           <Send size={19} strokeWidth={2} color={COLORS.ink} />
         </button>
       </div>
@@ -705,6 +749,7 @@ export default function App() {
   const threadRef = useRef(thread);
 
   const [draft, setDraft] = useState("");
+  const [draftAttachment, setDraftAttachment] = useState<ChatAttachment | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -723,6 +768,7 @@ export default function App() {
   const [signingIn, setSigningIn] = useState(false);
 
   const listRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     threadRef.current = thread;
@@ -809,6 +855,7 @@ export default function App() {
   const startChat = useCallback(() => {
     setThread(createThread("chat"));
     setFiles([]);
+    setDraftAttachment(null);
     setError(null);
     setHistoryQuery("");
     setScreen("purechat");
@@ -821,6 +868,7 @@ export default function App() {
     setHistoryQuery("");
     setError(null);
     setFiles([]);
+    setDraftAttachment(null);
     setBusy(true);
     try {
       const sandbox = await createSandbox(session.token);
@@ -839,6 +887,7 @@ export default function App() {
   const openHistory = useCallback(
     (item: ChatThread) => {
       setThread(item);
+      setDraftAttachment(null);
       setError(null);
       setMenuOpen(false);
       if (item.kind === "sandbox") {
@@ -900,19 +949,21 @@ export default function App() {
   const send = useCallback(
     async (textArg?: string) => {
       const text = (textArg ?? draft).trim();
-      if (!text || busy || !session) return;
+      const attachment = draftAttachment;
+      if ((!text && !attachment) || busy || !session) return;
 
       setDraft("");
+      setDraftAttachment(null);
       setBusy(true);
       setError(null);
 
-      const userEntry = buildUserEntry(text);
+      const userEntry = buildUserEntry(text, attachment ? [attachment] : undefined);
       const assistant = buildAssistantEntry();
       setThread((current) => {
         const isFirst = !current.entries.some((entry) => entry.type === "user");
         return {
           ...current,
-          title: isFirst ? getThreadTitle(text) : current.title,
+          title: isFirst ? getThreadTitle(text || attachment?.name || "Image attachment") : current.title,
           updatedAt: nowIso(),
           entries: [...current.entries, userEntry, assistant]
         };
@@ -921,7 +972,12 @@ export default function App() {
       try {
         await streamPrompt(
           session.token,
-          { threadId: threadRef.current.id, prompt: text, sandboxId: threadRef.current.sandboxId },
+          {
+            threadId: threadRef.current.id,
+            prompt: text,
+            attachments: attachment ? [attachment] : undefined,
+            sandboxId: threadRef.current.sandboxId
+          },
           { onEvent: (event) => setThread((current) => applyStreamEvent(current, assistant.id, event)) }
         );
       } catch (e) {
@@ -932,8 +988,53 @@ export default function App() {
         if (threadRef.current.sandboxId) void refreshFiles();
       }
     },
-    [draft, busy, session, refreshFiles]
+    [draft, draftAttachment, busy, session, refreshFiles]
   );
+
+  const pickImage = useCallback(() => {
+    imageInputRef.current?.click();
+  }, []);
+
+  const clearImage = useCallback(() => {
+    setDraftAttachment(null);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
+  }, []);
+
+  const onImageSelected = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("Only image files are supported.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setError("Images must be 5 MB or smaller.");
+      event.target.value = "";
+      return;
+    }
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ""));
+        reader.onerror = () => reject(new Error("Could not read the selected image."));
+        reader.readAsDataURL(file);
+      });
+      setDraftAttachment({
+        name: file.name,
+        mimeType: file.type,
+        dataUrl,
+        size: file.size
+      });
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not read the selected image.");
+    } finally {
+      event.target.value = "";
+    }
+  }, []);
 
   if (booting) {
     return (
@@ -971,6 +1072,14 @@ export default function App() {
         ) : screen === "chat" || screen === "purechat" ? (
           <>
             <AppHeader onMenu={() => setMenuOpen(true)} />
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              onChange={onImageSelected}
+              className="visually-hidden"
+              tabIndex={-1}
+            />
             {screen === "chat" ? (
               <FileTree
                 sessionId={thread.id}
@@ -987,7 +1096,15 @@ export default function App() {
             ) : (
               <Messages entries={thread.entries} busy={busy} listRef={listRef} />
             )}
-            <InputBar value={draft} onChange={setDraft} onSend={() => send()} disabled={busy} />
+            <InputBar
+              value={draft}
+              disabled={busy}
+              attachment={draftAttachment}
+              onChange={setDraft}
+              onPickImage={pickImage}
+              onClearImage={clearImage}
+              onSend={() => send()}
+            />
           </>
         ) : screen === "integrations" ? (
           <IntegrationsScreen

@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.example.agent.model.ChatMessage;
 import com.example.agent.model.ChatResponse;
+import com.example.agent.model.ChatAttachment;
 
 /**
  * Unit tests for {@link OpenAiClient#chat} and related inner classes, using a local
@@ -196,6 +197,36 @@ class OpenAiClientTest {
 
         assertThat(capturedBody[0]).contains("\"reasoning\"");
         assertThat(capturedBody[0]).contains("\"effort\":\"high\"");
+    }
+
+    @Test
+    void chatSerializesImageAttachmentsAsOpenAiContentParts() throws IOException {
+        String[] capturedBody = new String[1];
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            capturedBody[0] = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            byte[] body = SIMPLE_RESPONSE.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
+        server.start();
+        int port = server.getAddress().getPort();
+        var properties = new LlmProperties("test", "m", "medium",
+                Map.of("test", new LlmProperties.Provider("http://localhost:" + port + "/v1", null)));
+        OpenAiClient client = new OpenAiClient(properties, new ObjectMapper());
+
+        client.chat("m", List.of(ChatMessage.user(
+                "Describe this image",
+                List.of(new ChatAttachment("bird.png", "image/png", "data:image/png;base64,abc123", 123L)))), List.of());
+
+        assertThat(capturedBody[0]).contains("\"content\":[");
+        assertThat(capturedBody[0]).contains("\"type\":\"text\"");
+        assertThat(capturedBody[0]).contains("\"Describe this image\"");
+        assertThat(capturedBody[0]).contains("\"type\":\"image_url\"");
+        assertThat(capturedBody[0]).contains("\"url\":\"data:image/png;base64,abc123\"");
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.example.agent;
 
 import com.example.agent.model.AgentRequest;
 import com.example.agent.model.AgentResponse;
+import com.example.agent.model.ChatAttachment;
 import com.example.agent.model.ChatMessage;
 import com.example.agent.model.ChatResponse;
 import com.example.agent.MemoryStore;
@@ -523,7 +524,10 @@ class AgentServiceTest {
         AgentResponse result = service.chat(new AgentRequest("What is my name?", MODEL, SESSION_ID));
 
         assertThat(result.response()).isEqualTo("Your name is Ada.");
-        verify(conversation).record(scopedSessionId, "What is my name?", "Your name is Ada.");
+        ArgumentCaptor<ChatMessage> recordedMessage = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(conversation).record(eq(scopedSessionId), recordedMessage.capture(), eq("Your name is Ada."));
+        assertThat(recordedMessage.getValue().content()).isEqualTo("What is my name?");
+        assertThat(recordedMessage.getValue().attachments()).isNull();
 
         ArgumentCaptor<List<ChatMessage>> captor = ArgumentCaptor.forClass(List.class);
         verify(llmClient).chat(eq(MODEL), captor.capture(), anyList());
@@ -532,6 +536,49 @@ class AgentServiceTest {
         assertThat(sent.get(1).content()).isEqualTo("Nice to meet you, Ada.");
         assertThat(sent.get(2).role()).isEqualTo("user");
         assertThat(sent.get(2).content()).isEqualTo("What is my name?");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void recordsImageAttachmentsInConversationMemory() {
+        ConversationMemoryService conversation = mock(ConversationMemoryService.class);
+        var service = new AgentService(
+                llmClient,
+                registry(),
+                jitRegistry(Path.of(".")),
+                objectMapper,
+                FIVE_MINUTES,
+                DEFAULT_MODEL,
+                MAX_ITERATIONS,
+                defaultRegistry(),
+                Optional.empty(),
+                Optional.of(conversation),
+                Optional.empty(),
+                Optional.empty());
+
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent("It looks like a raven."));
+
+        List<ChatAttachment> attachments = List.of(
+                new ChatAttachment("bird.png", "image/png", "data:image/png;base64,abc123", 123L));
+        AgentResponse result = service.chat(new AgentRequest(
+                "What is in this image?",
+                attachments,
+                MODEL,
+                MODEL,
+                MODEL,
+                MODEL,
+                null,
+                null,
+                SESSION_ID,
+                null));
+
+        assertThat(result.response()).isEqualTo("It looks like a raven.");
+
+        ArgumentCaptor<ChatMessage> recordedMessage = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(conversation).record(eq("global:" + SESSION_ID), recordedMessage.capture(), eq("It looks like a raven."));
+        assertThat(recordedMessage.getValue().attachments()).hasSize(1);
+        assertThat(recordedMessage.getValue().attachments().get(0).dataUrl()).isEqualTo("data:image/png;base64,abc123");
     }
 
     @Test

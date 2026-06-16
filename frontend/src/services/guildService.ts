@@ -1,6 +1,7 @@
 import type {
   AppState,
   AuthSession,
+  ChatAttachment,
   ChatEntry,
   ChatKind,
   ChatThread,
@@ -74,7 +75,25 @@ export function loadAppState(): AppState {
 
 export function saveAppState(state: AppState) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(state));
+  const sanitized: AppState = {
+    ...state,
+    threads: state.threads.map((thread) => ({
+      ...thread,
+      entries: thread.entries.map((entry) =>
+        entry.type !== "user" || !entry.attachments?.length
+          ? entry
+          : {
+              ...entry,
+              attachments: entry.attachments.map((attachment) => ({
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                size: attachment.size
+              }))
+            }
+      )
+    }))
+  };
+  window.localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(sanitized));
 }
 
 export function loadAuthSession(): AuthSession | null {
@@ -190,11 +209,12 @@ export function formatTimestamp(iso: string) {
   }).format(new Date(iso));
 }
 
-export function buildUserEntry(content: string): ChatEntry {
+export function buildUserEntry(content: string, attachments?: ChatAttachment[]): ChatEntry {
   return {
     id: uid("user"),
     type: "user",
     content,
+    ...(attachments?.length ? { attachments } : {}),
     createdAt: nowIso()
   };
 }
@@ -305,6 +325,7 @@ export function completeAssistantEntry(state: AppState, threadId: string, assist
 export type StreamOptions = {
   threadId: string;
   prompt: string;
+  attachments?: ChatAttachment[];
   /** When set, the agent runs inside this sandbox and gets filesystem/shell tools. */
   sandboxId?: string;
 };
@@ -319,6 +340,7 @@ export async function streamPrompt(token: string, options: StreamOptions, handle
     },
     body: JSON.stringify({
       prompt: options.prompt,
+      ...(options.attachments?.length ? { attachments: options.attachments } : {}),
       sessionId: options.threadId,
       // Only sandbox sessions advertise filesystem tools; pure chats omit sandboxId entirely.
       ...(options.sandboxId ? { sandboxId: options.sandboxId } : {})

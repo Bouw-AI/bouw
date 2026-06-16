@@ -15,16 +15,21 @@ import java.util.List;
 public record ChatMessage(
         String role,
         String content,
+        List<ChatAttachment> attachments,
         @JsonProperty("reasoning_content") String reasoningContent,
         @JsonProperty("tool_calls") List<ToolCall> toolCalls,
         @JsonProperty("tool_call_id") String toolCallId
 ) {
     public static ChatMessage system(String content) {
-        return new ChatMessage("system", content, null, null, null);
+        return new ChatMessage("system", content, null, null, null, null);
     }
 
     public static ChatMessage user(String content) {
-        return new ChatMessage("user", content, null, null, null);
+        return user(content, null);
+    }
+
+    public static ChatMessage user(String content, List<ChatAttachment> attachments) {
+        return new ChatMessage("user", content, attachments, null, null, null);
     }
 
     public static ChatMessage assistant(String content) {
@@ -36,14 +41,14 @@ public record ChatMessage(
     }
 
     public static ChatMessage assistant(String content, String reasoningContent) {
-        return new ChatMessage("assistant", content, reasoningContent, null, null);
+        return new ChatMessage("assistant", content, null, reasoningContent, null, null);
     }
 
     public static ChatMessage assistantWithToolCalls(List<ToolCall> toolCalls, String reasoningContent) {
-        return new ChatMessage("assistant", "", reasoningContent, toolCalls, null);
+        return new ChatMessage("assistant", "", null, reasoningContent, toolCalls, null);
     }
 
     public static ChatMessage tool(String toolCallId, String content) {
-        return new ChatMessage("tool", content, null, null, toolCallId);
+        return new ChatMessage("tool", content, null, null, null, toolCallId);
     }
 }
