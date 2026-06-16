@@ -209,7 +209,11 @@ public class DockerSandboxManager implements SandboxRuntime {
         }
         Path workspace = Path.of(info.workspace());
         Path sandboxRoot = workspace.getParent();
-        deleteQuietly(sandboxRoot != null ? sandboxRoot : workspace);
+        if (sandboxRoot != null) {
+            deleteQuietly(sandboxRoot);
+        } else {
+            deleteQuietly(workspace);
+        }
         log.info("Deleted sandbox {}", id);
     }
 
@@ -254,6 +258,9 @@ public class DockerSandboxManager implements SandboxRuntime {
     }
 
     private ExecResult runHostCommand(Path workspace, String command, Duration timeout) {
+        // Development-only compatibility path when no container runtime exists. Commands still run
+        // in a per-session workspace and remain subject to the normal wall-clock timeout, but this
+        // is not a substitute for container isolation on a multi-tenant host.
         ProcessBuilder builder = new ProcessBuilder("/bin/sh", "-c", command);
         builder.directory(workspace.toFile());
         builder.redirectErrorStream(true);

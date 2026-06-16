@@ -9,12 +9,14 @@ import com.example.integration.sandbox.SandboxProperties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DockerSandboxManagerTest {
 
@@ -23,8 +25,9 @@ class DockerSandboxManagerTest {
 
     @Test
     void fallsBackToHostWorkspaceWhenDockerCliIsUnavailable() throws Exception {
+        Path workspaceRoot = Files.createDirectory(tmp.resolve("default-workspace"));
         Workspace defaultWorkspace = new Workspace(new LocalToolProperties(
-                true, tmp.toString(), Duration.ofSeconds(10), 30_000, List.of()));
+                true, workspaceRoot.toString(), Duration.ofSeconds(10), 30_000, List.of()));
         WorkspaceRegistry registry = new WorkspaceRegistry(defaultWorkspace);
         WorkspaceFactory factory = new WorkspaceFactory();
         SandboxProperties properties = new SandboxProperties(
@@ -55,5 +58,40 @@ class DockerSandboxManagerTest {
 
         manager.delete(sandbox.id());
         assertThat(sandboxRoot).doesNotExist();
+    }
+
+    @Test
+    void doesNotFallBackWhenDockerStartupTimesOut() throws Exception {
+        Path workspaceRoot = Files.createDirectory(tmp.resolve("default-workspace-timeout"));
+        Workspace defaultWorkspace = new Workspace(new LocalToolProperties(
+                true, workspaceRoot.toString(), Duration.ofSeconds(10), 30_000, List.of()));
+        WorkspaceRegistry registry = new WorkspaceRegistry(defaultWorkspace);
+        WorkspaceFactory factory = new WorkspaceFactory();
+        Path fakeDocker = writeFakeDockerScript("sleep 2\n");
+        SandboxProperties properties = new SandboxProperties(
+                true,
+                "ubuntu:24.04",
+                fakeDocker.toString(),
+                Duration.ofSeconds(10),
+                Duration.ofMillis(200),
+                "",
+                "hugin-sbx-",
+                25);
+
+        DockerSandboxManager manager = new DockerSandboxManager(properties, registry, factory, tmp.toString());
+
+        assertThatThrownBy(() -> manager.create(null))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("docker run timed out");
+        try (var sandboxes = Files.list(tmp.resolve("sandboxes"))) {
+            assertThat(sandboxes.findAny()).isEmpty();
+        }
+    }
+
+    private Path writeFakeDockerScript(String body) throws IOException {
+        Path script = tmp.resolve("fake-docker.sh");
+        Files.writeString(script, "#!/bin/sh\n" + body);
+        assertThat(script.toFile().setExecutable(true)).isTrue();
+        return script;
     }
 }
