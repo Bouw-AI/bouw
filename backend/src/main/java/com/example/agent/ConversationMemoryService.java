@@ -54,7 +54,9 @@ public class ConversationMemoryService {
 
     /**
      * Appends a completed user/assistant exchange to the session, trimming to the sliding-window
-     * size. No-op when there is no session id or no answer (never throws).
+     * size. This overload is for legacy text-only callers; attachment-bearing turns should call the
+     * {@link #record(String, ChatMessage, String)} overload so the user message is preserved verbatim.
+     * No-op when there is no session id or no answer (never throws).
      */
     public void record(String sessionId, String userPrompt, String assistantAnswer) {
         record(sessionId, ChatMessage.user(userPrompt), assistantAnswer);

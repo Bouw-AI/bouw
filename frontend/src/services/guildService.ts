@@ -84,6 +84,8 @@ export function saveAppState(state: AppState) {
           ? entry
           : {
               ...entry,
+              // Avoid exhausting localStorage with base64 payloads; active chat state keeps the
+              // live preview, while persisted history retains only metadata.
               attachments: entry.attachments.map((attachment) => ({
                 name: attachment.name,
                 mimeType: attachment.mimeType,
