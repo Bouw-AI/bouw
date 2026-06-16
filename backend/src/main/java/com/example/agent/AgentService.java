@@ -204,7 +204,8 @@ public class AgentService {
             conversationMemory.ifPresent(cm -> messages.addAll(cm.history(
                     sessionScope(owner, request.agentId(), request.sessionId()))));
         }
-        messages.add(ChatMessage.user(request.prompt()));
+        ChatMessage userMessage = ChatMessage.user(request.prompt(), request.attachments());
+        messages.add(userMessage);
 
         String lastAssistantContent = null;
         boolean hadToolCalls = false;
@@ -284,7 +285,7 @@ public class AgentService {
                 if (!clientManagedContext) {
                     conversationMemory.ifPresent(cm -> cm.record(
                             sessionScope(owner, request.agentId(), request.sessionId()),
-                            request.prompt(), finalAnswer));
+                            userMessage, finalAnswer));
                 }
                 return new AgentResponse(answer, Collections.unmodifiableList(messages));
             }
@@ -527,6 +528,7 @@ public class AgentService {
         return new ChatMessage(
                 message.role(),
                 message.content() == null ? "" : message.content(),
+                message.attachments(),
                 message.reasoningContent() == null ? "" : message.reasoningContent(),
                 message.toolCalls(),
                 message.toolCallId());

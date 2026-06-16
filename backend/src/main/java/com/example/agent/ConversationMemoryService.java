@@ -54,16 +54,27 @@ public class ConversationMemoryService {
 
     /**
      * Appends a completed user/assistant exchange to the session, trimming to the sliding-window
-     * size. No-op when there is no session id or no answer (never throws).
+     * size. This overload is for legacy text-only callers; attachment-bearing turns should call the
+     * {@link #record(String, ChatMessage, String)} overload so the user message is preserved verbatim.
+     * No-op when there is no session id or no answer (never throws).
      */
     public void record(String sessionId, String userPrompt, String assistantAnswer) {
+        record(sessionId, ChatMessage.user(userPrompt), assistantAnswer);
+    }
+
+    /**
+     * Appends a completed user/assistant exchange to the session, trimming to the sliding-window
+     * size. No-op when there is no session id or no answer (never throws).
+     */
+    public void record(String sessionId, ChatMessage userMessage, String assistantAnswer) {
         if (sessionId == null || sessionId.isBlank()
+                || userMessage == null
                 || assistantAnswer == null || assistantAnswer.isBlank()) {
             return;
         }
         try {
             store.append(sessionId,
-                    List.of(ChatMessage.user(userPrompt), ChatMessage.assistant(assistantAnswer)),
+                    List.of(userMessage, ChatMessage.assistant(assistantAnswer)),
                     properties.maxMessages());
             log.debug("Recorded turn for session {}", sessionId);
         } catch (Exception e) {

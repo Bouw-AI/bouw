@@ -37,6 +37,16 @@ input {
   color: inherit;
 }
 
+.visually-hidden {
+  position: absolute;
+  height: 1px;
+  width: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
 .mock-page {
   display: flex;
   min-height: 100vh;
@@ -262,6 +272,23 @@ input {
   font-size: 14px;
 }
 
+.message-image {
+  display: block;
+  width: min(220px, 100%);
+  margin-bottom: 8px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+.message-attachment-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: #5c626c;
+  font-size: 12.5px;
+}
+
 .message-bubble-assistant {
   max-width: 88%;
   border: 1px solid #eaebed;
@@ -340,6 +367,57 @@ input {
   padding: 4px 20px 8px;
 }
 
+.composer-attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #e4e5e8;
+  border-radius: 16px;
+  padding: 8px 10px;
+  background: #f7f7f8;
+}
+
+.composer-attachment-thumb {
+  height: 42px;
+  width: 42px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.composer-attachment-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.composer-attachment-copy span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #1c1f23;
+  font-size: 13px;
+}
+
+.composer-attachment-copy span:last-child {
+  color: #8b9099;
+  font-size: 11.5px;
+}
+
+.composer-attachment-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  width: 28px;
+  border-radius: 999px;
+  color: #5c626c;
+  cursor: pointer;
+}
+
 .input-bar,
 .search-bar,
 .login-input {
@@ -353,6 +431,12 @@ input {
 .input-bar {
   border-radius: 999px;
   padding: 10px 16px;
+}
+
+.input-bar button:first-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .input-bar input,
