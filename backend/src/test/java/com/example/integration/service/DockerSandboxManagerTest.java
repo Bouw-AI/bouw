@@ -40,17 +40,20 @@ class DockerSandboxManagerTest {
         DockerSandboxManager manager = new DockerSandboxManager(properties, registry, factory, tmp.toString());
 
         SandboxInfo sandbox = manager.create(null);
+        Path workspace = Path.of(sandbox.workspace());
+        Path sandboxRoot = workspace.getParent();
 
         assertThat(sandbox.containerName()).startsWith("host-fallback-");
-        assertThat(Path.of(sandbox.workspace())).exists().isDirectory();
+        assertThat(workspace).exists().isDirectory();
+        assertThat(sandboxRoot).isNotNull();
 
         var result = manager.exec(sandbox.id(), "touch sandbox-smoke.txt", Duration.ofSeconds(10));
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.timedOut()).isFalse();
-        assertThat(Files.exists(Path.of(sandbox.workspace()).resolve("sandbox-smoke.txt"))).isTrue();
+        assertThat(Files.exists(workspace.resolve("sandbox-smoke.txt"))).isTrue();
 
         manager.delete(sandbox.id());
-        assertThat(Path.of(sandbox.workspace()).getParent()).doesNotExist();
+        assertThat(sandboxRoot).doesNotExist();
     }
 }

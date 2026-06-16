@@ -208,7 +208,8 @@ public class DockerSandboxManager implements SandboxRuntime {
             }
         }
         Path workspace = Path.of(info.workspace());
-        deleteQuietly(workspace.getParent());
+        Path sandboxRoot = workspace.getParent();
+        deleteQuietly(sandboxRoot != null ? sandboxRoot : workspace);
         log.info("Deleted sandbox {}", id);
     }
 
@@ -247,7 +248,9 @@ public class DockerSandboxManager implements SandboxRuntime {
     }
 
     private boolean dockerCliUnavailable(ProcessResult result) {
-        return result.exitCode() == -1 && result.output().startsWith("Could not run '" + properties.dockerBin() + "'");
+        return result.exitCode() == -1
+                && !result.timedOut()
+                && result.output().startsWith("Could not run '" + properties.dockerBin() + "'");
     }
 
     private ExecResult runHostCommand(Path workspace, String command, Duration timeout) {
