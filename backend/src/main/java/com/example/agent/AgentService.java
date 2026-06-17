@@ -224,8 +224,12 @@ public class AgentService {
             List<ToolDefinition> toolDefinitions = collectTools(workspace, includeWorkspaceTools);
 
             ChatResponse response = stream
-                    ? llmClient.chatStream(model, messages, toolDefinitions, listener::onContent, listener::onReasoning)
-                    : llmClient.chat(model, messages, toolDefinitions);
+                    ? (request.reasoningEffort() == null || request.reasoningEffort().isBlank()
+                        ? llmClient.chatStream(model, messages, toolDefinitions, listener::onContent, listener::onReasoning)
+                        : llmClient.chatStream(model, request.reasoningEffort(), messages, toolDefinitions, listener::onContent, listener::onReasoning))
+                    : (request.reasoningEffort() == null || request.reasoningEffort().isBlank()
+                        ? llmClient.chat(model, messages, toolDefinitions)
+                        : llmClient.chat(model, request.reasoningEffort(), messages, toolDefinitions));
 
             // Guard against malformed/empty responses (null body, no choices, no message) so a
             // provider hiccup degrades to a graceful answer instead of an NPE/IndexOutOfBounds.
