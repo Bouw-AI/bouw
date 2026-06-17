@@ -167,6 +167,7 @@ public class AgentController {
                 request.prompt(),
                 request.attachments(),
                 request.model(),
+                request.reasoningEffort(),
                 request.decision(),
                 request.complex(),
                 request.simple(),

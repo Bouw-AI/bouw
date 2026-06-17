@@ -22,6 +22,7 @@ import {
   Send,
   Signal,
   SlidersHorizontal,
+  Settings2,
   User,
   Wifi,
   X
@@ -35,6 +36,7 @@ import {
   createThread,
   disconnectGitHub,
   disconnectGoogle,
+  fetchModels,
   fetchCurrentUser,
   fetchIntegrations,
   fetchSandboxFiles,
@@ -44,6 +46,7 @@ import {
   loadAuthSession,
   login as loginRequest,
   reconnectGoogle,
+  saveEnabledModels,
   saveAppState,
   saveAuthSession,
   streamPrompt,
@@ -56,7 +59,8 @@ import type {
   ChatEntry,
   ChatThread,
   FileNode,
-  Integration
+  Integration,
+  ModelOption
 } from "./lib/types";
 
 const LOGO = "/hugin-bird.jpg";
@@ -81,13 +85,14 @@ const CHIPS = [
   ["Show me tips", "Show me tips for getting the most out of Hugin."]
 ] as const;
 
-type Screen = "login" | "chat" | "purechat" | "history" | "integrations";
+type Screen = "login" | "chat" | "purechat" | "history" | "integrations" | "settings";
 
 const MENU_ITEMS = [
   ["New chat", MessageCirclePlus, "chat"],
   ["New sandbox", Box, "sandbox"],
   ["History", History, "history"],
-  ["Integrations", Puzzle, "integrations"]
+  ["Integrations", Puzzle, "integrations"],
+  ["Model settings", Settings2, "settings"]
 ] as const;
 const WORKSPACE_ACTION_RE =
   /\b(debug|fix|edit|change|update|inspect|investigate|search|grep|find|open|read|write|modify|patch|refactor|run|build|test|render)\b/i;
@@ -137,6 +142,32 @@ function formatBytes(size?: number) {
 
 function messageCount(thread: ChatThread) {
   return thread.entries.filter((entry) => entry.type !== "tool").length;
+}
+
+function formatPrice(value?: string | null) {
+  if (!value) return "N/A";
+  const amount = Number(value);
+  if (Number.isNaN(amount)) return value;
+  if (amount === 0) return "$0.00";
+  if (amount >= 1) return `$${amount.toFixed(2)}`;
+  if (amount >= 0.01) return `$${amount.toFixed(3)}`;
+  return `$${amount.toFixed(4)}`;
+}
+
+function formatContext(value?: number | null) {
+  if (!value) return null;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M ctx`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K ctx`;
+  return `${value} ctx`;
+}
+
+function labelReasoning(value: string) {
+  return value === "none" ? "Off" : value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function defaultReasoningFor(model?: ModelOption) {
+  if (!model || !model.reasoningOptions.length) return undefined;
+  return model.reasoningOptions.includes("medium") ? "medium" : model.reasoningOptions[0];
 }
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -425,12 +456,32 @@ function InputBar(props: {
   value: string;
   disabled: boolean;
   attachment: ChatAttachment | null;
+  models: ModelOption[];
+  selectedModelId?: string;
+  selectedReasoning?: string;
   onChange: (value: string) => void;
+  onModelChange: (value: string) => void;
+  onReasoningChange: (value: string) => void;
   onPickImage: () => void;
   onClearImage: () => void;
   onSend: () => void;
 }) {
-  const { value, disabled, attachment, onChange, onPickImage, onClearImage, onSend } = props;
+  const {
+    value,
+    disabled,
+    attachment,
+    models,
+    selectedModelId,
+    selectedReasoning,
+    onChange,
+    onModelChange,
+    onReasoningChange,
+    onPickImage,
+    onClearImage,
+    onSend
+  } = props;
+  const activeModel = models.find((model) => model.id === selectedModelId) ?? models[0];
+  const reasoningOptions = activeModel?.reasoningOptions ?? [];
 
   return (
     <div className="input-wrap">
@@ -475,6 +526,38 @@ function InputBar(props: {
           <Send size={19} strokeWidth={2} color={COLORS.ink} />
         </button>
       </div>
+      <div className="composer-controls">
+        <label className="composer-select">
+          <span>Model</span>
+          <select
+            value={activeModel?.id ?? ""}
+            onChange={(event) => onModelChange(event.target.value)}
+            disabled={disabled || models.length === 0}
+          >
+            {models.length === 0 ? <option value="">No enabled models</option> : null}
+            {models.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="composer-select">
+          <span>Reasoning</span>
+          <select
+            value={reasoningOptions.length ? (selectedReasoning ?? defaultReasoningFor(activeModel) ?? reasoningOptions[0]) : ""}
+            onChange={(event) => onReasoningChange(event.target.value)}
+            disabled={disabled || reasoningOptions.length === 0}
+          >
+            {reasoningOptions.length === 0 ? <option value="">Unavailable</option> : null}
+            {reasoningOptions.map((option) => (
+              <option key={option} value={option}>
+                {labelReasoning(option)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <p className="input-note">Hugin can make mistakes. Please verify important information.</p>
     </div>
   );
@@ -488,8 +571,9 @@ function MenuOverlay(props: {
   onChat: () => void;
   onHistory: () => void;
   onIntegrations: () => void;
+  onSettings: () => void;
 }) {
-  const { username, roles, onClose, onSandbox, onChat, onHistory, onIntegrations } = props;
+  const { username, roles, onClose, onSandbox, onChat, onHistory, onIntegrations, onSettings } = props;
   const initials = username.slice(0, 2).toUpperCase();
 
   return (
@@ -511,7 +595,9 @@ function MenuOverlay(props: {
                 ? onChat
                 : action === "history"
                 ? onHistory
-                : onIntegrations;
+                : action === "integrations"
+                ? onIntegrations
+                : onSettings;
             return (
               <button key={label} type="button" className="menu-item" onClick={handler}>
                 <Icon size={18} strokeWidth={2} color={COLORS.ink} />
@@ -689,6 +775,70 @@ function IntegrationsScreen(props: {
   );
 }
 
+function SettingsScreen(props: {
+  models: ModelOption[];
+  saving: boolean;
+  onBack: () => void;
+  onToggle: (modelId: string) => void;
+  onSave: () => void;
+}) {
+  const { models, saving, onBack, onToggle, onSave } = props;
+  const enabledCount = models.filter((model) => model.enabled).length;
+
+  return (
+    <>
+      <div className="back-row">
+        <button type="button" className="icon-button back-button" onClick={onBack} aria-label="Back">
+          <ArrowLeft size={22} strokeWidth={2} />
+        </button>
+      </div>
+
+      <div className="screen-pad">
+        <h1 className="screen-title integration-title">Model settings</h1>
+        <p className="integration-subtitle">
+          Choose which OpenRouter models appear in chat. Prices are shown per million input and output tokens.
+        </p>
+      </div>
+
+      <div className="integrations-list">
+        <div className="history-group-label">AVAILABLE MODELS</div>
+        {models.length === 0 ? (
+          <p className="history-empty">No models available.</p>
+        ) : (
+          models.map((model) => (
+            <label key={model.id} className={`model-card ${model.enabled ? "model-card-enabled" : ""}`}>
+              <div className="model-card-main">
+                <div className="model-toggle">
+                  <input type="checkbox" checked={model.enabled} onChange={() => onToggle(model.id)} />
+                </div>
+                <div className="integration-copy">
+                  <div className="integration-name-row">
+                    <span className="integration-name">{model.name}</span>
+                    {model.enabled ? <span className="integration-badge">ENABLED</span> : null}
+                  </div>
+                  <div className="integration-meta">{model.id}</div>
+                  {model.description ? <div className="model-description">{model.description}</div> : null}
+                  <div className="model-metrics">
+                    <span>Input {formatPrice(model.promptPrice)}/M</span>
+                    <span>Output {formatPrice(model.completionPrice)}/M</span>
+                    {formatContext(model.contextLength) ? <span>{formatContext(model.contextLength)}</span> : null}
+                  </div>
+                </div>
+              </div>
+            </label>
+          ))
+        )}
+      </div>
+
+      <div className="screen-pad history-footer">
+        <button type="button" className="primary-button" onClick={onSave} disabled={saving || enabledCount === 0}>
+          {saving ? "Saving…" : "Save model settings"}
+        </button>
+      </div>
+    </>
+  );
+}
+
 function Field(props: {
   icon: typeof User;
   label: string;
@@ -791,6 +941,8 @@ export default function App() {
 
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [integrationBusy, setIntegrationBusy] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [savingModels, setSavingModels] = useState(false);
 
   const [historyQuery, setHistoryQuery] = useState("");
   const [returnScreen, setReturnScreen] = useState<Screen>("purechat");
@@ -837,8 +989,30 @@ export default function App() {
   }, [session, screen]);
 
   useEffect(() => {
+    if (!session) return;
+    fetchModels(session.token)
+      .then((next) => setModels(next))
+      .catch(() => setModels([]));
+  }, [session]);
+
+  useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [thread.entries]);
+
+  useEffect(() => {
+    const enabled = models.filter((model) => model.enabled);
+    if (!enabled.length) return;
+    const selected = enabled.find((model) => model.id === thread.modelId) ?? enabled[0];
+    const nextReasoning = thread.reasoningEffort && selected.reasoningOptions.includes(thread.reasoningEffort)
+      ? thread.reasoningEffort
+      : defaultReasoningFor(selected);
+    if (thread.modelId === selected.id && thread.reasoningEffort === nextReasoning) return;
+    setThread((current) => ({
+      ...current,
+      modelId: selected.id,
+      reasoningEffort: nextReasoning
+    }));
+  }, [models, thread.modelId, thread.reasoningEffort]);
 
   // Persist a thread to history only once the user has actually sent a message.
   useEffect(() => {
@@ -877,6 +1051,7 @@ export default function App() {
       setSession(validated);
       setThread(createThread("chat"));
       setScreen(readLaunchScreen() === "integrations" ? "integrations" : "purechat");
+      fetchModels(validated.token).then((next) => setModels(next)).catch(() => setModels([]));
       setPassword("");
     } catch (e) {
       setLoginError(e instanceof Error ? e.message : "Sign in failed.");
@@ -946,6 +1121,18 @@ export default function App() {
     }
   }, [screen, returnScreen, session]);
 
+  const openSettings = useCallback(async () => {
+    setReturnScreen(screen === "settings" ? returnScreen : screen);
+    setScreen("settings");
+    setMenuOpen(false);
+    if (!session) return;
+    try {
+      setModels(await fetchModels(session.token));
+    } catch {
+      setModels([]);
+    }
+  }, [screen, returnScreen, session]);
+
   const toggleIntegration = useCallback(
     async (integration: Integration) => {
       if (!session || (integration.id !== "google" && integration.id !== "github")) return;
@@ -992,6 +1179,15 @@ export default function App() {
       const text = (textArg ?? draft).trim();
       const attachment = draftAttachment;
       if ((!text && !attachment) || busy || !session) return;
+      const enabledModels = models.filter((model) => model.enabled);
+      const selectedModel = enabledModels.find((model) => model.id === threadRef.current.modelId) ?? enabledModels[0];
+      if (!selectedModel) {
+        setError("Enable at least one model in Model settings before sending a message.");
+        return;
+      }
+      const selectedReasoning = selectedModel.reasoningOptions.includes(threadRef.current.reasoningEffort ?? "")
+        ? threadRef.current.reasoningEffort
+        : defaultReasoningFor(selectedModel);
 
       let sandboxId = threadRef.current.sandboxId;
       if (!sandboxId && promptNeedsWorkspace(text)) {
@@ -1022,6 +1218,8 @@ export default function App() {
         return {
           ...current,
           ...(sandboxId ? { kind: "sandbox" as const, sandboxId } : {}),
+          modelId: selectedModel.id,
+          reasoningEffort: selectedReasoning,
           title: isFirst ? getThreadTitle(text || attachment?.name || "Image attachment") : current.title,
           updatedAt: nowIso(),
           entries: [...current.entries, userEntry, assistant]
@@ -1035,6 +1233,8 @@ export default function App() {
             threadId: threadRef.current.id,
             prompt: text,
             attachments: attachment ? [attachment] : undefined,
+            model: selectedModel.id,
+            reasoningEffort: selectedReasoning,
             sandboxId
           },
           { onEvent: (event) => setThread((current) => applyStreamEvent(current, assistant.id, event)) }
@@ -1047,7 +1247,7 @@ export default function App() {
         if (sandboxId) void refreshFiles(sandboxId);
       }
     },
-    [draft, draftAttachment, busy, session, refreshFiles]
+    [draft, draftAttachment, busy, session, refreshFiles, models]
   );
 
   const pickImage = useCallback(() => {
@@ -1094,6 +1294,34 @@ export default function App() {
       event.target.value = "";
     }
   }, []);
+
+  const toggleModelEnabled = useCallback((modelId: string) => {
+    setModels((current) => current.map((model) => (model.id === modelId ? { ...model, enabled: !model.enabled } : model)));
+  }, []);
+
+  const saveModelPreferences = useCallback(async () => {
+    if (!session || savingModels) return;
+    const enabledModelIds = models.filter((model) => model.enabled).map((model) => model.id);
+    if (enabledModelIds.length === 0) {
+      setError("Enable at least one model before saving.");
+      return;
+    }
+    setSavingModels(true);
+    try {
+      setModels(await saveEnabledModels(session.token, enabledModelIds));
+      setScreen(returnScreen);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save model settings.");
+    } finally {
+      setSavingModels(false);
+    }
+  }, [session, savingModels, models, returnScreen]);
+
+  const enabledModels = models.filter((model) => model.enabled);
+  const activeModel = enabledModels.find((model) => model.id === thread.modelId) ?? enabledModels[0];
+  const activeReasoning = activeModel?.reasoningOptions.includes(thread.reasoningEffort ?? "")
+    ? thread.reasoningEffort
+    : defaultReasoningFor(activeModel);
 
   if (booting) {
     return (
@@ -1157,9 +1385,23 @@ export default function App() {
             )}
             <InputBar
               value={draft}
-              disabled={busy}
+              disabled={busy || enabledModels.length === 0}
               attachment={draftAttachment}
+              models={enabledModels}
+              selectedModelId={activeModel?.id}
+              selectedReasoning={activeReasoning}
               onChange={setDraft}
+              onModelChange={(modelId) => {
+                const model = enabledModels.find((item) => item.id === modelId);
+                setThread((current) => ({
+                  ...current,
+                  modelId,
+                  reasoningEffort: defaultReasoningFor(model)
+                }));
+              }}
+              onReasoningChange={(reasoningEffort) => {
+                setThread((current) => ({ ...current, reasoningEffort }));
+              }}
               onPickImage={pickImage}
               onClearImage={clearImage}
               onSend={() => send()}
@@ -1171,6 +1413,14 @@ export default function App() {
             busyId={integrationBusy}
             onBack={() => setScreen(returnScreen)}
             onToggle={toggleIntegration}
+          />
+        ) : screen === "settings" ? (
+          <SettingsScreen
+            models={models}
+            saving={savingModels}
+            onBack={() => setScreen(returnScreen)}
+            onToggle={toggleModelEnabled}
+            onSave={saveModelPreferences}
           />
         ) : (
           <HistoryScreen
@@ -1196,6 +1446,7 @@ export default function App() {
               setMenuOpen(false);
             }}
             onIntegrations={openIntegrations}
+            onSettings={openSettings}
           />
         ) : null}
       </div>

@@ -20,3 +20,25 @@ create table if not exists user_agents (
 );
 
 create index if not exists idx_user_agents_owner on user_agents(owner_username);
+
+create table if not exists openrouter_models (
+    id varchar(200) primary key,
+    name varchar(200) not null,
+    description text,
+    context_length bigint,
+    prompt_price varchar(64),
+    completion_price varchar(64),
+    reasoning_options text not null default '[]',
+    supported_parameters text not null default '[]',
+    updated_at timestamp with time zone not null default current_timestamp
+);
+
+create table if not exists user_model_preferences (
+    owner_username varchar(100) not null references app_users(username) on delete cascade,
+    model_id varchar(200) not null references openrouter_models(id) on delete cascade,
+    enabled boolean not null default false,
+    updated_at timestamp with time zone not null default current_timestamp,
+    primary key (owner_username, model_id)
+);
+
+create index if not exists idx_user_model_preferences_owner on user_model_preferences(owner_username);

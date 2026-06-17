@@ -7,6 +7,7 @@ import type {
   ChatThread,
   FileNode,
   Integration,
+  ModelOption,
   SandboxInfo,
   StreamToolEvent,
   ToolSummary
@@ -179,6 +180,8 @@ export function createThread(kind: ChatKind = "chat", sandboxId?: string): ChatT
     title: kind === "sandbox" ? "New sandbox" : "New chat",
     kind,
     sandboxId,
+    modelId: undefined,
+    reasoningEffort: undefined,
     createdAt,
     updatedAt: createdAt,
     entries: []
@@ -331,6 +334,8 @@ export type StreamOptions = {
   threadId: string;
   prompt: string;
   attachments?: ChatAttachment[];
+  model?: string;
+  reasoningEffort?: string;
   /** When set, the agent runs inside this sandbox and gets filesystem/shell tools. */
   sandboxId?: string;
 };
@@ -375,6 +380,8 @@ export async function streamPrompt(token: string, options: StreamOptions, handle
   const requestBody = JSON.stringify({
     prompt: options.prompt,
     ...(options.attachments?.length ? { attachments: options.attachments } : {}),
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
     sessionId: options.threadId,
     // Only sandbox sessions advertise filesystem tools; pure chats omit sandboxId entirely.
     ...(options.sandboxId ? { sandboxId: options.sandboxId } : {})
@@ -487,6 +494,25 @@ export async function fetchSandboxFiles(token: string, id: string): Promise<File
 
 export async function fetchIntegrations(token: string): Promise<Integration[]> {
   return apiFetch<Integration[]>("/api/integrations", {}, token);
+}
+
+type ModelSettingsResponse = {
+  models: ModelOption[];
+};
+
+export async function fetchModels(token: string, enabledOnly = false): Promise<ModelOption[]> {
+  const query = enabledOnly ? "?enabledOnly=true" : "";
+  const response = await apiFetch<ModelSettingsResponse>(`/api/models${query}`, {}, token);
+  return response.models;
+}
+
+export async function saveEnabledModels(token: string, enabledModelIds: string[]): Promise<ModelOption[]> {
+  const response = await apiFetch<ModelSettingsResponse>(
+    "/api/models/preferences",
+    { method: "PUT", body: JSON.stringify({ enabledModelIds }) },
+    token
+  );
+  return response.models;
 }
 
 export async function fetchTools(token: string, sandboxId?: string): Promise<ToolSummary[]> {

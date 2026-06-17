@@ -51,6 +51,8 @@ export type ChatThread = {
   title: string;
   kind: ChatKind;
   sandboxId?: string;
+  modelId?: string;
+  reasoningEffort?: string;
   createdAt: string;
   updatedAt: string;
   entries: ChatEntry[];
@@ -93,4 +95,15 @@ export type Integration = {
   authMode: string;
   tools: string[];
   message: string;
+};
+
+export type ModelOption = {
+  id: string;
+  name: string;
+  description?: string | null;
+  contextLength?: number | null;
+  promptPrice?: string | null;
+  completionPrice?: string | null;
+  reasoningOptions: string[];
+  enabled: boolean;
 };

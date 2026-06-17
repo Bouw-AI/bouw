@@ -114,9 +114,9 @@ public class OpenAiClient {
      * @param messages conversation history
      * @param tools    tool definitions to advertise; pass an empty list to omit tool calling
      */
-    public ChatResponse chat(String model, List<ChatMessage> messages, List<ToolDefinition> tools) {
+    public ChatResponse chat(String model, String reasoningEffortOverride, List<ChatMessage> messages, List<ToolDefinition> tools) {
         boolean hasTools = tools != null && !tools.isEmpty();
-        ChatRequest request = buildRequest(model, messages, tools, false);
+        ChatRequest request = buildRequest(model, reasoningEffortOverride, messages, tools, false);
 
         log.debug("Sending chat request: model={}, messages={}, tools={}",
                 model, messages.size(), hasTools ? tools.size() : 0);
@@ -129,6 +129,10 @@ public class OpenAiClient {
                 .body(ChatResponse.class));
     }
 
+    public ChatResponse chat(String model, List<ChatMessage> messages, List<ToolDefinition> tools) {
+        return chat(model, null, messages, tools);
+    }
+
     /**
      * Streams a chat-completions request ({@code stream: true}), invoking {@code onContentDelta}
      * for each chunk of assistant text as it arrives, and returns the fully assembled response
@@ -139,17 +143,22 @@ public class OpenAiClient {
      * @param tools          tool definitions to advertise; pass an empty list to omit tool calling
      * @param onContentDelta receives each streamed text fragment in order
      */
-    public ChatResponse chatStream(String model, List<ChatMessage> messages,
+    public ChatResponse chatStream(String model, String reasoningEffortOverride, List<ChatMessage> messages,
                                    List<ToolDefinition> tools, Consumer<String> onContentDelta) {
-        return chatStream(model, messages, tools, onContentDelta, delta -> {});
+        return chatStream(model, reasoningEffortOverride, messages, tools, onContentDelta, delta -> {});
     }
 
     public ChatResponse chatStream(String model, List<ChatMessage> messages,
+                                   List<ToolDefinition> tools, Consumer<String> onContentDelta) {
+        return chatStream(model, null, messages, tools, onContentDelta, delta -> {});
+    }
+
+    public ChatResponse chatStream(String model, String reasoningEffortOverride, List<ChatMessage> messages,
                                    List<ToolDefinition> tools,
                                    Consumer<String> onContentDelta,
                                    Consumer<String> onReasoningDelta) {
         boolean hasTools = tools != null && !tools.isEmpty();
-        ChatRequest request = buildRequest(model, messages, tools, true);
+        ChatRequest request = buildRequest(model, reasoningEffortOverride, messages, tools, true);
 
         log.debug("Sending streaming chat request: model={}, messages={}, tools={}",
                 model, messages.size(), hasTools ? tools.size() : 0);
@@ -234,6 +243,13 @@ public class OpenAiClient {
             }
         }
         throw new IllegalStateException("LLM streaming request failed: max retries exceeded", lastErr);
+    }
+
+    public ChatResponse chatStream(String model, List<ChatMessage> messages,
+                                   List<ToolDefinition> tools,
+                                   Consumer<String> onContentDelta,
+                                   Consumer<String> onReasoningDelta) {
+        return chatStream(model, null, messages, tools, onContentDelta, onReasoningDelta);
     }
 
     private ChatResponse parseStream(InputStream stream, Consumer<String> onContentDelta,
@@ -377,10 +393,13 @@ public class OpenAiClient {
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 
-    private ChatRequest buildRequest(String model, List<ChatMessage> messages, List<ToolDefinition> tools,
+    private ChatRequest buildRequest(String model, String reasoningEffortOverride, List<ChatMessage> messages, List<ToolDefinition> tools,
                                      boolean stream) {
         boolean hasTools = tools != null && !tools.isEmpty();
         boolean deepSeek = deepSeekCompat || isDeepSeekModel(model);
+        String selectedReasoningEffort = reasoningEffortOverride == null || reasoningEffortOverride.isBlank()
+                ? reasoningEffort
+                : reasoningEffortOverride;
         List<ChatMessage> normalizedMessages = deepSeek ? normalizeForDeepSeek(messages) : messages;
         List<Map<String, Object>> wireMessages = toWireMessages(normalizedMessages);
         return new ChatRequest(
@@ -388,8 +407,8 @@ public class OpenAiClient {
                 wireMessages,
                 hasTools ? tools : null,
                 deepSeek ? null : (hasTools ? "auto" : null),
-                deepSeek ? reasoningEffort : null,
-                deepSeek ? null : ReasoningConfig.withEffort(reasoningEffort),
+                deepSeek ? selectedReasoningEffort : null,
+                deepSeek ? null : ReasoningConfig.withEffort(selectedReasoningEffort),
                 deepSeek ? ThinkingConfig.enabled() : null,
                 stream
         );
