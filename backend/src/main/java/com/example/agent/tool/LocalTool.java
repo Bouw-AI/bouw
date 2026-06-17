@@ -23,10 +23,10 @@ public interface LocalTool {
     /**
      * Whether this tool needs a real, writable workspace (filesystem or shell access) to be useful.
      *
-     * <p>Tools that read, write, search, or execute against the workspace return {@code true}.
-     * Requests always resolve to either the default host workspace or a sandbox-specific one, so
-     * these tools stay available; the distinction remains useful to callers and future policy
-     * layers. Defaults to {@code false}.
+     * <p>Tools that read, write, search, or execute against the workspace return {@code true}. The
+     * agent uses this to keep filesystem/shell tools out of "pure chat" requests (those with no
+     * sandbox bound to them), where there is no workspace the user expects the agent to touch, while
+     * still advertising them for sandbox-backed sessions. Defaults to {@code false}.
      */
     default boolean requiresWorkspace() {
         return false;

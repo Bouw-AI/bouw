@@ -89,6 +89,8 @@ const MENU_ITEMS = [
   ["History", History, "history"],
   ["Integrations", Puzzle, "integrations"]
 ] as const;
+const WORKSPACE_PROMPT_RE =
+  /\b(debug|fix|bug|code|repo|repository|file|files|folder|directory|build|test|frontend|backend|component|render|markdown|function|class|css|html|typescript|javascript|java|python|bash|shell|command)\b/i;
 
 function entryId(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -99,6 +101,10 @@ function entryId(prefix: string) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function promptNeedsWorkspace(prompt: string) {
+  return WORKSPACE_PROMPT_RE.test(prompt);
 }
 
 function readLaunchScreen() {
@@ -960,6 +966,23 @@ export default function App() {
       const attachment = draftAttachment;
       if ((!text && !attachment) || busy || !session) return;
 
+      let sandboxId = threadRef.current.sandboxId;
+      if (!sandboxId && promptNeedsWorkspace(text)) {
+        setBusy(true);
+        setError(null);
+        try {
+          const sandbox = await createSandbox(session.token);
+          sandboxId = sandbox.id;
+          setThread((current) => ({ ...current, kind: "sandbox", sandboxId: sandbox.id }));
+          setScreen("chat");
+          void refreshFiles(sandbox.id);
+        } catch (e) {
+          setBusy(false);
+          setError(e instanceof Error ? e.message : "Could not start a sandbox for this task.");
+          return;
+        }
+      }
+
       setDraft("");
       setDraftAttachment(null);
       setBusy(true);
@@ -971,6 +994,7 @@ export default function App() {
         const isFirst = !current.entries.some((entry) => entry.type === "user");
         return {
           ...current,
+          ...(sandboxId ? { kind: "sandbox" as const, sandboxId } : {}),
           title: isFirst ? getThreadTitle(text || attachment?.name || "Image attachment") : current.title,
           updatedAt: nowIso(),
           entries: [...current.entries, userEntry, assistant]
@@ -984,7 +1008,7 @@ export default function App() {
             threadId: threadRef.current.id,
             prompt: text,
             attachments: attachment ? [attachment] : undefined,
-            sandboxId: threadRef.current.sandboxId
+            sandboxId
           },
           { onEvent: (event) => setThread((current) => applyStreamEvent(current, assistant.id, event)) }
         );
@@ -993,7 +1017,7 @@ export default function App() {
         setThread((current) => applyStreamEvent(current, assistant.id, { type: "error", message }));
       } finally {
         setBusy(false);
-        if (threadRef.current.sandboxId) void refreshFiles();
+        if (sandboxId) void refreshFiles(sandboxId);
       }
     },
     [draft, draftAttachment, busy, session, refreshFiles]

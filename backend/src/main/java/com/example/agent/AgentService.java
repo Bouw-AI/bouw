@@ -100,12 +100,13 @@ public class AgentService {
     /**
      * Returns the tools the agent would advertise for a request bound to {@code sandboxId}.
      *
-     * <p>The list is dynamic: integration-backed tools are only included when their integration
-     * reports itself available. Built-in workspace tools are always advertised because requests
-     * without a sandbox still operate against the default host workspace; {@code sandboxId} only
-     * changes which workspace/JIT tool directory is targeted.
+     * <p>The list is dynamic: filesystem/shell tools (and just-in-time workspace tools) are only
+     * included when the request has a sandbox to operate in, and integration-backed tools are only
+     * included when their integration reports itself available. A blank {@code sandboxId} reflects a
+     * "pure chat" request (no workspace), so workspace tools are omitted.
      */
     public List<ToolSummary> availableTools(String sandboxId) {
+        boolean includeWorkspaceTools = sandboxId != null && !sandboxId.isBlank();
         Workspace workspace = workspaceRegistry.resolve(sandboxId);
         List<ToolSummary> result = new ArrayList<>();
         Set<String> toolNames = new LinkedHashSet<>();
@@ -113,19 +114,24 @@ public class AgentService {
             if (!tool.isAvailable()) {
                 continue;
             }
+            if (tool.requiresWorkspace() && !includeWorkspaceTools) {
+                continue;
+            }
             result.add(new ToolSummary(tool.name(), tool.description(), "local", "built-in"));
             toolNames.add(tool.name());
         }
-        for (LocalTool tool : jitTools.tools(workspace)) {
-            if (toolNames.add(tool.name())) {
-                result.add(new ToolSummary(tool.name(), tool.description(), "workspace", "jit"));
+        if (includeWorkspaceTools) {
+            for (LocalTool tool : jitTools.tools(workspace)) {
+                if (toolNames.add(tool.name())) {
+                    result.add(new ToolSummary(tool.name(), tool.description(), "workspace", "jit"));
+                }
             }
         }
         return result;
     }
 
     public AgentResponse chat(AgentRequest request) {
-        return runLoop(request, NO_OP_LISTENER, false, "global");
+        return runLoop(request, NO_OP_LISTENER, false, "global", true);
     }
 
     /**
@@ -135,19 +141,24 @@ public class AgentService {
      * once the loop completes.
      */
     public AgentResponse chatStream(AgentRequest request, AgentStreamListener listener) {
-        return runLoop(request, listener, true, "global");
+        return runLoop(request, listener, true, "global", true);
     }
 
     public AgentResponse chat(AgentRequest request, String owner) {
-        return runLoop(request, NO_OP_LISTENER, false, normalizeOwner(owner));
+        return runLoop(request, NO_OP_LISTENER, false, normalizeOwner(owner), hasSandbox(request));
     }
 
     public AgentResponse chatStream(AgentRequest request, AgentStreamListener listener, String owner) {
-        return runLoop(request, listener, true, normalizeOwner(owner));
+        return runLoop(request, listener, true, normalizeOwner(owner), hasSandbox(request));
+    }
+
+    /** Whether a request is bound to a sandbox, which gives it filesystem/shell tools. */
+    private static boolean hasSandbox(AgentRequest request) {
+        return request != null && request.sandboxId() != null && !request.sandboxId().isBlank();
     }
 
     private AgentResponse runLoop(AgentRequest request, AgentStreamListener listener, boolean stream,
-                                  String owner) {
+                                  String owner, boolean includeWorkspaceTools) {
         Instant deadline = Instant.now().plus(requestTimeout);
         RoutingSelection routing = resolveModel(request);
         String model = routing.model();
@@ -155,12 +166,12 @@ public class AgentService {
         // sandbox id; otherwise fall back to the session id, preserving the previous behaviour.
         String workspaceKey = firstNonBlank(request.sandboxId(), request.sessionId());
         Workspace workspace = workspaceRegistry.resolve(workspaceKey);
-        List<ToolDefinition> initialToolDefinitions = collectTools(workspace);
+        List<ToolDefinition> initialToolDefinitions = collectTools(workspace, includeWorkspaceTools);
 
         log.debug("Agent chat: model={}, route={}, decisionModel={}, tools available={} (local={}), "
-                        + "workspace={}, sandboxId={}, stream={}",
+                        + "workspaceTools={}, stream={}",
                 model, routing.route(), routing.decisionModel(), initialToolDefinitions.size(),
-                localTools.tools().size(), workspace.root(), request.sandboxId(), stream);
+                localTools.tools().size(), includeWorkspaceTools, stream);
 
         List<ChatMessage> messages = new ArrayList<>();
         systemFactsService.ifPresent(sfs -> {
@@ -210,7 +221,7 @@ public class AgentService {
 
             // Rebuild the tool list on every loop iteration so freshly written local manifests
             // become visible without a service restart.
-            List<ToolDefinition> toolDefinitions = collectTools(workspace);
+            List<ToolDefinition> toolDefinitions = collectTools(workspace, includeWorkspaceTools);
 
             ChatResponse response = stream
                     ? llmClient.chatStream(model, messages, toolDefinitions, listener::onContent, listener::onReasoning)
@@ -296,29 +307,35 @@ public class AgentService {
      *   <li>An integration-backed tool that reports {@link LocalTool#isAvailable()} {@code false}
      *       (e.g. web search with no API key, Google Workspace not connected) is omitted entirely, so
      *       the model never sees a capability the user has not set up.</li>
-     *   <li>Workspace tools always remain available because every request resolves to either the
-     *       default host workspace or a sandbox-specific one. {@code sandboxId} changes the targeted
-     *       workspace, not whether file/shell tools exist at all.</li>
+     *   <li>A tool that {@link LocalTool#requiresWorkspace() requires a workspace} (filesystem/shell
+     *       access), and the just-in-time workspace tools, are only included when
+     *       {@code includeWorkspaceTools} is set — i.e. the request is bound to a sandbox. Pure chat
+     *       requests therefore get a leaner tool set without filesystem tools.</li>
      * </ul>
      */
-    private List<ToolDefinition> collectTools(Workspace workspace) {
+    private List<ToolDefinition> collectTools(Workspace workspace, boolean includeWorkspaceTools) {
         List<ToolDefinition> toolDefinitions = new ArrayList<>();
         Set<String> names = new LinkedHashSet<>();
         for (LocalTool tool : localTools.tools()) {
             if (!tool.isAvailable()) {
                 continue;
             }
+            if (tool.requiresWorkspace() && !includeWorkspaceTools) {
+                continue;
+            }
             toolDefinitions.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
             names.add(tool.name());
         }
-        for (LocalTool tool : jitTools.tools(workspace)) {
-            if (builtinToolNames.contains(tool.name())) {
-                log.warn("JIT tool '{}' in workspace {} is shadowed by a built-in local tool",
-                        tool.name(), workspace.root());
-                continue;
-            }
-            if (names.add(tool.name())) {
-                toolDefinitions.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
+        if (includeWorkspaceTools) {
+            for (LocalTool tool : jitTools.tools(workspace)) {
+                if (builtinToolNames.contains(tool.name())) {
+                    log.warn("JIT tool '{}' in workspace {} is shadowed by a built-in local tool",
+                            tool.name(), workspace.root());
+                    continue;
+                }
+                if (names.add(tool.name())) {
+                    toolDefinitions.add(ToolDefinition.from(tool.name(), tool.description(), tool.inputSchema()));
+                }
             }
         }
         return toolDefinitions;

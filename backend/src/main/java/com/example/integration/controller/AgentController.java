@@ -75,9 +75,8 @@ public class AgentController {
 
     @GetMapping("/tools")
     public List<AgentService.ToolSummary> listTools(@RequestParam(required = false) String sandboxId) {
-        // Mirror the dynamic tool set the agent would advertise for this request. Every request has
-        // a workspace (host by default, sandbox-specific when sandboxId is present); sandboxId only
-        // changes which workspace/JIT tools are targeted.
+        // Mirror the dynamic tool set the agent would advertise for this request: a blank sandboxId
+        // is a "pure chat" with no filesystem tools; a sandbox id includes the workspace tools.
         return agentService.availableTools(sandboxId);
     }
 
