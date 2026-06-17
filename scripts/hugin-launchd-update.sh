@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${HUGIN_DEV_ENV_FILE:-$HOME/.config/hugin-dev/env}"
 SERVICE_LABEL="${HUGIN_DEV_SERVICE_LABEL:-com.jnku.hugin.repo-server}"
+SERVICE_PLIST="${HUGIN_DEV_SERVICE_PLIST:-$HOME/Library/LaunchAgents/${SERVICE_LABEL}.plist}"
 UPDATE_LOG_DIR="${HUGIN_DEV_LOG_DIR:-$REPO_DIR/.data/logs}"
 
 info() { printf '[hugin-update] %s\n' "$*"; }
@@ -63,7 +64,10 @@ info "Rebuilding frontend and backend artifacts..."
 # compiled web assets into the jar served by the detached launchd process.
 MAVEN_OPTS="${MAVEN_OPTS:--Xmx512m}" mvn -q -DskipTests package
 
-info "Restarting launchd service ${SERVICE_LABEL} in detached mode..."
+info "Reloading launchd service ${SERVICE_LABEL} in detached mode..."
+launchctl bootout "gui/$(id -u)" "$SERVICE_PLIST" >/dev/null 2>&1 || true
+launchctl bootstrap "gui/$(id -u)" "$SERVICE_PLIST"
+launchctl enable "gui/$(id -u)/${SERVICE_LABEL}"
 launchctl kickstart -k "gui/$(id -u)/${SERVICE_LABEL}"
 
 info "Update complete."
