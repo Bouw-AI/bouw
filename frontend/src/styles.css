@@ -244,6 +244,7 @@ input {
 
 .messages {
   padding: 16px 20px 8px;
+  overflow-x: hidden;
 }
 
 .message-row {
@@ -260,7 +261,11 @@ input {
 }
 
 .message-bubble {
+  max-width: 100%;
+  min-width: 0;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-bubble-user {
@@ -448,7 +453,7 @@ input {
 
 .input-bar input {
   color: #1c1f23;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .input-bar input::placeholder,
