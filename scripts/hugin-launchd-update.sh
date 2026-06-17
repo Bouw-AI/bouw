@@ -4,10 +4,24 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${HUGIN_DEV_ENV_FILE:-$HOME/.config/hugin-dev/env}"
 SERVICE_LABEL="${HUGIN_DEV_SERVICE_LABEL:-com.jnku.hugin.repo-server}"
+SERVICE_PLIST="${HUGIN_DEV_SERVICE_PLIST:-$HOME/Library/LaunchAgents/${SERVICE_LABEL}.plist}"
 UPDATE_LOG_DIR="${HUGIN_DEV_LOG_DIR:-$REPO_DIR/.data/logs}"
 
 info() { printf '[hugin-update] %s\n' "$*"; }
 warn() { printf '[hugin-update] %s\n' "$*" >&2; }
+kickstart_service() {
+  local target="gui/$(id -u)/${SERVICE_LABEL}"
+  local attempt
+  for attempt in {1..10}; do
+    if launchctl kickstart -k "$target" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  warn "Unable to kickstart ${SERVICE_LABEL} after reloading ${SERVICE_PLIST}."
+  return 1
+}
 
 mkdir -p "$UPDATE_LOG_DIR"
 
@@ -32,6 +46,11 @@ fi
 export PATH="$JAVA_HOME/bin:$PATH"
 
 cd "$REPO_DIR"
+
+if [[ ! -f "$SERVICE_PLIST" ]]; then
+  warn "LaunchAgent plist not found at ${SERVICE_PLIST}."
+  exit 1
+fi
 
 current_branch="$(git rev-parse --abbrev-ref HEAD)"
 if [[ "$current_branch" != "main" ]]; then
@@ -63,7 +82,10 @@ info "Rebuilding frontend and backend artifacts..."
 # compiled web assets into the jar served by the detached launchd process.
 MAVEN_OPTS="${MAVEN_OPTS:--Xmx512m}" mvn -q -DskipTests package
 
-info "Restarting launchd service ${SERVICE_LABEL} in detached mode..."
-launchctl kickstart -k "gui/$(id -u)/${SERVICE_LABEL}"
+info "Reloading launchd service ${SERVICE_LABEL} in detached mode..."
+launchctl bootout "gui/$(id -u)" "$SERVICE_PLIST" >/dev/null 2>&1 || true
+launchctl bootstrap "gui/$(id -u)" "$SERVICE_PLIST"
+sleep 1
+kickstart_service
 
 info "Update complete."
