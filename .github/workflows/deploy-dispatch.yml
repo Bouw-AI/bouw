@@ -28,11 +28,32 @@ jobs:
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           SOURCE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}
         run: |
-          gh api "repos/${DEPLOY_REPO}/dispatches" \
-            --method POST \
-            -f event_type='hugin_deploy' \
-            -F client_payload[sha]="${SOURCE_SHA}" \
-            -F client_payload[ref]='refs/heads/main' \
-            -F client_payload[source_repository]="${SOURCE_REPOSITORY}" \
-            -F client_payload[source_run_id]="${SOURCE_RUN_ID}" \
-            -F client_payload[source_run_url]="${SOURCE_RUN_URL}"
+          payload="$(jq -n \
+            --arg sha "${SOURCE_SHA}" \
+            --arg ref "refs/heads/main" \
+            --arg source_repository "${SOURCE_REPOSITORY}" \
+            --arg source_run_id "${SOURCE_RUN_ID}" \
+            --arg source_run_url "${SOURCE_RUN_URL}" \
+            '{
+              event_type: "hugin_deploy",
+              client_payload: {
+                sha: $sha,
+                ref: $ref,
+                source_repository: $source_repository,
+                source_run_id: $source_run_id,
+                source_run_url: $source_run_url
+              }
+            }')"
+
+          for attempt in 1 2 3; do
+            if gh api "repos/${DEPLOY_REPO}/dispatches" --method POST --input - <<<"${payload}"; then
+              exit 0
+            fi
+
+            if [[ "${attempt}" -lt 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+
+          echo "::error::Failed to dispatch deploy workflow to ${DEPLOY_REPO} after 3 attempts."
+          exit 1
