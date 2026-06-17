@@ -136,7 +136,9 @@ public class OpenRouterModelService {
                 modelRepository.upsert(record);
                 ids.add(record.id());
             }
-            modelRepository.deleteMissing(ids);
+            if (!ids.isEmpty()) {
+                modelRepository.deleteMissing(ids);
+            }
         } catch (Exception e) {
             if (modelRepository.findAll().isEmpty()) {
                 throw new IllegalStateException("Could not load models from OpenRouter: " + e.getMessage(), e);
