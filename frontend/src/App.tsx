@@ -643,7 +643,7 @@ function IntegrationsScreen(props: {
                 <div className="integration-meta">{integration.description}</div>
               </div>
               <div className="integration-action">
-                {integration.reconnectable || integration.showActionWhenDisconnected ? (
+                {integration.reconnectable ? (
                   integration.connected ? (
                     <button
                       type="button"
