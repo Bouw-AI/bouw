@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode, type RefObject } from "react";
+import ReactMarkdown from "react-markdown";
 import {
   ArrowLeft,
   BatteryFull,
@@ -412,7 +413,7 @@ function Messages({
         return (
           <div key={entry.id} className="message-row message-row-assistant fade-in">
             <div className="message-bubble message-bubble-assistant">
-              {empty && busy ? <TypingDots /> : <span>{entry.content}</span>}
+              {empty && busy ? <TypingDots /> : <ReactMarkdown>{entry.content}</ReactMarkdown>}
             </div>
           </div>
         );
