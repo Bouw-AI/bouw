@@ -2,6 +2,16 @@
 
 Codex agents working in this repository should always create a pull request when they complete a feature.
 Any UI change must include at least one current screenshot of the changed state in the pull request.
+When a task updates specific screens, agents should capture screenshots of each specific updated screen after the work is complete, not just a generic app shell.
+
+## Screenshot Login
+
+Use the seeded screenshot test account when verifying authenticated UI flows and capturing screenshots:
+
+- Username: `screenshot-test`
+- Password: `hugin-screenshot`
+
+Agents should log in with that account before taking post-change UI screenshots unless the task specifically requires a different user state.
 
 Agents working in this repository should follow this workflow:
 
