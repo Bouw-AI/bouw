@@ -13,17 +13,25 @@ import java.time.Duration;
  *
  * @param enabled     master switch for short-term memory (default true)
  * @param maxMessages sliding-window size: the most recent N stored messages kept per session
- * @param ttl         how long an idle session's history is retained before eviction
+ * @param ttl         optional idle-retention limit; when null/blank, history is retained until trimmed by maxMessages
+ * @param storeFile   JSON file used to persist short-term conversation history across restarts
  */
 @ConfigurationProperties("conversation.memory")
-public record ConversationMemoryProperties(boolean enabled, int maxMessages, Duration ttl) {
+public record ConversationMemoryProperties(boolean enabled, int maxMessages, Duration ttl, String storeFile) {
+
+    public ConversationMemoryProperties(boolean enabled, int maxMessages, Duration ttl) {
+        this(enabled, maxMessages, ttl, "./conversation-memory.json");
+    }
 
     public ConversationMemoryProperties {
         if (maxMessages <= 0) {
             maxMessages = 20;
         }
-        if (ttl == null || ttl.isZero() || ttl.isNegative()) {
-            ttl = Duration.ofHours(2);
+        if (ttl != null && (ttl.isZero() || ttl.isNegative())) {
+            ttl = null;
+        }
+        if (storeFile == null || storeFile.isBlank()) {
+            storeFile = "./conversation-memory.json";
         }
     }
 }

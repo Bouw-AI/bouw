@@ -604,12 +604,76 @@ class AgentServiceTest {
                 .thenReturn(responseWithContent("done"));
 
         List<String> recent = List.of("Alice: hi", "Bob: yo");
-        AgentResponse result = service.chat(new AgentRequest(PROMPT, MODEL, SESSION_ID, recent));
+        AgentResponse result = service.chat(new AgentRequest(
+                PROMPT,
+                null,
+                MODEL,
+                null,
+                MODEL,
+                MODEL,
+                MODEL,
+                null,
+                null,
+                "discord-channel-1",
+                null,
+                recent,
+                null,
+                true));
 
         assertThat(result.response()).isEqualTo("done");
         verify(conversation, never()).history(anyString());
         verify(conversation, never()).record(anyString(), anyString(), anyString());
         assertThat(channelTool.seen).isEqualTo(recent);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void priorMessagesReplayBeforePromptAndStillRecordServerMemory() {
+        ConversationMemoryService conversation = mock(ConversationMemoryService.class);
+        var service = new AgentService(
+                llmClient,
+                registry(),
+                jitRegistry(Path.of(".")),
+                objectMapper,
+                FIVE_MINUTES,
+                DEFAULT_MODEL,
+                MAX_ITERATIONS,
+                defaultRegistry(),
+                Optional.empty(),
+                Optional.of(conversation),
+                Optional.empty(),
+                Optional.empty());
+
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithContent("You asked me this before."));
+
+        List<ChatMessage> prior = List.of(
+                ChatMessage.user("Remember this."),
+                ChatMessage.assistant("I will remember."));
+        AgentResponse result = service.chat(new AgentRequest(
+                "What did I ask you to remember?",
+                null,
+                MODEL,
+                null,
+                MODEL,
+                MODEL,
+                MODEL,
+                null,
+                null,
+                SESSION_ID,
+                prior,
+                null,
+                null,
+                false));
+
+        assertThat(result.response()).isEqualTo("You asked me this before.");
+        verify(conversation, never()).history(anyString());
+        verify(conversation).record(eq("global:" + SESSION_ID), any(ChatMessage.class), eq("You asked me this before."));
+
+        ArgumentCaptor<List<ChatMessage>> captor = ArgumentCaptor.forClass(List.class);
+        verify(llmClient).chat(eq(MODEL), captor.capture(), anyList());
+        assertThat(captor.getValue()).extracting(ChatMessage::content)
+                .containsSequence("Remember this.", "I will remember.", "What did I ask you to remember?");
     }
 
     @Test

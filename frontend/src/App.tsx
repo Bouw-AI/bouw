@@ -32,6 +32,7 @@ import {
 
 import {
   buildAssistantEntry,
+  buildPriorMessages,
   buildUserEntry,
   connectGitHub,
   createSandbox,
@@ -52,6 +53,7 @@ import {
   saveAppState,
   saveAuthSession,
   streamPrompt,
+  syncThreadHistory,
   type StreamEvent
 } from "./services/guildService";
 import type {
@@ -220,6 +222,9 @@ function applyStreamEvent(thread: ChatThread, assistantId: string, event: Stream
     }
     case "error":
       entries[idx] = { ...assistant, content: assistant.content || `⚠️ ${event.message}` };
+      break;
+    case "replace":
+      entries[idx] = { ...assistant, content: event.content, completedAt: nowIso() };
       break;
     case "reset": {
       // A dropped stream is being replayed: clear this turn's partial answer and any tool
@@ -1006,6 +1011,17 @@ export default function App() {
   }, [session]);
 
   useEffect(() => {
+    if (!session || !thread.entries.some((entry) => entry.type === "user")) return;
+    syncThreadHistory(session.token, thread)
+      .then((next) => {
+        setThread((current) => (current.id === next.id ? next : current));
+      })
+      .catch(() => {
+        // Leave local state alone when the background resync cannot reach the server.
+      });
+  }, [session, thread.id]);
+
+  useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [thread.entries]);
 
@@ -1237,12 +1253,14 @@ export default function App() {
       });
 
       try {
+        const priorMessages = buildPriorMessages(threadRef.current);
         await streamPrompt(
           session.token,
           {
             threadId: threadRef.current.id,
             prompt: text,
             attachments: attachment ? [attachment] : undefined,
+            priorMessages,
             model: selectedModel.id,
             reasoningEffort: selectedReasoning,
             sandboxId

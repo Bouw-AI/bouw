@@ -45,8 +45,11 @@ conversation:
     enabled: ${CONVERSATION_MEMORY_ENABLED:true}
     # Sliding-window size: the most recent N stored messages kept per session.
     max-messages: 20
-    # How long an idle session's history is retained before eviction.
-    ttl: 2h
+    # Optional idle-retention limit. Leave blank to retain chat context until it is trimmed by
+    # max-messages instead of expiring after a fixed timeout.
+    ttl:
+    # JSON file that mirrors short-term conversation memory so chats survive service restarts.
+    store-file: ${CONVERSATION_MEMORY_STORE_FILE:${agent.home}/conversation-memory.json}
 
 memory:
   # Redis-backed long-term memory with text-embedding recall. Disabled by default; when enabled it
