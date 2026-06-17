@@ -1,0 +1,59 @@
+name: Dispatch Private Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch hugin-deploy workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.HUGIN_DEPLOY_REPO_DISPATCH_TOKEN }}
+          DEPLOY_REPO: jeremyunck/hugin-deploy
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}
+        run: |
+          payload="$(jq -n \
+            --arg sha "${SOURCE_SHA}" \
+            --arg ref "refs/heads/main" \
+            --arg source_repository "${SOURCE_REPOSITORY}" \
+            --arg source_run_id "${SOURCE_RUN_ID}" \
+            --arg source_run_url "${SOURCE_RUN_URL}" \
+            '{
+              event_type: "hugin_deploy",
+              client_payload: {
+                sha: $sha,
+                ref: $ref,
+                source_repository: $source_repository,
+                source_run_id: $source_run_id,
+                source_run_url: $source_run_url
+              }
+            }')"
+
+          for attempt in 1 2 3; do
+            if gh api "repos/${DEPLOY_REPO}/dispatches" --method POST --input - <<<"${payload}"; then
+              exit 0
+            fi
+
+            if [[ "${attempt}" -lt 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+
+          echo "::error::Failed to dispatch deploy workflow to ${DEPLOY_REPO} after 3 attempts."
+          exit 1
