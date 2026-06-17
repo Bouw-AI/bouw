@@ -46,6 +46,13 @@ export type ChatEntry =
 
 export type ChatKind = "chat" | "sandbox";
 
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  attachments?: ChatAttachment[];
+  reasoning_content?: string;
+};
+
 export type ChatThread = {
   id: string;
   title: string;

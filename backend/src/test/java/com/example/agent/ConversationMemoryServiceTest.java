@@ -130,6 +130,19 @@ class ConversationMemoryServiceTest {
         assertThat(service.history("shared")).hasSize(total * 2);
     }
 
+    @Test
+    void leavesSessionsAliveWhenTtlIsDisabled() {
+        var clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        var props = new ConversationMemoryProperties(true, 20, null);
+        var service = new ConversationMemoryService(new InMemoryConversationStore(props, clock), props);
+
+        service.record("s", "hello", "hi");
+        clock.advance(Duration.ofDays(30));
+
+        assertThat(service.history("s")).extracting(ChatMessage::content)
+                .containsExactly("hello", "hi");
+    }
+
     /** Hand-advanced clock so TTL eviction can be tested without wall-clock sleeps. */
     private static final class MutableClock extends Clock {
         private Instant now;

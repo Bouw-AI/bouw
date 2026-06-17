@@ -2,8 +2,6 @@ package com.example.agent;
 
 import com.example.agent.model.ChatMessage;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -23,8 +21,6 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>This is the default and works without any external dependency. It is per-instance only, so
  * sessions are not shared across multiple server instances.
  */
-@Component
-@ConditionalOnProperty(prefix = "conversation.memory", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class InMemoryConversationStore implements ConversationStore {
 
     private record Entry(List<ChatMessage> messages, Instant lastAccess) {}
@@ -49,22 +45,22 @@ public class InMemoryConversationStore implements ConversationStore {
     @Override
     public List<ChatMessage> load(String sessionId) {
         sweepIfDue();
-        Instant cutoff = clock.instant().minus(ttl);
+        Instant cutoff = cutoff();
         // Returning null from computeIfPresent removes the mapping, so an expired session is
         // evicted (and treated as absent) even between full sweeps.
         Entry entry = sessions.computeIfPresent(sessionId, (id, e) ->
-                e.lastAccess().isBefore(cutoff) ? null : new Entry(e.messages(), clock.instant()));
+                isExpired(e, cutoff) ? null : new Entry(e.messages(), clock.instant()));
         return entry == null ? List.of() : entry.messages();
     }
 
     @Override
     public void append(String sessionId, List<ChatMessage> newMessages, int maxMessages) {
         sweepIfDue();
-        Instant cutoff = clock.instant().minus(ttl);
+        Instant cutoff = cutoff();
         // compute holds the per-bin lock for the duration of the remapping, so the append-and-trim
         // is atomic: two threads recording into the same session cannot lose each other's turns.
         sessions.compute(sessionId, (id, existing) -> {
-            boolean expired = existing == null || existing.lastAccess().isBefore(cutoff);
+            boolean expired = existing == null || isExpired(existing, cutoff);
             List<ChatMessage> merged = new ArrayList<>(expired ? List.of() : existing.messages());
             merged.addAll(newMessages);
             if (merged.size() > maxMessages) {
@@ -82,8 +78,18 @@ public class InMemoryConversationStore implements ConversationStore {
             return;
         }
         if (lastSweepMillis.compareAndSet(last, now)) {
-            Instant cutoff = clock.instant().minus(ttl);
-            sessions.values().removeIf(e -> e.lastAccess().isBefore(cutoff));
+            Instant cutoff = cutoff();
+            if (cutoff != null) {
+                sessions.values().removeIf(e -> isExpired(e, cutoff));
+            }
         }
+    }
+
+    private Instant cutoff() {
+        return ttl == null ? null : clock.instant().minus(ttl);
+    }
+
+    private static boolean isExpired(Entry entry, Instant cutoff) {
+        return cutoff != null && entry.lastAccess().isBefore(cutoff);
     }
 }

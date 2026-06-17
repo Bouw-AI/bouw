@@ -4,6 +4,7 @@ import type {
   ChatAttachment,
   ChatEntry,
   ChatKind,
+  ChatMessage,
   ChatThread,
   FileNode,
   Integration,
@@ -37,6 +38,7 @@ export type StreamEvent =
   | { type: "reasoning"; text: string }
   | { type: "tool"; name: string; args: string }
   | { type: "tool_result"; name: string; result: string }
+  | { type: "replace"; content: string }
   // Emitted client-side (never by the server) before a dropped stream is replayed, so the UI can
   // discard the partial answer from the failed attempt and stream the fresh one cleanly.
   | { type: "reset" }
@@ -334,6 +336,7 @@ export type StreamOptions = {
   threadId: string;
   prompt: string;
   attachments?: ChatAttachment[];
+  priorMessages?: ChatMessage[];
   model?: string;
   reasoningEffort?: string;
   /** When set, the agent runs inside this sandbox and gets filesystem/shell tools. */
@@ -380,6 +383,7 @@ export async function streamPrompt(token: string, options: StreamOptions, handle
   const requestBody = JSON.stringify({
     prompt: options.prompt,
     ...(options.attachments?.length ? { attachments: options.attachments } : {}),
+    ...(options.priorMessages?.length ? { priorMessages: options.priorMessages } : {}),
     ...(options.model ? { model: options.model } : {}),
     ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
     sessionId: options.threadId,
@@ -459,6 +463,17 @@ export async function streamPrompt(token: string, options: StreamOptions, handle
       // Stream ended without a terminal event: the connection dropped mid-run.
       lastError = new Error("Connection lost before the response completed.");
       if (executedTool || attempt >= maxAttempts) {
+        const recovered = await recoverAssistantAnswer(
+          token,
+          options.threadId,
+          options.priorMessages?.length ?? 0,
+          options.prompt
+        );
+        if (recovered) {
+          handlers.onEvent({ type: "replace", content: recovered });
+          handlers.onEvent({ type: "done" });
+          return;
+        }
         handlers.onEvent({ type: "error", message: lastError.message });
         return;
       }
@@ -475,6 +490,112 @@ export async function streamPrompt(token: string, options: StreamOptions, handle
   }
 
   if (lastError) throw lastError;
+}
+
+type ServerChatMessage = {
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  attachments?: ChatAttachment[];
+  reasoning_content?: string | null;
+};
+
+async function fetchConversationHistory(token: string, sessionId: string): Promise<ServerChatMessage[]> {
+  return apiFetch<ServerChatMessage[]>(`/api/agent/history?sessionId=${encodeURIComponent(sessionId)}`, {}, token);
+}
+
+async function recoverAssistantAnswer(
+  token: string,
+  sessionId: string,
+  priorMessageCount: number,
+  prompt: string
+): Promise<string | null> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    try {
+      const history = await fetchConversationHistory(token, sessionId);
+      if (history.length >= priorMessageCount + 2) {
+        const lastUser = history.at(-2);
+        const lastAssistant = history.at(-1);
+        if (lastUser?.role === "user"
+          && lastAssistant?.role === "assistant"
+          && (lastUser.content ?? "") === prompt
+          && (lastAssistant.content ?? "").trim()) {
+          return lastAssistant.content;
+        }
+      }
+    } catch {
+      // Ignore transient polling failures and keep trying until the deadline.
+    }
+    await delay(1000);
+  }
+  return null;
+}
+
+export function buildPriorMessages(thread: ChatThread): ChatMessage[] {
+  const messages: ChatMessage[] = [];
+  for (const entry of thread.entries) {
+    if (entry.type === "user") {
+      messages.push({
+        role: "user" as const,
+        content: entry.content,
+        attachments: entry.attachments
+      });
+      continue;
+    }
+    if (entry.type === "assistant") {
+      messages.push({
+        role: "assistant" as const,
+        content: entry.content,
+        reasoning_content: entry.reasoning || undefined
+      });
+    }
+  }
+  return messages;
+}
+
+export async function syncThreadHistory(token: string, thread: ChatThread): Promise<ChatThread> {
+  const history = await fetchConversationHistory(token, thread.id);
+  const remote = history.filter((message) => message.role === "user" || message.role === "assistant");
+  if (!remote.length) {
+    return thread;
+  }
+  const entries = thread.entries.slice();
+  const localIndices = entries
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.type === "user" || entry.type === "assistant");
+
+  for (let i = 0; i < remote.length; i++) {
+    const message = remote[i];
+    const local = localIndices[i];
+    if (local) {
+      if (message.role === "user" && local.entry.type === "user") {
+        entries[local.index] = {
+          ...local.entry,
+          content: message.content ?? local.entry.content,
+          attachments: message.attachments ?? local.entry.attachments
+        };
+      } else if (message.role === "assistant" && local.entry.type === "assistant") {
+        entries[local.index] = {
+          ...local.entry,
+          content: message.content ?? local.entry.content,
+          reasoning: message.reasoning_content ?? local.entry.reasoning,
+          completedAt: local.entry.completedAt ?? nowIso()
+        };
+      }
+      continue;
+    }
+    entries.push(
+      message.role === "user"
+        ? buildUserEntry(message.content ?? "", message.attachments)
+        : { ...buildAssistantEntry(), content: message.content ?? "", reasoning: message.reasoning_content ?? "", completedAt: nowIso() }
+    );
+  }
+
+  return {
+    ...thread,
+    updatedAt: nowIso(),
+    entries
+  };
 }
 
 export async function createSandbox(token: string): Promise<SandboxInfo> {

@@ -152,6 +152,15 @@ public class AgentService {
         return runLoop(request, listener, true, normalizeOwner(owner), hasSandbox(request));
     }
 
+    public List<ChatMessage> history(String owner, String agentId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return List.of();
+        }
+        return conversationMemory
+                .map(cm -> cm.history(sessionScope(normalizeOwner(owner), agentId, sessionId)))
+                .orElse(List.of());
+    }
+
     /** Whether a request is bound to a sandbox, which gives it filesystem/shell tools. */
     private static boolean hasSandbox(AgentRequest request) {
         return request != null && request.sandboxId() != null && !request.sandboxId().isBlank();
@@ -196,10 +205,10 @@ public class AgentService {
                 messages.add(ChatMessage.system(formatMemories(recalled)));
             }
         });
-        // When the caller supplies its own recent-message context (e.g. Discord), it manages its own
-        // short-term memory — so we neither replay nor record server-side conversation memory for it.
-        boolean clientManagedContext = request.recentMessages() != null;
-        if (!clientManagedContext) {
+        boolean clientManagedContext = isClientManagedContext(request);
+        if (request.priorMessages() != null && !request.priorMessages().isEmpty()) {
+            messages.addAll(sanitizeReplayMessages(request.priorMessages()));
+        } else if (!clientManagedContext) {
             // Replay the recent turns of this session (short-term memory) before the current prompt.
             conversationMemory.ifPresent(cm -> messages.addAll(cm.history(
                     sessionScope(owner, request.agentId(), request.sessionId()))));
@@ -428,6 +437,11 @@ public class AgentService {
 
     private static String routingCacheKey(AgentRequest request, String decisionModel) {
         StringBuilder key = new StringBuilder(decisionModel).append('\0').append(request.prompt());
+        if (request.priorMessages() != null && !request.priorMessages().isEmpty()) {
+            for (ChatMessage message : sanitizeReplayMessages(request.priorMessages())) {
+                key.append('\0').append(message.role()).append('\0').append(message.content());
+            }
+        }
         if (request.recentMessages() != null && !request.recentMessages().isEmpty()) {
             for (String message : request.recentMessages()) {
                 key.append('\0').append(message);
@@ -462,6 +476,34 @@ public class AgentService {
             return first;
         }
         return second;
+    }
+
+    private static boolean isClientManagedContext(AgentRequest request) {
+        if (request == null) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(request.clientManagedContext())) {
+            return true;
+        }
+        String sessionId = request.sessionId();
+        return request.recentMessages() != null
+                && sessionId != null
+                && (sessionId.startsWith("discord-channel-") || sessionId.startsWith("discord-dm-"));
+    }
+
+    private static List<ChatMessage> sanitizeReplayMessages(List<ChatMessage> priorMessages) {
+        List<ChatMessage> sanitized = new ArrayList<>(priorMessages.size());
+        for (ChatMessage message : priorMessages) {
+            if (message == null || message.role() == null) {
+                continue;
+            }
+            if ("user".equals(message.role())) {
+                sanitized.add(ChatMessage.user(message.content(), message.attachments()));
+            } else if ("assistant".equals(message.role())) {
+                sanitized.add(ChatMessage.assistant(message.content(), message.reasoningContent()));
+            }
+        }
+        return sanitized;
     }
 
     private static String memoryOwner(String owner, String agentId) {

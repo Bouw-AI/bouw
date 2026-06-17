@@ -5,6 +5,7 @@ import com.example.agent.AgentStreamListener;
 import com.example.agent.DeveloperModeService;
 import com.example.agent.model.AgentRequest;
 import com.example.agent.model.AgentResponse;
+import com.example.agent.model.ChatMessage;
 import com.example.integration.agent.UserAgent;
 import com.example.integration.agent.UserAgentService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -86,6 +87,14 @@ public class AgentController {
         AgentRequest scoped = scopedRequest(request, owner);
         AgentResponse response = agentService.chat(scoped, memoryOwner(owner, scoped.agentId()));
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/history")
+    public ResponseEntity<List<ChatMessage>> history(@RequestParam String sessionId,
+                                                     @RequestParam(required = false) String agentId,
+                                                     @AuthenticationPrincipal Jwt jwt) {
+        String owner = owner(jwt);
+        return ResponseEntity.ok(agentService.history(owner, agentId, sessionId));
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -174,8 +183,10 @@ public class AgentController {
                 request.agentId(),
                 systemPrompt,
                 scopedSessionId,
+                request.priorMessages(),
                 request.recentMessages(),
-                request.sandboxId());
+                request.sandboxId(),
+                request.clientManagedContext());
     }
 
     private static String scopeSession(String owner, String agentId, String sessionId) {

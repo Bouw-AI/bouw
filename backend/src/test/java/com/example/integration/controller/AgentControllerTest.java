@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -86,17 +87,6 @@ class AgentControllerTest {
     @Test
     void chatEndpointWithSessionId() {
         var request = new AgentRequest("Continue", "llama3.2", "session-123");
-        var scopedRequest = new AgentRequest(
-                "Continue",
-                "llama3.2",
-                "llama3.2",
-                "llama3.2",
-                "llama3.2",
-                null,
-                null,
-                "global:session-123",
-                null
-        );
         var agentResponse = new AgentResponse("Sure!", List.of(
                 ChatMessage.user("Previous message"),
                 ChatMessage.assistant("Previous answer")
@@ -107,6 +97,17 @@ class AgentControllerTest {
 
         assertThat(result.getStatusCode().value()).isEqualTo(200);
         assertThat(result.getBody()).isEqualTo(agentResponse);
+    }
+
+    @Test
+    void historyEndpointScopesSessionAndReturnsConversationHistory() {
+        List<ChatMessage> history = List.of(ChatMessage.user("hello"), ChatMessage.assistant("hi"));
+        when(agentService.history("global", null, "session-123")).thenReturn(history);
+
+        ResponseEntity<List<ChatMessage>> result = controller.history("session-123", null, null);
+
+        assertThat(result.getStatusCode().value()).isEqualTo(200);
+        assertThat(result.getBody()).isEqualTo(history);
     }
 
     // -------------------------------------------------------------------------
