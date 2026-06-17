@@ -1,0 +1,38 @@
+name: Dispatch Private Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch hugin-deploy workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.HUGIN_DEPLOY_REPO_DISPATCH_TOKEN }}
+          DEPLOY_REPO: jeremyunck/hugin-deploy
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}
+        run: |
+          gh api "repos/${DEPLOY_REPO}/dispatches" \
+            --method POST \
+            -f event_type='hugin_deploy' \
+            -F client_payload[sha]="${SOURCE_SHA}" \
+            -F client_payload[ref]='refs/heads/main' \
+            -F client_payload[source_repository]="${SOURCE_REPOSITORY}" \
+            -F client_payload[source_run_id]="${SOURCE_RUN_ID}" \
+            -F client_payload[source_run_url]="${SOURCE_RUN_URL}"
