@@ -171,10 +171,19 @@ public class JsonFileConversationStore implements ConversationStore {
 
     @PreDestroy
     public void close() {
-        flusher.shutdownNow();
-        flushPending.set(false);
-        if (dirty.get()) {
-            flushNow();
+        flusher.shutdown();
+        try {
+            if (!flusher.awaitTermination(2, TimeUnit.SECONDS)) {
+                flusher.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            flusher.shutdownNow();
+        } finally {
+            flushPending.set(false);
+            if (dirty.get()) {
+                flushNow();
+            }
         }
     }
 }
