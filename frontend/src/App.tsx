@@ -643,7 +643,7 @@ function IntegrationsScreen(props: {
                 <div className="integration-meta">{integration.description}</div>
               </div>
               <div className="integration-action">
-                {integration.reconnectable ? (
+                {integration.reconnectable || (integration.id === "github" && !integration.connected) ? (
                   integration.connected ? (
                     <button
                       type="button"
@@ -948,11 +948,21 @@ export default function App() {
           if (integration.connected) {
             await disconnectGitHub(session.token);
           } else {
-            const installUrl = await connectGitHub(session.token, window.location.href);
+            const response = await connectGitHub(session.token, window.location.href);
+            const installUrl = response.installUrl;
             if (installUrl) {
               window.location.assign(installUrl);
               return;
             }
+            const statusMessage =
+              response.status && typeof response.status === "object" && "message" in response.status
+                ? response.status.message
+                : null;
+            throw new Error(
+              typeof statusMessage === "string" && statusMessage
+                ? statusMessage
+                : integration.message || "GitHub connect is unavailable until the GitHub App is configured."
+            );
           }
         }
         setIntegrations(await fetchIntegrations(session.token));
