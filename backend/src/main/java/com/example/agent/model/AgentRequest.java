@@ -27,7 +27,7 @@ import java.util.List;
  * <p>{@code sandboxId} is optional; when present it selects the per-session sandbox (a Docker
  * container created via {@code POST /api/sandboxes}) the agent's tools run inside. The agent resolves
  * its workspace from this id and routes {@code run_bash} into that container. When blank the request
- * runs against the default (host) workspace, preserving the previous behaviour.
+ * still has the built-in file/shell tools, but they run against the default host workspace.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AgentRequest(

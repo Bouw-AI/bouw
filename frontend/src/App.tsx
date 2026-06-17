@@ -429,8 +429,16 @@ function InputBar(props: {
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !disabled && (value.trim() || attachment)) onSend();
+            if (event.key === "Enter" && !disabled && (value.trim() || attachment)) {
+              event.preventDefault();
+              onSend();
+            }
           }}
+          enterKeyHint="send"
+          autoComplete="off"
+          autoCorrect="on"
+          autoCapitalize="sentences"
+          spellCheck
           placeholder={attachment ? "Ask about this image..." : "Message Hugin…"}
         />
         <button

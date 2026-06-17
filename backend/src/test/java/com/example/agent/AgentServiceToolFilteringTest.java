@@ -17,8 +17,9 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Verifies the dynamic tool set: filesystem/shell tools are only advertised for sandbox-bound
- * requests, and integration tools that report themselves unavailable are never advertised.
+ * Verifies the dynamic tool set: built-in workspace tools are advertised for both host-workspace
+ * and sandbox-bound requests, and integration tools that report themselves unavailable are never
+ * advertised.
  */
 class AgentServiceToolFilteringTest {
 
@@ -45,15 +46,14 @@ class AgentServiceToolFilteringTest {
     }
 
     @Test
-    void pureChatOmitsWorkspaceToolsButKeepsPlainTools() {
+    void hostWorkspaceRequestKeepsWorkspaceTools() {
         var service = serviceWith(
                 new StubTool("chat_tool", false, true),
                 new StubTool("read_file", true, true));
 
         var names = service.availableTools(null).stream().map(AgentService.ToolSummary::name).toList();
 
-        assertThat(names).contains("chat_tool");
-        assertThat(names).doesNotContain("read_file");
+        assertThat(names).contains("chat_tool", "read_file");
     }
 
     @Test
