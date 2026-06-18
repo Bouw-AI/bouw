@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import {
   ArrowLeft,
   BatteryFull,
+  Bug,
   Box,
   Check,
   ChevronDown,
@@ -55,6 +56,7 @@ import {
   loadAuthSession,
   login as loginRequest,
   reconnectGoogle,
+  reportBug,
   saveEnabledModels,
   saveAppState,
   saveAuthSession,
@@ -114,6 +116,28 @@ function entryId(prefix: string) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function sanitizeAttachmentForReport(attachment: ChatAttachment) {
+  return {
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    size: attachment.size
+  };
+}
+
+function serializeThreadForBugReport(thread: ChatThread) {
+  return {
+    ...thread,
+    entries: thread.entries.map((entry) =>
+      entry.type !== "user" || !entry.attachments?.length
+        ? entry
+        : {
+            ...entry,
+            attachments: entry.attachments.map(sanitizeAttachmentForReport)
+          }
+    )
+  };
 }
 
 function resolvePreferredGitHubBranch(
@@ -314,16 +338,40 @@ function StatusBar() {
   );
 }
 
-function AppHeader({ onMenu }: { onMenu: () => void }) {
+function AppHeader({
+  onMenu,
+  reportAction
+}: {
+  onMenu: () => void;
+  reportAction?: {
+    disabled?: boolean;
+    busy?: boolean;
+    onClick: () => void;
+  };
+}) {
   return (
     <div className="app-header">
       <div className="brand">
         <img src={LOGO} alt="Hugin" className="brand-logo" />
         <span className="brand-text">HUGIN</span>
       </div>
-      <button type="button" className="icon-button" onClick={onMenu} aria-label="Open menu">
-        <Menu size={22} strokeWidth={2} />
-      </button>
+      <div className="header-actions">
+        {reportAction ? (
+          <button
+            type="button"
+            className="header-action-button"
+            onClick={reportAction.onClick}
+            disabled={reportAction.disabled || reportAction.busy}
+            aria-label="Report bug"
+          >
+            <Bug size={14} strokeWidth={2} />
+            <span>{reportAction.busy ? "Saving…" : "Report bug"}</span>
+          </button>
+        ) : null}
+        <button type="button" className="icon-button" onClick={onMenu} aria-label="Open menu">
+          <Menu size={22} strokeWidth={2} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -1139,7 +1187,9 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [draftAttachment, setDraftAttachment] = useState<ChatAttachment | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reportingBug, setReportingBug] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bugReportNotice, setBugReportNotice] = useState<string | null>(null);
 
   const [files, setFiles] = useState<FileNode[]>([]);
   const [wsOpen, setWsOpen] = useState(true);
@@ -1408,6 +1458,7 @@ export default function App() {
     setFiles([]);
     setWsOpen(true);
     setDraftAttachment(null);
+    setBugReportNotice(null);
     setError(null);
     setHistoryQuery("");
     setScreen("purechat");
@@ -1418,6 +1469,7 @@ export default function App() {
     if (!session) return;
     setMenuOpen(false);
     setHistoryQuery("");
+    setBugReportNotice(null);
     setError(null);
     setFiles([]);
     setWsOpen(true);
@@ -1442,6 +1494,7 @@ export default function App() {
       setThread(item);
       void syncThreadFromServer(item);
       setDraftAttachment(null);
+      setBugReportNotice(null);
       setError(null);
       setMenuOpen(false);
       if (item.kind === "sandbox") {
@@ -1465,6 +1518,7 @@ export default function App() {
     setReturnScreen(screen === "integrations" ? returnScreen : screen);
     setScreen("integrations");
     setMenuOpen(false);
+    setBugReportNotice(null);
     if (!session) return;
     try {
       setIntegrations(await fetchIntegrations(session.token));
@@ -1477,6 +1531,7 @@ export default function App() {
     setReturnScreen(screen === "settings" ? returnScreen : screen);
     setScreen("settings");
     setMenuOpen(false);
+    setBugReportNotice(null);
     if (!session) return;
     try {
       setModels(await fetchModels(session.token));
@@ -1563,6 +1618,7 @@ export default function App() {
       setDraft("");
       setDraftAttachment(null);
       setBusy(true);
+      setBugReportNotice(null);
       setError(null);
 
       const userEntry = buildUserEntry(text, attachment ? [attachment] : undefined);
@@ -1610,6 +1666,35 @@ export default function App() {
     },
     [draft, draftAttachment, busy, session, refreshFiles, models, upsertThread, applyEventToThread]
   );
+
+  const saveBugReport = useCallback(async () => {
+    if (!session || reportingBug) return;
+    setReportingBug(true);
+    setError(null);
+    setBugReportNotice(null);
+    try {
+      const activeThread = threadRef.current;
+      const response = await reportBug(session.token, {
+        sessionId: activeThread.id,
+        title: activeThread.title,
+        sandboxId: activeThread.sandboxId,
+        thread: serializeThreadForBugReport(activeThread),
+        clientContext: {
+          exportedAt: nowIso(),
+          screen,
+          url: typeof window === "undefined" ? null : window.location.href,
+          userAgent: typeof navigator === "undefined" ? null : navigator.userAgent,
+          busy,
+          activeAssistantId: activeAssistantIdsRef.current.get(activeThread.id) ?? null
+        }
+      });
+      setBugReportNotice(`Saved to ${response.relativePath}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save bug report.");
+    } finally {
+      setReportingBug(false);
+    }
+  }, [session, reportingBug, screen, busy]);
 
   const pickImage = useCallback(() => {
     imageInputRef.current?.click();
@@ -1683,6 +1768,7 @@ export default function App() {
     setReturnScreen(screen === "github-repo" ? returnScreen : screen);
     setScreen("github-repo");
     setMenuOpen(false);
+    setBugReportNotice(null);
     setError(null);
     setSelectedRepo("");
     setSelectedBranch("");
@@ -1794,7 +1880,15 @@ export default function App() {
           />
         ) : screen === "chat" || screen === "purechat" ? (
           <>
-            <AppHeader onMenu={() => setMenuOpen(true)} />
+            <AppHeader
+              onMenu={() => setMenuOpen(true)}
+              reportAction={thread.entries.length
+                ? {
+                    busy: reportingBug,
+                    onClick: saveBugReport
+                  }
+                : undefined}
+            />
             <input
               ref={imageInputRef}
               type="file"
@@ -1817,6 +1911,7 @@ export default function App() {
               />
             ) : null}
             {error ? <p className="login-error screen-pad">{error}</p> : null}
+            {bugReportNotice ? <p className="screen-note screen-pad">{bugReportNotice}</p> : null}
             {fresh ? (
               <div className="chat-body">
                 <Greeting name={name} onChip={send} />

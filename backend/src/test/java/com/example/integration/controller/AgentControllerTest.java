@@ -7,7 +7,9 @@ import com.example.agent.model.AgentRequest;
 import com.example.agent.model.AgentResponse;
 import com.example.agent.model.ChatMessage;
 import com.example.integration.agent.UserAgentService;
+import com.example.integration.service.BugReportService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,6 +44,9 @@ class AgentControllerTest {
     @Mock
     UserAgentService userAgentService;
 
+    @Mock
+    BugReportService bugReportService;
+
     ObjectMapper objectMapper = new ObjectMapper();
     AgentController controller;
 
@@ -53,6 +58,7 @@ class AgentControllerTest {
                 Executors.newCachedThreadPool(),
                 developerModeService,
                 userAgentService,
+                bugReportService,
                 Duration.ofMinutes(5)
         );
     }
@@ -121,6 +127,43 @@ class AgentControllerTest {
 
         assertThat(result.getStatusCode().value()).isEqualTo(200);
         assertThat(result.getBody()).isEqualTo(history);
+    }
+
+    @Test
+    void bugReportEndpointExportsHistoryIntoWorkspaceReport() {
+        var request = new BugReportRequest(
+                "session-123",
+                "Hung chat",
+                null,
+                null,
+                JsonNodeFactory.instance.objectNode().put("id", "thread-1"),
+                JsonNodeFactory.instance.objectNode().put("screen", "purechat"));
+        List<ChatMessage> history = List.of(ChatMessage.user("hello"), ChatMessage.assistant("hi"));
+        when(agentService.history("global", null, "session-123")).thenReturn(history);
+        when(bugReportService.writeReport(
+                eq("session-123"),
+                eq("session-123"),
+                eq("Hung chat"),
+                eq("global"),
+                eq(null),
+                eq(null),
+                eq(history),
+                any(),
+                any()))
+                .thenReturn(new BugReportService.BugReportFile(
+                        "bug-reports/2026-06-18/report.txt",
+                        "/tmp/report.txt",
+                        "/workspace",
+                        List.of("/tmp/hugin.log")));
+
+        ResponseEntity<BugReportResponse> result = controller.saveBugReport(request, null);
+
+        assertThat(result.getStatusCode().value()).isEqualTo(200);
+        assertThat(result.getBody()).isEqualTo(new BugReportResponse(
+                "bug-reports/2026-06-18/report.txt",
+                "/tmp/report.txt",
+                "/workspace",
+                List.of("/tmp/hugin.log")));
     }
 
     // -------------------------------------------------------------------------
