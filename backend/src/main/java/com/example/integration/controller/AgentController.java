@@ -107,7 +107,6 @@ public class AgentController {
         String owner = owner(jwt);
         List<ChatMessage> history = agentService.history(owner, request.agentId(), request.sessionId());
         var saved = bugReportService.writeReport(
-                firstNonBlank(request.sandboxId(), request.sessionId()),
                 request.sessionId(),
                 request.title(),
                 owner,
@@ -223,10 +222,6 @@ public class AgentController {
             return agentId;
         }
         return owner + ":" + agentId;
-    }
-
-    private static String firstNonBlank(String primary, String fallback) {
-        return primary != null && !primary.isBlank() ? primary : fallback;
     }
 
     private void send(SseEmitter emitter, String event, Map<String, ?> data) {

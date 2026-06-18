@@ -29,6 +29,7 @@ public class BugReportService {
 
     private static final DateTimeFormatter DIRECTORY_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE;
     private static final DateTimeFormatter FILE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd_HHmmss");
+    private static final long MAX_LOG_BYTES = 256 * 1024;
 
     private final ObjectMapper objectMapper;
     private final WorkspaceRegistry workspaceRegistry;
@@ -49,8 +50,7 @@ public class BugReportService {
         this.clock = clock;
     }
 
-    public BugReportFile writeReport(String workspaceKey,
-                                     String sessionId,
+    public BugReportFile writeReport(String sessionId,
                                      String title,
                                      String owner,
                                      String agentId,
@@ -58,7 +58,7 @@ public class BugReportService {
                                      List<ChatMessage> history,
                                      JsonNode clientThread,
                                      JsonNode clientContext) {
-        Workspace workspace = workspaceRegistry.resolve(workspaceKey);
+        Workspace workspace = workspaceRegistry.resolve(null);
         LocalDateTime now = LocalDateTime.now(clock);
         String safeTitle = sanitizeTitle(title);
         String fileName = FILE_FORMAT.format(now) + "-" + safeTitle + ".txt";
@@ -139,12 +139,23 @@ public class BugReportService {
                 continue;
             }
             try {
-                result.add(new LogAttachment(labelFor(normalized, workspace), normalized, Files.readString(normalized)));
+                result.add(new LogAttachment(labelFor(normalized, workspace), normalized, readLog(normalized)));
             } catch (IOException ignored) {
                 // Skip unreadable logs rather than failing the bug-report export.
             }
         }
         return result;
+    }
+
+    private String readLog(Path path) throws IOException {
+        long size = Files.size(path);
+        if (size <= MAX_LOG_BYTES) {
+            return Files.readString(path);
+        }
+        byte[] bytes = Files.readAllBytes(path);
+        int offset = Math.max(0, bytes.length - (int) MAX_LOG_BYTES);
+        String tail = new String(bytes, offset, bytes.length - offset, StandardCharsets.UTF_8);
+        return "[truncated to last " + MAX_LOG_BYTES + " bytes of " + size + " byte log]\n" + tail;
     }
 
     private String labelFor(Path path, Workspace workspace) {

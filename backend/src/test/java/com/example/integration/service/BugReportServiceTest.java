@@ -44,7 +44,6 @@ class BugReportServiceTest {
 
         var result = service.writeReport(
                 "session-1",
-                "session-1",
                 "Chat hung on tool result",
                 "owner-1",
                 null,
@@ -83,7 +82,6 @@ class BugReportServiceTest {
 
         var result = service.writeReport(
                 "session-2",
-                "session-2",
                 "???",
                 "owner-2",
                 null,
@@ -97,5 +95,37 @@ class BugReportServiceTest {
         assertThat(result.relativePath()).contains("untitled.txt");
         assertThat(result.logFiles()).isEmpty();
         assertThat(Files.readString(saved)).contains("No configured log files were found.");
+    }
+
+    @Test
+    void truncatesLargeLogsToRecentTail() throws Exception {
+        Path workspaceRoot = Files.createDirectories(tempDir.resolve("workspace-3"));
+        Path agentHome = Files.createDirectories(tempDir.resolve("agent-home-3"));
+        Files.createDirectories(agentHome.resolve("logs"));
+        Files.writeString(agentHome.resolve("logs/hugin.log"), "a".repeat(300_000) + "\nTAIL");
+
+        var workspace = mock(com.example.agent.tool.Workspace.class);
+        when(workspace.root()).thenReturn(workspaceRoot);
+        when(workspace.resolve("bug-reports/2026-06-18/2026-06-18_000000-large-log.txt"))
+                .thenReturn(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_000000-large-log.txt"));
+        when(workspace.relativize(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_000000-large-log.txt")))
+                .thenReturn("bug-reports/2026-06-18/2026-06-18_000000-large-log.txt");
+        WorkspaceRegistry registry = new WorkspaceRegistry(workspace);
+        Clock clock = Clock.fixed(Instant.parse("2026-06-18T00:00:00Z"), ZoneId.of("UTC"));
+        BugReportService service = new BugReportService(objectMapper, registry, agentHome, clock);
+
+        var result = service.writeReport(
+                "session-3",
+                "large log",
+                "owner-3",
+                null,
+                null,
+                List.of(),
+                JsonNodeFactory.instance.objectNode(),
+                JsonNodeFactory.instance.objectNode());
+
+        String body = Files.readString(workspaceRoot.resolve(result.relativePath()));
+        assertThat(body).contains("[truncated to last");
+        assertThat(body).contains("TAIL");
     }
 }

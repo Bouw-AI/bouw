@@ -10,6 +10,7 @@ import com.example.integration.agent.UserAgentService;
 import com.example.integration.service.BugReportService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -131,6 +132,8 @@ class AgentControllerTest {
 
     @Test
     void bugReportEndpointExportsHistoryIntoWorkspaceReport() {
+        Jwt jwt = mock(Jwt.class);
+        when(jwt.getSubject()).thenReturn("global");
         var request = new BugReportRequest(
                 "session-123",
                 "Hung chat",
@@ -141,7 +144,6 @@ class AgentControllerTest {
         List<ChatMessage> history = List.of(ChatMessage.user("hello"), ChatMessage.assistant("hi"));
         when(agentService.history("global", null, "session-123")).thenReturn(history);
         when(bugReportService.writeReport(
-                eq("session-123"),
                 eq("session-123"),
                 eq("Hung chat"),
                 eq("global"),
@@ -156,7 +158,7 @@ class AgentControllerTest {
                         "/workspace",
                         List.of("/tmp/hugin.log")));
 
-        ResponseEntity<BugReportResponse> result = controller.saveBugReport(request, null);
+        ResponseEntity<BugReportResponse> result = controller.saveBugReport(request, jwt);
 
         assertThat(result.getStatusCode().value()).isEqualTo(200);
         assertThat(result.getBody()).isEqualTo(new BugReportResponse(
