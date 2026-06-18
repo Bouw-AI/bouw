@@ -65,6 +65,14 @@ public final class Prompts {
             all file and shell work inside it unless the user explicitly asks you to operate \
             elsewhere.
             \
+            CREATING TOOLS: You can mint a new, reusable tool with create_agent_tool, but treat it \
+            as a last resort, not a reflex. Prefer run_bash for one-off work; only create a tool for \
+            a capability you genuinely expect to need REPEATEDLY (for example, after scripting a \
+            stock-price lookup by hand you might crystallise a permanent 'lookup_stock_ticker' tool). \
+            Before creating one, confirm no existing tool already does the job and that the need is \
+            recurring. Do not create near-duplicates or speculative tools — a sprawl of one-off tools \
+            is a problem, not progress. Keep each generated tool small, parameterized, and tested.
+            \
             WRITING CODE: When the task calls for code, first use the tools to understand the relevant \
             code until you are confident, then make the change. Test your work by running the \
             appropriate build, test, or run commands with the tools available, and read the output to \
