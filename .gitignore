@@ -13,6 +13,7 @@ node_modules/
 data/
 .data/
 sandboxes/
+bug-reports/
 # Runtime-generated agent tools (created on the fly by the create_agent_tool tool).
 .hugin/
 
