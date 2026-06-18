@@ -278,6 +278,27 @@ function threadHasPendingAssistant(thread: ChatThread): boolean {
   return thread.entries.some((entry) => entry.type === "assistant" && !entry.completedAt);
 }
 
+function collectRecoveryCandidates(
+  threads: ChatThread[],
+  currentThread: ChatThread,
+  activeThreadIds: Iterable<string>
+): ChatThread[] {
+  const candidates = new Map<string, ChatThread>();
+  for (const thread of threads) {
+    if (threadHasPendingAssistant(thread)) {
+      candidates.set(thread.id, thread);
+    }
+  }
+  for (const threadId of activeThreadIds) {
+    const candidate = threads.find((thread) => thread.id === threadId)
+      ?? (currentThread.id === threadId ? currentThread : null);
+    if (candidate) {
+      candidates.set(threadId, candidate);
+    }
+  }
+  return [...candidates.values()];
+}
+
 function StatusBar() {
   return (
     <div className="status-bar">
@@ -1276,7 +1297,11 @@ export default function App() {
     if (!session) return;
     const handleVisibility = () => {
       if (document.visibilityState !== "visible") return;
-      const candidates = stateRef.current.threads.filter(threadHasPendingAssistant);
+      const candidates = collectRecoveryCandidates(
+        stateRef.current.threads,
+        threadRef.current,
+        activeAssistantIdsRef.current.keys()
+      );
       for (const candidate of candidates) {
         void syncThreadFromServer(candidate);
       }
@@ -1310,12 +1335,20 @@ export default function App() {
 
     const recoverPendingThreads = async () => {
       if (cancelled || document.visibilityState !== "visible") return;
-      const pendingThreads = stateRef.current.threads.filter(threadHasPendingAssistant);
+      const pendingThreads = collectRecoveryCandidates(
+        stateRef.current.threads,
+        threadRef.current,
+        activeAssistantIdsRef.current.keys()
+      );
       if (!pendingThreads.length) return;
 
       await Promise.all(pendingThreads.map((candidate) => syncThreadFromServer(candidate)));
 
-      if (!cancelled && stateRef.current.threads.some(threadHasPendingAssistant)) {
+      if (!cancelled && collectRecoveryCandidates(
+        stateRef.current.threads,
+        threadRef.current,
+        activeAssistantIdsRef.current.keys()
+      ).length) {
         schedule(3000);
       }
     };

@@ -170,6 +170,8 @@ public class AgentController {
                     .map(UserAgent::systemPrompt)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Agent not found"));
         }
+        // AgentService applies owner/agent scoping when it loads and records conversation memory.
+        // Keep the caller's raw sessionId here so history reads and writes use the same key.
         return new AgentRequest(
                 request.prompt(),
                 request.attachments(),
