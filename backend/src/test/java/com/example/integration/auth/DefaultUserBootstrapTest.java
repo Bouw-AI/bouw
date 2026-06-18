@@ -55,6 +55,27 @@ class DefaultUserBootstrapTest {
     }
 
     @Test
+    void skipsScreenshotUserWhenScreenshotPasswordBlank() throws Exception {
+        UserAccountRepository repository = mock(UserAccountRepository.class);
+        PasswordEncoder encoder = mock(PasswordEncoder.class);
+        when(encoder.encode("main-pass")).thenReturn("main-hash");
+
+        DefaultUserBootstrap bootstrap = new DefaultUserBootstrap(
+                repository,
+                encoder,
+                "main-user",
+                "main-pass",
+                "shot-user",
+                "");
+
+        bootstrap.run(new DefaultApplicationArguments(new String[0]));
+
+        verify(repository).saveOrUpdate(new UserAccount("main-user", "main-hash", true, java.util.List.of("ROLE_USER")));
+        verify(repository, never()).saveOrUpdate(new UserAccount("shot-user", null, true, java.util.List.of("ROLE_USER")));
+        verify(encoder, never()).encode("");
+    }
+
+    @Test
     void requiresPrimaryPasswordWhenPrimaryUserMissing() {
         UserAccountRepository repository = mock(UserAccountRepository.class);
         PasswordEncoder encoder = mock(PasswordEncoder.class);

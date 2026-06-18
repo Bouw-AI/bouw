@@ -159,8 +159,10 @@ auth:
     password: ${AUTH_BOOTSTRAP_PASSWORD:}
   test-user:
     # Seeded account used by agents for authenticated UI verification and screenshots.
+    # The password intentionally has no default: the account is only created when
+    # AUTH_TEST_USER_PASSWORD is set, so the public build never ships a known credential.
     username: ${AUTH_TEST_USER_USERNAME:screenshot-test}
-    password: ${AUTH_TEST_USER_PASSWORD:hugin-screenshot}
+    password: ${AUTH_TEST_USER_PASSWORD:}
   jwt:
     # Optional base64-encoded HMAC key used to sign JWTs.
     # If blank, Hugin generates an ephemeral key on startup.
