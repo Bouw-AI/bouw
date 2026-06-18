@@ -79,6 +79,33 @@ class CreateAgentToolToolTest {
     }
 
     @Test
+    void returnsFriendlyErrorWhenCodeMissing() throws Exception {
+        Map<String, Object> args = baseArgs("no_code");
+        args.remove("code");
+        String result = tool.execute(args, new ToolContext(workspace));
+        assertThat(result).contains("'code' is empty");
+    }
+
+    @Test
+    void reportsInvalidTimeoutInsteadOfDroppingIt() throws Exception {
+        Map<String, Object> args = baseArgs("bad_timeout");
+        args.put("timeout_seconds", "thirty");
+        String result = tool.execute(args, new ToolContext(workspace));
+        assertThat(result).contains("timeout_seconds");
+        // Nothing should have been written when validation fails.
+        assertThat(Files.exists(tmp.resolve(".hugin/jit-tools/bad_timeout.tool.json"))).isFalse();
+    }
+
+    @Test
+    void recordsValidTimeoutInManifest() throws Exception {
+        Map<String, Object> args = baseArgs("timed_tool");
+        args.put("timeout_seconds", 45);
+        tool.execute(args, new ToolContext(workspace));
+        String manifest = Files.readString(tmp.resolve(".hugin/jit-tools/timed_tool.tool.json"));
+        assertThat(manifest).contains("\"timeoutSeconds\" : 45");
+    }
+
+    @Test
     void refusesToShadowBuiltinTool() throws Exception {
         LocalToolRegistry builtins = new LocalToolRegistry(
                 List.of(new BashCommandTool(workspace, properties)), properties);

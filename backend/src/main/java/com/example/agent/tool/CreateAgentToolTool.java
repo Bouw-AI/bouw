@@ -152,7 +152,7 @@ public class CreateAgentToolTool implements LocalTool {
         String name = requiredString(arguments, "name").trim();
         String description = requiredString(arguments, "description").trim();
         String language = requiredString(arguments, "language").trim().toLowerCase(Locale.ROOT);
-        String code = presentString(arguments, "code");
+        String code = optionalString(arguments, "code", "");
         String rationale = requiredString(arguments, "reuse_rationale").trim();
         boolean overwrite = optionalBoolean(arguments, "overwrite", false);
 
@@ -175,6 +175,13 @@ public class CreateAgentToolTool implements LocalTool {
         if (rationale.length() < 15) {
             return "Error: 'reuse_rationale' is too thin. Explain the recurring need this tool serves; "
                     + "if it is a one-off, use run_bash instead of creating a tool.";
+        }
+        // Parse the optional timeout up front so a malformed value is reported rather than silently dropped.
+        Integer timeoutSeconds;
+        try {
+            timeoutSeconds = parseOptionalTimeout(arguments.get("timeout_seconds"));
+        } catch (IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
         }
 
         LocalToolRegistry builtins = localToolRegistry.getIfAvailable();
@@ -227,7 +234,6 @@ public class CreateAgentToolTool implements LocalTool {
         manifest.put("args", List.of(scriptRelative));
         manifest.put("inputSchema", inputSchema);
         manifest.put("passArgumentsViaStdin", true);
-        Integer timeoutSeconds = optionalPositiveInt(arguments, "timeout_seconds");
         if (timeoutSeconds != null) {
             manifest.put("timeoutSeconds", timeoutSeconds);
         }
@@ -268,20 +274,34 @@ public class CreateAgentToolTool implements LocalTool {
         return code.endsWith("\n") ? code : code + "\n";
     }
 
-    private static Integer optionalPositiveInt(Map<String, Object> args, String key) {
-        int value = 0;
-        Object raw = args.get(key);
-        if (raw instanceof Number number) {
-            value = number.intValue();
-        } else if (raw != null) {
-            try {
-                value = Integer.parseInt(raw.toString().trim());
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        } else {
+    /**
+     * Parses the optional {@code timeout_seconds} argument: {@code null} when absent, otherwise a
+     * positive integer. A value that is present but not a positive integer is an error the caller
+     * surfaces to the model, rather than being silently dropped.
+     */
+    private static Integer parseOptionalTimeout(Object raw) {
+        if (raw == null) {
             return null;
         }
-        return value > 0 ? value : null;
+        int value;
+        if (raw instanceof Number number) {
+            value = number.intValue();
+        } else {
+            String text = raw.toString().trim();
+            if (text.isEmpty()) {
+                return null;
+            }
+            try {
+                value = Integer.parseInt(text);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                        "'timeout_seconds' must be a positive integer (got '" + raw + "').");
+            }
+        }
+        if (value <= 0) {
+            throw new IllegalArgumentException(
+                    "'timeout_seconds' must be a positive integer (got " + value + ").");
+        }
+        return value;
     }
 }
