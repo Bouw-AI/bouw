@@ -1,7 +1,6 @@
 package com.example.integration.service;
 
 import com.example.agent.model.ChatMessage;
-import com.example.agent.tool.WorkspaceRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import org.junit.jupiter.api.Test;
@@ -38,9 +37,8 @@ class BugReportServiceTest {
                 .thenReturn(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_090506-chat-hung-on-tool-result.txt"));
         when(workspace.relativize(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_090506-chat-hung-on-tool-result.txt")))
                 .thenReturn("bug-reports/2026-06-18/2026-06-18_090506-chat-hung-on-tool-result.txt");
-        WorkspaceRegistry registry = new WorkspaceRegistry(workspace);
         Clock clock = Clock.fixed(Instant.parse("2026-06-18T14:05:06Z"), ZoneId.of("America/Chicago"));
-        BugReportService service = new BugReportService(objectMapper, registry, agentHome, clock);
+        BugReportService service = new BugReportService(objectMapper, workspace, agentHome, clock);
 
         var result = service.writeReport(
                 "session-1",
@@ -76,9 +74,8 @@ class BugReportServiceTest {
                 .thenReturn(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_000000-untitled.txt"));
         when(workspace.relativize(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_000000-untitled.txt")))
                 .thenReturn("bug-reports/2026-06-18/2026-06-18_000000-untitled.txt");
-        WorkspaceRegistry registry = new WorkspaceRegistry(workspace);
         Clock clock = Clock.fixed(Instant.parse("2026-06-18T00:00:00Z"), ZoneId.of("UTC"));
-        BugReportService service = new BugReportService(objectMapper, registry, agentHome, clock);
+        BugReportService service = new BugReportService(objectMapper, workspace, agentHome, clock);
 
         var result = service.writeReport(
                 "session-2",
@@ -110,9 +107,8 @@ class BugReportServiceTest {
                 .thenReturn(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_000000-large-log.txt"));
         when(workspace.relativize(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_000000-large-log.txt")))
                 .thenReturn("bug-reports/2026-06-18/2026-06-18_000000-large-log.txt");
-        WorkspaceRegistry registry = new WorkspaceRegistry(workspace);
         Clock clock = Clock.fixed(Instant.parse("2026-06-18T00:00:00Z"), ZoneId.of("UTC"));
-        BugReportService service = new BugReportService(objectMapper, registry, agentHome, clock);
+        BugReportService service = new BugReportService(objectMapper, workspace, agentHome, clock);
 
         var result = service.writeReport(
                 "session-3",

@@ -1882,12 +1882,10 @@ export default function App() {
           <>
             <AppHeader
               onMenu={() => setMenuOpen(true)}
-              reportAction={thread.entries.length
-                ? {
-                    busy: reportingBug,
-                    onClick: saveBugReport
-                  }
-                : undefined}
+              reportAction={{
+                busy: reportingBug,
+                onClick: saveBugReport
+              }}
             />
             <input
               ref={imageInputRef}

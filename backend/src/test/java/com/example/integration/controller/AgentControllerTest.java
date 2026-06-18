@@ -10,14 +10,16 @@ import com.example.integration.agent.UserAgentService;
 import com.example.integration.service.BugReportService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import org.springframework.security.oauth2.jwt.Jwt;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.Duration;
@@ -166,6 +168,26 @@ class AgentControllerTest {
                 "/tmp/report.txt",
                 "/workspace",
                 List.of("/tmp/hugin.log")));
+    }
+
+    @Test
+    void bugReportEndpointRequiresSessionId() {
+        Jwt jwt = mock(Jwt.class);
+
+        var request = new BugReportRequest(
+                " ",
+                "Hung chat",
+                null,
+                null,
+                JsonNodeFactory.instance.objectNode(),
+                JsonNodeFactory.instance.objectNode());
+
+        ResponseStatusException exception = org.junit.jupiter.api.Assertions.assertThrows(
+                ResponseStatusException.class,
+                () -> controller.saveBugReport(request, jwt));
+
+        assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(exception.getReason()).isEqualTo("sessionId is required");
     }
 
     // -------------------------------------------------------------------------

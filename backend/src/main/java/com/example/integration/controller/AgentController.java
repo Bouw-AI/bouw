@@ -104,6 +104,9 @@ public class AgentController {
     @PostMapping("/bug-report")
     public ResponseEntity<BugReportResponse> saveBugReport(@RequestBody BugReportRequest request,
                                                            @AuthenticationPrincipal Jwt jwt) {
+        if (request == null || request.sessionId() == null || request.sessionId().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sessionId is required");
+        }
         String owner = owner(jwt);
         List<ChatMessage> history = agentService.history(owner, request.agentId(), request.sessionId());
         var saved = bugReportService.writeReport(

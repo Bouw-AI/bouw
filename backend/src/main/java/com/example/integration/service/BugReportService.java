@@ -2,7 +2,6 @@ package com.example.integration.service;
 
 import com.example.agent.model.ChatMessage;
 import com.example.agent.tool.Workspace;
-import com.example.agent.tool.WorkspaceRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,9 +9,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.text.Normalizer;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -32,20 +33,20 @@ public class BugReportService {
     private static final long MAX_LOG_BYTES = 256 * 1024;
 
     private final ObjectMapper objectMapper;
-    private final WorkspaceRegistry workspaceRegistry;
+    private final Workspace defaultWorkspace;
     private final Path agentHome;
     private final Clock clock;
 
     @Autowired
     public BugReportService(ObjectMapper objectMapper,
-                            WorkspaceRegistry workspaceRegistry,
+                            Workspace defaultWorkspace,
                             @Value("${agent.home:${user.home}/.hugin}") String agentHome) {
-        this(objectMapper, workspaceRegistry, Path.of(agentHome), Clock.systemDefaultZone());
+        this(objectMapper, defaultWorkspace, Path.of(agentHome), Clock.systemDefaultZone());
     }
 
-    BugReportService(ObjectMapper objectMapper, WorkspaceRegistry workspaceRegistry, Path agentHome, Clock clock) {
+    BugReportService(ObjectMapper objectMapper, Workspace defaultWorkspace, Path agentHome, Clock clock) {
         this.objectMapper = objectMapper;
-        this.workspaceRegistry = workspaceRegistry;
+        this.defaultWorkspace = defaultWorkspace;
         this.agentHome = agentHome.toAbsolutePath().normalize();
         this.clock = clock;
     }
@@ -58,7 +59,7 @@ public class BugReportService {
                                      List<ChatMessage> history,
                                      JsonNode clientThread,
                                      JsonNode clientContext) {
-        Workspace workspace = workspaceRegistry.resolve(null);
+        Workspace workspace = defaultWorkspace;
         LocalDateTime now = LocalDateTime.now(clock);
         String safeTitle = sanitizeTitle(title);
         String fileName = FILE_FORMAT.format(now) + "-" + safeTitle + ".txt";
@@ -152,9 +153,16 @@ public class BugReportService {
         if (size <= MAX_LOG_BYTES) {
             return Files.readString(path);
         }
-        byte[] bytes = Files.readAllBytes(path);
-        int offset = Math.max(0, bytes.length - (int) MAX_LOG_BYTES);
-        String tail = new String(bytes, offset, bytes.length - offset, StandardCharsets.UTF_8);
+        int tailSize = (int) Math.min(size, MAX_LOG_BYTES);
+        byte[] bytes = new byte[tailSize];
+        try (var channel = Files.newByteChannel(path, StandardOpenOption.READ)) {
+            channel.position(size - tailSize);
+            ByteBuffer buffer = ByteBuffer.wrap(bytes);
+            while (buffer.hasRemaining() && channel.read(buffer) != -1) {
+                // Read the requested tail window.
+            }
+        }
+        String tail = new String(bytes, StandardCharsets.UTF_8);
         return "[truncated to last " + MAX_LOG_BYTES + " bytes of " + size + " byte log]\n" + tail;
     }
 
