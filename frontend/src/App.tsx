@@ -191,6 +191,7 @@ function defaultReasoningFor(model?: ModelOption) {
 }
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const RECOVERY_POLL_DELAYS_MS = [3000, 5000, 8000, 13000, 21000];
 
 /** Folds a streamed agent event into the working thread, keyed by the active assistant entry. */
 function applyStreamEvent(thread: ChatThread, assistantId: string, event: StreamEvent): { thread: ChatThread; assistantId: string } {
@@ -1318,6 +1319,7 @@ export default function App() {
     if (!session) return;
     let cancelled = false;
     let timer: number | null = null;
+    let recoveryAttempt = 0;
 
     const clearTimer = () => {
       if (timer !== null) {
@@ -1326,8 +1328,10 @@ export default function App() {
       }
     };
 
-    const schedule = (delayMs: number) => {
+    const schedule = () => {
       clearTimer();
+      const delayMs = RECOVERY_POLL_DELAYS_MS[Math.min(recoveryAttempt, RECOVERY_POLL_DELAYS_MS.length - 1)];
+      recoveryAttempt += 1;
       timer = window.setTimeout(() => {
         void recoverPendingThreads();
       }, delayMs);
@@ -1340,7 +1344,10 @@ export default function App() {
         threadRef.current,
         activeAssistantIdsRef.current.keys()
       );
-      if (!pendingThreads.length) return;
+      if (!pendingThreads.length) {
+        recoveryAttempt = 0;
+        return;
+      }
 
       await Promise.all(pendingThreads.map((candidate) => syncThreadFromServer(candidate)));
 
@@ -1349,7 +1356,9 @@ export default function App() {
         threadRef.current,
         activeAssistantIdsRef.current.keys()
       ).length) {
-        schedule(3000);
+        schedule();
+      } else {
+        recoveryAttempt = 0;
       }
     };
 
