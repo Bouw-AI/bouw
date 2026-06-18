@@ -379,6 +379,18 @@ class AgentControllerTest {
     }
 
     @Test
+    void handleErrorSuppressesBodyForAgentStreamEndpointWithoutAcceptHeader() {
+        var request = new MockHttpServletRequest("POST", "/api/agent/stream");
+        var response = new MockHttpServletResponse();
+
+        ResponseEntity<Map<String, String>> result =
+                controller.handleError(new RuntimeException("stream failed"), request, response);
+
+        assertThat(result).isNull();
+        assertThat(response.getStatus()).isEqualTo(500);
+    }
+
+    @Test
     void chatStreamEmitsConfigEventUsingDeveloperModeState() throws InterruptedException {
         when(developerModeService.isEnabled()).thenReturn(true);
         var request = new AgentRequest("Hello", "llama3.2");

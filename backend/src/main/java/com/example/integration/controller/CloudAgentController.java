@@ -159,10 +159,10 @@ public class CloudAgentController {
 
     private boolean send(String agentId, SseEmitter emitter, String event, Map<String, ?> data) {
         try {
+            emitter.send(SseEmitter.event().name(event).data(objectMapper.writeValueAsString(data)));
             if (agentId != null) {
                 eventStore.append(agentId, event, data);
             }
-            emitter.send(SseEmitter.event().name(event).data(objectMapper.writeValueAsString(data)));
             return true;
         } catch (IOException e) {
             log.debug("Could not send SSE event '{}': {}", event, e.getMessage());
@@ -184,10 +184,14 @@ public class CloudAgentController {
     }
 
     private static boolean acceptsEventStream(HttpServletRequest request) {
-        return request != null
-                && request.getHeaders("Accept") != null
-                && java.util.Collections.list(request.getHeaders("Accept")).stream()
+        if (request == null) {
+            return false;
+        }
+        boolean acceptHeaderMatches = java.util.Collections.list(request.getHeaders("Accept")).stream()
                 .anyMatch(value -> value != null && value.contains(SSE_CONTENT_TYPE));
+        boolean streamEndpoint = "POST".equalsIgnoreCase(request.getMethod())
+                && "/api/agents".equals(request.getRequestURI());
+        return acceptHeaderMatches || streamEndpoint;
     }
 
     private static void ensureConnected(boolean sent) {
@@ -196,6 +200,9 @@ public class CloudAgentController {
         }
     }
 
+    /**
+     * Abort the background stream task as soon as a write shows the client has gone away.
+     */
     private static final class ClientDisconnectedException extends RuntimeException {
     }
 }

@@ -61,4 +61,15 @@ class CloudAgentControllerTest {
         assertThat(result).isNull();
         assertThat(response.getStatus()).isEqualTo(500);
     }
+
+    @Test
+    void handleErrorSuppressesBodyForCloudAgentCreateEndpointWithoutAcceptHeader() {
+        var request = new MockHttpServletRequest("POST", "/api/agents");
+        var response = new MockHttpServletResponse();
+
+        var result = controller.handleError(new RuntimeException("stream failed"), request, response);
+
+        assertThat(result).isNull();
+        assertThat(response.getStatus()).isEqualTo(500);
+    }
 }

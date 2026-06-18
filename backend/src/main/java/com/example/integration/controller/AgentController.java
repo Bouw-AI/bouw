@@ -268,10 +268,15 @@ public class AgentController {
     }
 
     private static boolean acceptsEventStream(HttpServletRequest request) {
-        return request != null
-                && request.getHeaders("Accept") != null
-                && java.util.Collections.list(request.getHeaders("Accept")).stream()
+        if (request == null) {
+            return false;
+        }
+        boolean acceptHeaderMatches = java.util.Collections.list(request.getHeaders("Accept")).stream()
                 .anyMatch(value -> value != null && value.contains(SSE_CONTENT_TYPE));
+        boolean streamEndpoint = "POST".equalsIgnoreCase(request.getMethod())
+                && request.getRequestURI() != null
+                && request.getRequestURI().endsWith("/api/agent/stream");
+        return acceptHeaderMatches || streamEndpoint;
     }
 
     private static void ensureConnected(boolean sent) {
@@ -280,6 +285,9 @@ public class AgentController {
         }
     }
 
+    /**
+     * Abort the background stream task as soon as a write shows the client has gone away.
+     */
     private static final class ClientDisconnectedException extends RuntimeException {
     }
 }
