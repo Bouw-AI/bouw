@@ -20,6 +20,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -52,6 +54,7 @@ import java.util.concurrent.ExecutorService;
 public class AgentController {
 
     private static final Logger log = LoggerFactory.getLogger(AgentController.class);
+    private static final String SSE_CONTENT_TYPE = MediaType.TEXT_EVENT_STREAM_VALUE;
 
     private final AgentService agentService;
     private final ObjectMapper objectMapper;
@@ -130,43 +133,49 @@ public class AgentController {
         SseEmitter emitter = new SseEmitter(streamTimeoutMillis);
 
         streamExecutor.execute(() -> {
-            send(emitter, "config", Map.of("developerMode", developerModeService.isEnabled()));
+            if (!send(emitter, "config", Map.of("developerMode", developerModeService.isEnabled()))) {
+                emitter.complete();
+                return;
+            }
             try {
                 StringBuilder streamedContent = new StringBuilder();
                 AgentResponse response = agentService.chatStream(scoped, new AgentStreamListener() {
                     @Override
                     public void onConfig(boolean developerMode) {
-                        send(emitter, "config", Map.of("developerMode", developerMode));
+                        ensureConnected(send(emitter, "config", Map.of("developerMode", developerMode)));
                     }
 
                     @Override
                     public void onContent(String delta) {
                         streamedContent.append(delta);
-                        send(emitter, "token", Map.of("text", delta));
+                        ensureConnected(send(emitter, "token", Map.of("text", delta)));
                     }
 
                     @Override
                     public void onReasoning(String delta) {
-                        send(emitter, "reasoning", Map.of("text", delta));
+                        ensureConnected(send(emitter, "reasoning", Map.of("text", delta)));
                     }
 
                     @Override
                     public void onToolCall(String toolName, String arguments) {
-                        send(emitter, "tool", Map.of("name", toolName, "args", arguments));
+                        ensureConnected(send(emitter, "tool", Map.of("name", toolName, "args", arguments)));
                     }
 
                     @Override
                     public void onToolResult(String toolName, String result) {
-                        send(emitter, "tool_result", Map.of("name", toolName, "result", result));
+                        ensureConnected(send(emitter, "tool_result", Map.of("name", toolName, "result", result)));
                     }
                 }, memoryOwner(owner, scoped.agentId()));
                 if (streamedContent.isEmpty()
                         && response != null
                         && response.response() != null
                         && !response.response().isBlank()) {
-                    send(emitter, "token", Map.of("text", response.response()));
+                    ensureConnected(send(emitter, "token", Map.of("text", response.response())));
                 }
-                send(emitter, "done", Map.of());
+                ensureConnected(send(emitter, "done", Map.of()));
+                emitter.complete();
+            } catch (ClientDisconnectedException e) {
+                log.debug("Agent stream client disconnected");
                 emitter.complete();
             } catch (Exception e) {
                 log.warn("Agent stream failed", e);
@@ -225,19 +234,28 @@ public class AgentController {
         return owner + ":" + agentId;
     }
 
-    private void send(SseEmitter emitter, String event, Map<String, ?> data) {
+    private boolean send(SseEmitter emitter, String event, Map<String, ?> data) {
         try {
             // Write the pre-serialized JSON verbatim as the SSE data line (passing a MediaType
             // here would route the String through Jackson again and double-encode it).
             emitter.send(SseEmitter.event().name(event).data(objectMapper.writeValueAsString(data)));
+            return true;
         } catch (IOException e) {
             // Client disconnected; nothing more we can do for this stream.
             log.debug("Could not send SSE event '{}': {}", event, e.getMessage());
+            return false;
         }
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, String>> handleError(Exception ex) {
+    public ResponseEntity<Map<String, String>> handleError(Exception ex,
+                                                           HttpServletRequest request,
+                                                           HttpServletResponse response) {
+        if (acceptsEventStream(request)) {
+            log.debug("Suppressing HTTP error body for SSE request: {}", ex.getMessage(), ex);
+            response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
+            return null;
+        }
         if (ex instanceof ResponseStatusException statusException) {
             String message = statusException.getReason() != null
                     ? statusException.getReason()
@@ -247,5 +265,21 @@ public class AgentController {
         }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName()));
+    }
+
+    private static boolean acceptsEventStream(HttpServletRequest request) {
+        return request != null
+                && request.getHeaders("Accept") != null
+                && java.util.Collections.list(request.getHeaders("Accept")).stream()
+                .anyMatch(value -> value != null && value.contains(SSE_CONTENT_TYPE));
+    }
+
+    private static void ensureConnected(boolean sent) {
+        if (!sent) {
+            throw new ClientDisconnectedException();
+        }
+    }
+
+    private static final class ClientDisconnectedException extends RuntimeException {
     }
 }

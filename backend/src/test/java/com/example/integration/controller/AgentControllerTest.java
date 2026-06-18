@@ -18,6 +18,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -333,7 +335,8 @@ class AgentControllerTest {
     void handleErrorReturnsInternalServerError() {
         var exception = new RuntimeException("Something went wrong");
 
-        ResponseEntity<Map<String, String>> response = controller.handleError(exception);
+        ResponseEntity<Map<String, String>> response =
+                controller.handleError(exception, new MockHttpServletRequest(), new MockHttpServletResponse());
 
         assertThat(response.getStatusCode().value()).isEqualTo(500);
         assertThat(response.getBody()).containsEntry("error", "Something went wrong");
@@ -343,7 +346,8 @@ class AgentControllerTest {
     void handleErrorUsesClassNameWhenMessageIsNull() {
         var exception = new NullPointerException();
 
-        ResponseEntity<Map<String, String>> response = controller.handleError(exception);
+        ResponseEntity<Map<String, String>> response =
+                controller.handleError(exception, new MockHttpServletRequest(), new MockHttpServletResponse());
 
         assertThat(response.getStatusCode().value()).isEqualTo(500);
         assertThat(response.getBody()).containsKey("error");
@@ -354,10 +358,24 @@ class AgentControllerTest {
     void handleErrorWithCustomMessage() {
         var exception = new IllegalArgumentException("Invalid input provided");
 
-        ResponseEntity<Map<String, String>> response = controller.handleError(exception);
+        ResponseEntity<Map<String, String>> response =
+                controller.handleError(exception, new MockHttpServletRequest(), new MockHttpServletResponse());
 
         assertThat(response.getStatusCode().value()).isEqualTo(500);
         assertThat(response.getBody()).containsEntry("error", "Invalid input provided");
+    }
+
+    @Test
+    void handleErrorSuppressesBodyForSseRequests() {
+        var exception = new RuntimeException("stream failed");
+        var request = new MockHttpServletRequest();
+        request.addHeader("Accept", "text/event-stream");
+        var response = new MockHttpServletResponse();
+
+        ResponseEntity<Map<String, String>> result = controller.handleError(exception, request, response);
+
+        assertThat(result).isNull();
+        assertThat(response.getStatus()).isEqualTo(500);
     }
 
     @Test

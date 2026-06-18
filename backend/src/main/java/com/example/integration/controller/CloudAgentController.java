@@ -6,6 +6,8 @@ import com.example.agent.model.AgentInfo;
 import com.example.agent.model.CloudAgentEvent;
 import com.example.integration.service.CloudAgentEventStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,6 +38,7 @@ import java.util.concurrent.ExecutorService;
 public class CloudAgentController {
 
     private static final Logger log = LoggerFactory.getLogger(CloudAgentController.class);
+    private static final String SSE_CONTENT_TYPE = MediaType.TEXT_EVENT_STREAM_VALUE;
 
     /** Request body for {@code POST /api/agents}. */
     public record CreateAgentRequest(
@@ -71,7 +74,10 @@ public class CloudAgentController {
             AgentInfo info;
             try {
                 info = cloudAgentService.create(req.repoUrl(), req.task(), req.branch(), req.model());
-                send(info.id(), emitter, "agent_created", Map.of("id", info.id(), "branch", info.branch()));
+                if (!send(info.id(), emitter, "agent_created", Map.of("id", info.id(), "branch", info.branch()))) {
+                    emitter.complete();
+                    return;
+                }
             } catch (Exception e) {
                 log.warn("Cloud agent creation failed", e);
                 send(null, emitter, "error", Map.of("message", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
@@ -84,28 +90,31 @@ public class CloudAgentController {
                 CloudAgentService.RunResult result = cloudAgentService.run(agentId, req.model(), new AgentStreamListener() {
                     @Override
                     public void onContent(String delta) {
-                        send(agentId, emitter, "token", Map.of("text", delta));
+                        ensureConnected(send(agentId, emitter, "token", Map.of("text", delta)));
                     }
 
                     @Override
                     public void onReasoning(String delta) {
-                        send(agentId, emitter, "reasoning", Map.of("text", delta));
+                        ensureConnected(send(agentId, emitter, "reasoning", Map.of("text", delta)));
                     }
 
                     @Override
                     public void onToolCall(String toolName, String arguments) {
-                        send(agentId, emitter, "tool", Map.of("name", toolName, "args", arguments));
+                        ensureConnected(send(agentId, emitter, "tool", Map.of("name", toolName, "args", arguments)));
                     }
 
                     @Override
                     public void onToolResult(String toolName, String result) {
-                        send(agentId, emitter, "tool_result", Map.of("name", toolName, "result", result));
+                        ensureConnected(send(agentId, emitter, "tool_result", Map.of("name", toolName, "result", result)));
                     }
                 });
                 result.pullRequestUrl().ifPresent(url ->
-                        send(agentId, emitter, "pr_opened", Map.of("id", agentId, "url", url)));
-                send(agentId, emitter, "done", Map.of("id", agentId, "prUrl", result.pullRequestUrl().orElse(""),
-                        "changed", result.changed()));
+                        ensureConnected(send(agentId, emitter, "pr_opened", Map.of("id", agentId, "url", url))));
+                ensureConnected(send(agentId, emitter, "done", Map.of("id", agentId, "prUrl", result.pullRequestUrl().orElse(""),
+                        "changed", result.changed())));
+                emitter.complete();
+            } catch (ClientDisconnectedException e) {
+                log.debug("Cloud agent stream client disconnected: {}", agentId);
                 emitter.complete();
             } catch (Exception e) {
                 log.warn("Cloud agent {} failed", agentId, e);
@@ -148,20 +157,45 @@ public class CloudAgentController {
         return ResponseEntity.noContent().build();
     }
 
-    private void send(String agentId, SseEmitter emitter, String event, Map<String, ?> data) {
+    private boolean send(String agentId, SseEmitter emitter, String event, Map<String, ?> data) {
         try {
             if (agentId != null) {
                 eventStore.append(agentId, event, data);
             }
             emitter.send(SseEmitter.event().name(event).data(objectMapper.writeValueAsString(data)));
+            return true;
         } catch (IOException e) {
             log.debug("Could not send SSE event '{}': {}", event, e.getMessage());
+            return false;
         }
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, String>> handleError(Exception ex) {
+    public ResponseEntity<Map<String, String>> handleError(Exception ex,
+                                                           HttpServletRequest request,
+                                                           HttpServletResponse response) {
+        if (acceptsEventStream(request)) {
+            log.debug("Suppressing HTTP error body for SSE request: {}", ex.getMessage(), ex);
+            response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
+            return null;
+        }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName()));
+    }
+
+    private static boolean acceptsEventStream(HttpServletRequest request) {
+        return request != null
+                && request.getHeaders("Accept") != null
+                && java.util.Collections.list(request.getHeaders("Accept")).stream()
+                .anyMatch(value -> value != null && value.contains(SSE_CONTENT_TYPE));
+    }
+
+    private static void ensureConnected(boolean sent) {
+        if (!sent) {
+            throw new ClientDisconnectedException();
+        }
+    }
+
+    private static final class ClientDisconnectedException extends RuntimeException {
     }
 }
