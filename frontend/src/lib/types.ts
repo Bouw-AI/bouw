@@ -140,3 +140,8 @@ export type ModelOption = {
   reasoningOptions: string[];
   enabled: boolean;
 };
+
+export type BugReportResponse = {
+  relativePath: string;
+  logFiles: string[];
+};

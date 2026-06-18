@@ -7,14 +7,19 @@ import com.example.agent.model.AgentRequest;
 import com.example.agent.model.AgentResponse;
 import com.example.agent.model.ChatMessage;
 import com.example.integration.agent.UserAgentService;
+import com.example.integration.service.BugReportService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.Duration;
@@ -42,6 +47,9 @@ class AgentControllerTest {
     @Mock
     UserAgentService userAgentService;
 
+    @Mock
+    BugReportService bugReportService;
+
     ObjectMapper objectMapper = new ObjectMapper();
     AgentController controller;
 
@@ -53,6 +61,7 @@ class AgentControllerTest {
                 Executors.newCachedThreadPool(),
                 developerModeService,
                 userAgentService,
+                bugReportService,
                 Duration.ofMinutes(5)
         );
     }
@@ -121,6 +130,62 @@ class AgentControllerTest {
 
         assertThat(result.getStatusCode().value()).isEqualTo(200);
         assertThat(result.getBody()).isEqualTo(history);
+    }
+
+    @Test
+    void bugReportEndpointExportsHistoryIntoWorkspaceReport() {
+        Jwt jwt = mock(Jwt.class);
+        when(jwt.getSubject()).thenReturn("global");
+        var request = new BugReportRequest(
+                "session-123",
+                "Hung chat",
+                null,
+                null,
+                JsonNodeFactory.instance.objectNode().put("id", "thread-1"),
+                JsonNodeFactory.instance.objectNode().put("screen", "purechat"));
+        List<ChatMessage> history = List.of(ChatMessage.user("hello"), ChatMessage.assistant("hi"));
+        when(agentService.history("global", null, "session-123")).thenReturn(history);
+        when(bugReportService.writeReport(
+                eq("session-123"),
+                eq("Hung chat"),
+                eq("global"),
+                eq(null),
+                eq(null),
+                eq(history),
+                any(),
+                any()))
+                .thenReturn(new BugReportService.BugReportFile(
+                        "bug-reports/2026-06-18/report.txt",
+                        "/tmp/report.txt",
+                        "/workspace",
+                        List.of("/tmp/hugin.log")));
+
+        ResponseEntity<BugReportResponse> result = controller.saveBugReport(request, jwt);
+
+        assertThat(result.getStatusCode().value()).isEqualTo(200);
+        assertThat(result.getBody()).isEqualTo(new BugReportResponse(
+                "bug-reports/2026-06-18/report.txt",
+                List.of("/tmp/hugin.log")));
+    }
+
+    @Test
+    void bugReportEndpointRequiresSessionId() {
+        Jwt jwt = mock(Jwt.class);
+
+        var request = new BugReportRequest(
+                " ",
+                "Hung chat",
+                null,
+                null,
+                JsonNodeFactory.instance.objectNode(),
+                JsonNodeFactory.instance.objectNode());
+
+        ResponseStatusException exception = org.junit.jupiter.api.Assertions.assertThrows(
+                ResponseStatusException.class,
+                () -> controller.saveBugReport(request, jwt));
+
+        assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(exception.getReason()).isEqualTo("sessionId is required");
     }
 
     // -------------------------------------------------------------------------

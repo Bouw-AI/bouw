@@ -8,6 +8,7 @@ import com.example.agent.model.AgentResponse;
 import com.example.agent.model.ChatMessage;
 import com.example.integration.agent.UserAgent;
 import com.example.integration.agent.UserAgentService;
+import com.example.integration.service.BugReportService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,18 +59,21 @@ public class AgentController {
     private final long streamTimeoutMillis;
     private final DeveloperModeService developerModeService;
     private final UserAgentService userAgentService;
+    private final BugReportService bugReportService;
 
     public AgentController(AgentService agentService,
                            ObjectMapper objectMapper,
                            ExecutorService agentStreamExecutor,
                            DeveloperModeService developerModeService,
                            UserAgentService userAgentService,
+                           BugReportService bugReportService,
                            @Value("${agent.request-timeout:5m}") Duration requestTimeout) {
         this.agentService = agentService;
         this.objectMapper = objectMapper;
         this.streamExecutor = agentStreamExecutor;
         this.developerModeService = developerModeService;
         this.userAgentService = userAgentService;
+        this.bugReportService = bugReportService;
         // Allow a margin beyond the agent's own deadline before the SSE connection is torn down.
         this.streamTimeoutMillis = requestTimeout.plusSeconds(60).toMillis();
     }
@@ -95,6 +99,28 @@ public class AgentController {
                                                      @AuthenticationPrincipal Jwt jwt) {
         String owner = owner(jwt);
         return ResponseEntity.ok(agentService.history(owner, agentId, sessionId));
+    }
+
+    @PostMapping("/bug-report")
+    public ResponseEntity<BugReportResponse> saveBugReport(@RequestBody BugReportRequest request,
+                                                           @AuthenticationPrincipal Jwt jwt) {
+        if (request == null || request.sessionId() == null || request.sessionId().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sessionId is required");
+        }
+        String owner = owner(jwt);
+        List<ChatMessage> history = agentService.history(owner, request.agentId(), request.sessionId());
+        var saved = bugReportService.writeReport(
+                request.sessionId(),
+                request.title(),
+                owner,
+                request.agentId(),
+                request.sandboxId(),
+                history,
+                request.thread(),
+                request.clientContext());
+        return ResponseEntity.ok(new BugReportResponse(
+                saved.relativePath(),
+                saved.logFiles()));
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

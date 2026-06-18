@@ -11,6 +11,7 @@ import type {
   GitHubRepository,
   GitHubStatus,
   Integration,
+  BugReportResponse,
   ModelOption,
   SandboxInfo,
   StreamToolEvent,
@@ -761,6 +762,23 @@ export async function fetchGitHubBranches(token: string, repoFullName: string): 
   return apiFetch<GitHubBranch[]>(
     `/api/github/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches`,
     {},
+    token
+  );
+}
+
+type ReportBugRequest = {
+  sessionId: string;
+  title: string;
+  sandboxId?: string;
+  agentId?: string;
+  thread: unknown;
+  clientContext: unknown;
+};
+
+export async function reportBug(token: string, payload: ReportBugRequest): Promise<BugReportResponse> {
+  return apiFetch<BugReportResponse>(
+    "/api/agent/bug-report",
+    { method: "POST", body: JSON.stringify(payload) },
     token
   );
 }
