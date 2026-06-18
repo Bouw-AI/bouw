@@ -191,6 +191,7 @@ function defaultReasoningFor(model?: ModelOption) {
 }
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const RECOVERY_POLL_DELAYS_MS = [3000, 5000, 8000, 13000, 21000];
 
 /** Folds a streamed agent event into the working thread, keyed by the active assistant entry. */
 function applyStreamEvent(thread: ChatThread, assistantId: string, event: StreamEvent): { thread: ChatThread; assistantId: string } {
@@ -272,6 +273,31 @@ function applyStreamEvent(thread: ChatThread, assistantId: string, event: Stream
     thread: { ...thread, updatedAt: nowIso(), entries },
     assistantId: nextAssistantId
   };
+}
+
+function threadHasPendingAssistant(thread: ChatThread): boolean {
+  return thread.entries.some((entry) => entry.type === "assistant" && !entry.completedAt);
+}
+
+function collectRecoveryCandidates(
+  threads: ChatThread[],
+  currentThread: ChatThread,
+  activeThreadIds: Iterable<string>
+): ChatThread[] {
+  const candidates = new Map<string, ChatThread>();
+  for (const thread of threads) {
+    if (threadHasPendingAssistant(thread)) {
+      candidates.set(thread.id, thread);
+    }
+  }
+  for (const threadId of activeThreadIds) {
+    const candidate = threads.find((thread) => thread.id === threadId)
+      ?? (currentThread.id === threadId ? currentThread : null);
+    if (candidate) {
+      candidates.set(threadId, candidate);
+    }
+  }
+  return [...candidates.values()];
 }
 
 function StatusBar() {
@@ -1232,6 +1258,7 @@ export default function App() {
       upsertThread(next);
       if (threadRef.current.id === next.id) {
         setThread(next);
+        threadRef.current = next;
       }
     } catch {
       // Leave local state alone when the background resync cannot reach the server.
@@ -1271,13 +1298,13 @@ export default function App() {
     if (!session) return;
     const handleVisibility = () => {
       if (document.visibilityState !== "visible") return;
-      const activeThreadIds = new Set(activeAssistantIdsRef.current.keys());
-      for (const threadId of activeThreadIds) {
-        const candidate = stateRef.current.threads.find((item) => item.id === threadId)
-          ?? (threadRef.current.id === threadId ? threadRef.current : null);
-        if (candidate) {
-          void syncThreadFromServer(candidate);
-        }
+      const candidates = collectRecoveryCandidates(
+        stateRef.current.threads,
+        threadRef.current,
+        activeAssistantIdsRef.current.keys()
+      );
+      for (const candidate of candidates) {
+        void syncThreadFromServer(candidate);
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
@@ -1285,6 +1312,61 @@ export default function App() {
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("focus", handleVisibility);
+    };
+  }, [session, syncThreadFromServer]);
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    let recoveryAttempt = 0;
+
+    const clearTimer = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    const schedule = () => {
+      clearTimer();
+      const delayMs = RECOVERY_POLL_DELAYS_MS[Math.min(recoveryAttempt, RECOVERY_POLL_DELAYS_MS.length - 1)];
+      recoveryAttempt += 1;
+      timer = window.setTimeout(() => {
+        void recoverPendingThreads();
+      }, delayMs);
+    };
+
+    const recoverPendingThreads = async () => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      const pendingThreads = collectRecoveryCandidates(
+        stateRef.current.threads,
+        threadRef.current,
+        activeAssistantIdsRef.current.keys()
+      );
+      if (!pendingThreads.length) {
+        recoveryAttempt = 0;
+        return;
+      }
+
+      await Promise.all(pendingThreads.map((candidate) => syncThreadFromServer(candidate)));
+
+      if (!cancelled && collectRecoveryCandidates(
+        stateRef.current.threads,
+        threadRef.current,
+        activeAssistantIdsRef.current.keys()
+      ).length) {
+        schedule();
+      } else {
+        recoveryAttempt = 0;
+      }
+    };
+
+    void recoverPendingThreads();
+
+    return () => {
+      cancelled = true;
+      clearTimer();
     };
   }, [session, syncThreadFromServer]);
 
