@@ -2,6 +2,7 @@ package com.example.integration.controller;
 
 import com.example.agent.AgentService;
 import com.example.agent.AgentStreamListener;
+import com.example.agent.AgentRunRegistry;
 import com.example.agent.DeveloperModeService;
 import com.example.agent.model.AgentRequest;
 import com.example.agent.model.AgentResponse;
@@ -57,6 +58,7 @@ class AgentControllerTest {
     BugReportService bugReportService;
 
     ObjectMapper objectMapper = new ObjectMapper();
+    AgentRunRegistry runRegistry = new AgentRunRegistry();
     AgentController controller;
 
     @BeforeEach
@@ -67,6 +69,7 @@ class AgentControllerTest {
                 Executors.newCachedThreadPool(),
                 developerModeService,
                 userAgentService,
+                runRegistry,
                 bugReportService,
                 Duration.ofMinutes(5)
         );
@@ -192,6 +195,40 @@ class AgentControllerTest {
 
         assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(exception.getReason()).isEqualTo("sessionId is required");
+    }
+
+    @Test
+    void runsEndpointListsActiveRunsForOwner() {
+        Thread worker = new Thread(() -> {});
+        String runId = runRegistry.register("global", new AgentRequest("hello", "llama3.2", "session-123"), "llama3.2", worker);
+
+        ResponseEntity<List<AgentRunRegistry.ActiveRun>> result = controller.runs(null);
+
+        assertThat(result.getStatusCode().value()).isEqualTo(200);
+        assertThat(result.getBody()).extracting(AgentRunRegistry.ActiveRun::id).contains(runId);
+        runRegistry.unregister(runId);
+    }
+
+    @Test
+    void cancelRunEndpointCancelsKnownRun() {
+        Thread worker = new Thread(() -> {});
+        String runId = runRegistry.register("global", new AgentRequest("hello", "llama3.2", "session-123"), "llama3.2", worker);
+
+        ResponseEntity<Void> result = controller.cancelRun(runId, null);
+
+        assertThat(result.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(runRegistry.list("global"))
+                .singleElement()
+                .extracting(AgentRunRegistry.ActiveRun::cancellationRequested)
+                .isEqualTo(true);
+        runRegistry.unregister(runId);
+    }
+
+    @Test
+    void cancelRunEndpointReturnsNotFoundForUnknownRun() {
+        ResponseEntity<Void> result = controller.cancelRun("missing-run", null);
+
+        assertThat(result.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     // -------------------------------------------------------------------------
@@ -340,6 +377,7 @@ class AgentControllerTest {
                 Executors.newCachedThreadPool(),
                 developerModeService,
                 userAgentService,
+                runRegistry,
                 bugReportService,
                 Duration.ofMinutes(5)
         ) {

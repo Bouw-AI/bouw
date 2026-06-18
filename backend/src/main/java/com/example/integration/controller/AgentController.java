@@ -2,6 +2,7 @@ package com.example.integration.controller;
 
 import com.example.agent.AgentService;
 import com.example.agent.AgentStreamListener;
+import com.example.agent.AgentRunRegistry;
 import com.example.agent.DeveloperModeService;
 import com.example.agent.model.AgentRequest;
 import com.example.agent.model.AgentResponse;
@@ -63,12 +64,14 @@ public class AgentController {
     private final DeveloperModeService developerModeService;
     private final UserAgentService userAgentService;
     private final BugReportService bugReportService;
+    private final AgentRunRegistry runRegistry;
 
     public AgentController(AgentService agentService,
                            ObjectMapper objectMapper,
                            ExecutorService agentStreamExecutor,
                            DeveloperModeService developerModeService,
                            UserAgentService userAgentService,
+                           AgentRunRegistry runRegistry,
                            BugReportService bugReportService,
                            @Value("${agent.request-timeout:5m}") Duration requestTimeout) {
         this.agentService = agentService;
@@ -76,6 +79,7 @@ public class AgentController {
         this.streamExecutor = agentStreamExecutor;
         this.developerModeService = developerModeService;
         this.userAgentService = userAgentService;
+        this.runRegistry = runRegistry;
         this.bugReportService = bugReportService;
         // Allow a margin beyond the agent's own deadline before the SSE connection is torn down.
         this.streamTimeoutMillis = requestTimeout.plusSeconds(60).toMillis();
@@ -102,6 +106,18 @@ public class AgentController {
                                                      @AuthenticationPrincipal Jwt jwt) {
         String owner = owner(jwt);
         return ResponseEntity.ok(agentService.history(owner, agentId, sessionId));
+    }
+
+    @GetMapping("/runs")
+    public ResponseEntity<List<AgentRunRegistry.ActiveRun>> runs(@AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok(runRegistry.list(owner(jwt)));
+    }
+
+    @DeleteMapping("/runs/{id}")
+    public ResponseEntity<Void> cancelRun(@PathVariable String id, @AuthenticationPrincipal Jwt jwt) {
+        return runRegistry.cancel(owner(jwt), id)
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
     }
 
     @PostMapping("/bug-report")
@@ -133,50 +149,57 @@ public class AgentController {
         SseEmitter emitter = createEmitter();
 
         streamExecutor.execute(() -> {
+            String runId = runRegistry.register(owner, scoped, scoped.model(), Thread.currentThread());
             AtomicBoolean streamOpen = new AtomicBoolean(true);
-            sendIfOpen(emitter, streamOpen, "config", Map.of("developerMode", developerModeService.isEnabled()));
+            sendIfOpen(runId, emitter, streamOpen, "config", Map.of("developerMode", developerModeService.isEnabled()));
             try {
                 StringBuilder streamedContent = new StringBuilder();
                 AgentResponse response = agentService.chatStream(scoped, new AgentStreamListener() {
                     @Override
                     public void onConfig(boolean developerMode) {
-                        sendIfOpen(emitter, streamOpen, "config", Map.of("developerMode", developerMode));
+                        sendIfOpen(runId, emitter, streamOpen, "config", Map.of("developerMode", developerMode));
                     }
 
                     @Override
                     public void onContent(String delta) {
                         streamedContent.append(delta);
-                        sendIfOpen(emitter, streamOpen, "token", Map.of("text", delta));
+                        sendIfOpen(runId, emitter, streamOpen, "token", Map.of("text", delta));
                     }
 
                     @Override
                     public void onReasoning(String delta) {
-                        sendIfOpen(emitter, streamOpen, "reasoning", Map.of("text", delta));
+                        sendIfOpen(runId, emitter, streamOpen, "reasoning", Map.of("text", delta));
                     }
 
                     @Override
                     public void onToolCall(String toolName, String arguments) {
-                        sendIfOpen(emitter, streamOpen, "tool", Map.of("name", toolName, "args", arguments));
+                        sendIfOpen(runId, emitter, streamOpen, "tool", Map.of("name", toolName, "args", arguments));
                     }
 
                     @Override
                     public void onToolResult(String toolName, String result) {
-                        sendIfOpen(emitter, streamOpen, "tool_result", Map.of("name", toolName, "result", result));
+                        sendIfOpen(runId, emitter, streamOpen, "tool_result", Map.of("name", toolName, "result", result));
                     }
                 }, memoryOwner(owner, scoped.agentId()));
                 if (streamedContent.isEmpty()
                         && response != null
                         && response.response() != null
                         && !response.response().isBlank()) {
-                    sendIfOpen(emitter, streamOpen, "token", Map.of("text", response.response()));
+                    sendIfOpen(runId, emitter, streamOpen, "token", Map.of("text", response.response()));
                 }
-                sendIfOpen(emitter, streamOpen, "done", Map.of());
+                sendIfOpen(runId, emitter, streamOpen, "done", Map.of());
+                completeSafely(emitter);
+            } catch (com.example.agent.AgentRunCancelledException e) {
+                log.info("Agent stream cancelled: {}", runId);
+                sendIfOpen(runId, emitter, streamOpen, "error", Map.of("message", e.getMessage()));
                 completeSafely(emitter);
             } catch (Exception e) {
                 log.warn("Agent stream failed", e);
                 String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                sendIfOpen(emitter, streamOpen, "error", Map.of("message", message));
+                sendIfOpen(runId, emitter, streamOpen, "error", Map.of("message", message));
                 completeSafely(emitter);
+            } finally {
+                runRegistry.unregister(runId);
             }
         });
 
@@ -246,12 +269,13 @@ public class AgentController {
         }
     }
 
-    private void sendIfOpen(SseEmitter emitter, AtomicBoolean streamOpen, String event, Map<String, ?> data) {
+    private void sendIfOpen(String runId, SseEmitter emitter, AtomicBoolean streamOpen, String event, Map<String, ?> data) {
         if (!streamOpen.get()) {
             return;
         }
         if (!send(emitter, event, data) && streamOpen.compareAndSet(true, false)) {
             log.debug("Agent stream client disconnected during '{}' event; continuing run in background", event);
+            runRegistry.markDisconnected(runId);
         }
     }
 
