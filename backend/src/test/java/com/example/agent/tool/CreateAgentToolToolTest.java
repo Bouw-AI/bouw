@@ -71,11 +71,11 @@ class CreateAgentToolToolTest {
     }
 
     @Test
-    void rejectsThinReuseRationale() throws Exception {
+    void rejectsThinSolvedTask() throws Exception {
         Map<String, Object> args = baseArgs("one_off");
-        args.put("reuse_rationale", "idk");
+        args.put("solved_task", "idk");
         String result = tool.execute(args, new ToolContext(workspace));
-        assertThat(result).contains("reuse_rationale");
+        assertThat(result).contains("solved_task");
     }
 
     @Test
@@ -156,7 +156,7 @@ class CreateAgentToolToolTest {
                 "type", "object",
                 "properties", Map.of("symbol", Map.of("type", "string")),
                 "required", List.of("symbol")));
-        args.put("reuse_rationale", "We will look up stock prices repeatedly across many requests.");
+        args.put("solved_task", "Fetched a stock price with a yfinance run_bash script just now.");
         return args;
     }
 

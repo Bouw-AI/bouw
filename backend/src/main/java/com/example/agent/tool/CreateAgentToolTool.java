@@ -21,9 +21,11 @@ import java.util.regex.Pattern;
  * just-in-time tool manifest into the current workspace.
  *
  * <p>The motivating scenario: the agent solves a task once with ad-hoc {@code run_bash} scripting
- * (e.g. "look up a stock ticker price with yfinance"), realises it will need that capability again,
- * and crystallises it into a first-class {@code lookup_stock_ticker} tool so future requests can call
- * it directly instead of re-deriving the script.
+ * (e.g. "look up a stock ticker price with yfinance"), and the user then asks it to "make that a
+ * tool". The agent crystallises the working solution it already ran into a first-class
+ * {@code lookup_stock_ticker} tool so future requests can call it directly instead of re-deriving the
+ * script. Tool creation is user-driven: the agent saves work it has <em>already</em> done on request,
+ * rather than deciding on its own initiative or using this to attempt an unsolved problem.
  *
  * <p>The generated script lives under the workspace's just-in-time tool directory
  * ({@code .hugin/jit-tools/scripts/}), which this tool keeps out of version control by writing a
@@ -32,10 +34,11 @@ import java.util.regex.Pattern;
  * <em>without restarting the service</em>.
  *
  * <p><strong>Guardrails.</strong> New tools are a long-lived addition to the agent's surface area, so
- * this tool is deliberately conservative: it requires the model to justify reuse, refuses to create a
- * tool for a one-off task, validates the name, refuses to shadow a built-in or clobber an existing
- * tool unless {@code overwrite} is set, and caps the total number of generated tools per workspace.
- * The prompt text reinforces "prefer run_bash for one-offs; only mint a tool for a recurring need".
+ * this tool is deliberately conservative: it requires the model to name the already-solved task the
+ * tool captures, validates the name, refuses to shadow a built-in or clobber an existing tool unless
+ * {@code overwrite} is set, and caps the total number of generated tools per workspace.
+ * The prompt text reinforces that the agent only creates a tool when the user asks, and only from a
+ * solution it has already run — never to attempt a problem it has not solved.
  */
 @Component
 public class CreateAgentToolTool implements LocalTool {
@@ -88,17 +91,19 @@ public class CreateAgentToolTool implements LocalTool {
 
     @Override
     public String description() {
-        return "Create a NEW, reusable tool that you (and future requests) can call directly, by "
-                + "writing a self-contained script plus a manifest into the workspace. The tool is "
-                + "loaded on the fly and becomes callable on the next step — no restart needed.\n"
-                + "USE THIS SPARINGLY. It is only for capabilities you expect to need REPEATEDLY "
-                + "(e.g. you just wrote a run_bash script to fetch a stock price with yfinance and "
-                + "want a permanent 'lookup_stock_ticker' tool). For a one-off task, just use run_bash "
-                + "instead — do NOT mint a tool for it. Before creating, make sure no existing tool "
-                + "already does the job. Keep the script parameterized and self-contained: it receives "
-                + "the call arguments as a JSON object on stdin (also in the HUGIN_TOOL_ARGS_JSON env "
-                + "var) and should print its result to stdout. After creating a tool, install any "
-                + "dependencies (e.g. via run_bash 'pip install ...') and test it by calling it once.";
+        return "Save a task you have ALREADY solved in this conversation as a new, reusable tool that "
+                + "you (and future requests) can call directly. It writes a self-contained script plus "
+                + "a manifest into the workspace; the tool is loaded on the fly and becomes callable on "
+                + "the next step — no restart needed.\n"
+                + "Only call this when the user explicitly asks you to turn something you just did into "
+                + "a tool (e.g. \"make that a tool\"). The 'code' must be the working solution you "
+                + "already ran — for example the run_bash script you just used to fetch a stock price "
+                + "with yfinance — generalised with parameters, NOT a fresh, untested attempt at a new "
+                + "problem. Do not create tools on your own initiative, and never use this to try to "
+                + "solve something you have not solved yet. The script receives the call arguments as a "
+                + "JSON object on stdin (also in the HUGIN_TOOL_ARGS_JSON env var) and should print its "
+                + "result to stdout. After creating the tool, make sure its dependencies are installed "
+                + "and verify it by calling it once.";
     }
 
     @Override
@@ -124,10 +129,11 @@ public class CreateAgentToolTool implements LocalTool {
                 "type", "object",
                 "description", "JSON Schema for the new tool's parameters (a JSON-schema 'object' with "
                         + "'properties' and optional 'required'). Omit if the tool takes no arguments."));
-        properties.put("reuse_rationale", Map.of(
+        properties.put("solved_task", Map.of(
                 "type", "string",
-                "description", "Why this deserves to be a permanent tool rather than a one-off run_bash "
-                        + "script: the recurring need it serves. Required — it forces deliberate creation."));
+                "description", "The task you already solved in this conversation that this tool captures "
+                        + "— e.g. 'fetched AAPL's price with a yfinance run_bash script'. Required, to "
+                        + "keep tools grounded in work already done rather than untested new attempts."));
         properties.put("timeout_seconds", Map.of(
                 "type", "integer",
                 "description", "Optional per-call timeout in seconds for the generated tool."));
@@ -138,7 +144,7 @@ public class CreateAgentToolTool implements LocalTool {
         return Map.of(
                 "type", "object",
                 "properties", properties,
-                "required", List.of("name", "description", "language", "code", "reuse_rationale"));
+                "required", List.of("name", "description", "language", "code", "solved_task"));
     }
 
     @Override
@@ -153,7 +159,7 @@ public class CreateAgentToolTool implements LocalTool {
         String description = requiredString(arguments, "description").trim();
         String language = requiredString(arguments, "language").trim().toLowerCase(Locale.ROOT);
         String code = optionalString(arguments, "code", "");
-        String rationale = requiredString(arguments, "reuse_rationale").trim();
+        String solvedTask = requiredString(arguments, "solved_task").trim();
         boolean overwrite = optionalBoolean(arguments, "overwrite", false);
 
         // ── Guardrails ────────────────────────────────────────────────────────
@@ -172,9 +178,9 @@ public class CreateAgentToolTool implements LocalTool {
             return "Error: 'code' is too large (" + code.length() + " chars, limit " + MAX_CODE_CHARS
                     + "). Keep generated tools small and self-contained.";
         }
-        if (rationale.length() < 15) {
-            return "Error: 'reuse_rationale' is too thin. Explain the recurring need this tool serves; "
-                    + "if it is a one-off, use run_bash instead of creating a tool.";
+        if (solvedTask.length() < 15) {
+            return "Error: 'solved_task' is too thin. Briefly describe the task you already solved in "
+                    + "this conversation that this tool captures. Only create tools from work already done.";
         }
         // Parse the optional timeout up front so a malformed value is reported rather than silently dropped.
         Integer timeoutSeconds;
@@ -240,7 +246,7 @@ public class CreateAgentToolTool implements LocalTool {
         // Record provenance for humans auditing generated tools; the registry ignores unknown fields.
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("createdBy", "create_agent_tool");
-        meta.put("reuseRationale", rationale);
+        meta.put("solvedTask", solvedTask);
         manifest.put("_meta", meta);
 
         Files.writeString(manifestPath, objectMapper.writerWithDefaultPrettyPrinter()
