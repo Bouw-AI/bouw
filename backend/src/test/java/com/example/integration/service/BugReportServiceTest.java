@@ -54,7 +54,7 @@ class BugReportServiceTest {
         assertThat(saved).exists();
         assertThat(result.relativePath()).contains("bug-reports/2026-06-18/");
         assertThat(result.relativePath()).contains("chat-hung-on-tool-result.txt");
-        assertThat(result.logFiles()).contains(agentHome.resolve("logs/hugin.log").toString());
+        assertThat(result.logFiles()).contains("agent-home/logs/hugin.log");
 
         String body = Files.readString(saved);
         assertThat(body).contains("Hugin Bug Report");

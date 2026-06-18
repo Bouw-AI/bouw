@@ -165,8 +165,6 @@ class AgentControllerTest {
         assertThat(result.getStatusCode().value()).isEqualTo(200);
         assertThat(result.getBody()).isEqualTo(new BugReportResponse(
                 "bug-reports/2026-06-18/report.txt",
-                "/tmp/report.txt",
-                "/workspace",
                 List.of("/tmp/hugin.log")));
     }
 

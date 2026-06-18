@@ -120,8 +120,6 @@ public class AgentController {
                 request.clientContext());
         return ResponseEntity.ok(new BugReportResponse(
                 saved.relativePath(),
-                saved.absolutePath(),
-                saved.workspaceRoot(),
                 saved.logFiles()));
     }
 

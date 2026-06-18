@@ -143,7 +143,5 @@ export type ModelOption = {
 
 export type BugReportResponse = {
   relativePath: string;
-  absolutePath: string;
-  workspaceRoot: string;
   logFiles: string[];
 };

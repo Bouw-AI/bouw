@@ -110,7 +110,9 @@ public class BugReportService {
                 relativePath,
                 report.toString(),
                 workspace.root().toString(),
-                logs.stream().map(LogAttachment::path).map(Path::toString).toList());
+                // Expose workspace-relative log labels (not absolute host paths) so the API response
+                // does not disclose the server's filesystem layout.
+                logs.stream().map(LogAttachment::label).toList());
     }
 
     private void appendJsonSection(StringBuilder out, String title, JsonNode payload) {
