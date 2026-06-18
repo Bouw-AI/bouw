@@ -24,7 +24,7 @@ public class DefaultUserBootstrap implements ApplicationRunner {
             @Value("${auth.bootstrap.username:test}") String username,
             @Value("${auth.bootstrap.password:}") String password,
             @Value("${auth.test-user.username:screenshot-test}") String screenshotUsername,
-            @Value("${auth.test-user.password:hugin-screenshot}") String screenshotPassword) {
+            @Value("${auth.test-user.password:}") String screenshotPassword) {
         this.userAccountRepository = userAccountRepository;
         this.passwordEncoder = passwordEncoder;
         this.username = username;
@@ -36,10 +36,22 @@ public class DefaultUserBootstrap implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         if ((password == null || password.isBlank()) && userAccountRepository.findByUsername(username).isPresent()) {
-            ensureUser(screenshotUsername, screenshotPassword);
+            maybeSeedScreenshotUser();
             return;
         }
         ensureUser(username, resolvePassword());
+        maybeSeedScreenshotUser();
+    }
+
+    /**
+     * Seeds the screenshot/UI-verification account only when a password is explicitly configured
+     * (via auth.test-user.password / AUTH_TEST_USER_PASSWORD). There is intentionally no default,
+     * so the public build never ships with a known credential.
+     */
+    private void maybeSeedScreenshotUser() {
+        if (screenshotPassword == null || screenshotPassword.isBlank()) {
+            return;
+        }
         ensureUser(screenshotUsername, screenshotPassword);
     }
 
