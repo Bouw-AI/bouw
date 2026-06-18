@@ -26,9 +26,11 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -329,6 +331,42 @@ class AgentControllerTest {
         assertThat(emitter).isNotNull();
     }
 
+    @Test
+    void chatStreamStopsWorkWhenClientDisconnects() throws InterruptedException {
+        var emitter = new FailingEmitter(2);
+        controller = new AgentController(
+                agentService,
+                objectMapper,
+                Executors.newCachedThreadPool(),
+                developerModeService,
+                userAgentService,
+                bugReportService,
+                Duration.ofMinutes(5)
+        ) {
+            @Override
+            SseEmitter createEmitter() {
+                return emitter;
+            }
+        };
+        var request = new AgentRequest("Hello", "llama3.2");
+        var latch = new CountDownLatch(1);
+        var continuedAfterDisconnect = new AtomicInteger();
+
+        doAnswer(invocation -> {
+            latch.countDown();
+            AgentStreamListener listener = invocation.getArgument(1);
+            listener.onContent("partial");
+            continuedAfterDisconnect.incrementAndGet();
+            return new AgentResponse("done", List.of());
+        }).when(agentService).chatStream(any(AgentRequest.class), any(AgentStreamListener.class), anyString());
+
+        controller.chatStream(request, null);
+
+        assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(100);
+        assertThat(continuedAfterDisconnect).hasValue(0);
+    }
+
     // -------------------------------------------------------------------------
     // Exception handler test
     // -------------------------------------------------------------------------
@@ -393,6 +431,40 @@ class AgentControllerTest {
 
         assertThat(result).isNull();
         assertThat(response.getStatus()).isEqualTo(500);
+    }
+
+    @Test
+    void handleErrorPreservesResponseStatusExceptionCodeForSseRequests() {
+        var request = new MockHttpServletRequest();
+        request.setAttribute(
+                HandlerMapping.PRODUCIBLE_MEDIA_TYPES_ATTRIBUTE,
+                java.util.Set.of(MediaType.TEXT_EVENT_STREAM));
+        var response = new MockHttpServletResponse();
+
+        ResponseEntity<Map<String, String>> result = controller.handleError(
+                new ResponseStatusException(HttpStatus.BAD_REQUEST, "bad input"),
+                request,
+                response);
+
+        assertThat(result).isNull();
+        assertThat(response.getStatus()).isEqualTo(400);
+    }
+
+    private static final class FailingEmitter extends SseEmitter {
+        private final int failOnSend;
+        private int sends;
+
+        private FailingEmitter(int failOnSend) {
+            this.failOnSend = failOnSend;
+        }
+
+        @Override
+        public synchronized void send(SseEventBuilder builder) throws IOException {
+            sends++;
+            if (sends >= failOnSend) {
+                throw new IOException("client disconnected");
+            }
+        }
     }
 
     @Test

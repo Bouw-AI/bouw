@@ -19,7 +19,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -55,7 +54,6 @@ import java.util.concurrent.ExecutorService;
 public class AgentController {
 
     private static final Logger log = LoggerFactory.getLogger(AgentController.class);
-    private static final String SSE_CONTENT_TYPE = MediaType.TEXT_EVENT_STREAM_VALUE;
 
     private final AgentService agentService;
     private final ObjectMapper objectMapper;
@@ -131,7 +129,7 @@ public class AgentController {
     public SseEmitter chatStream(@RequestBody AgentRequest request, @AuthenticationPrincipal Jwt jwt) {
         String owner = owner(jwt);
         AgentRequest scoped = scopedRequest(request, owner);
-        SseEmitter emitter = new SseEmitter(streamTimeoutMillis);
+        SseEmitter emitter = createEmitter();
 
         streamExecutor.execute(() -> {
             if (!send(emitter, "config", Map.of("developerMode", developerModeService.isEnabled()))) {
@@ -143,39 +141,39 @@ public class AgentController {
                 AgentResponse response = agentService.chatStream(scoped, new AgentStreamListener() {
                     @Override
                     public void onConfig(boolean developerMode) {
-                        ensureConnected(send(emitter, "config", Map.of("developerMode", developerMode)));
+                        SseRequestSupport.ensureConnected(send(emitter, "config", Map.of("developerMode", developerMode)));
                     }
 
                     @Override
                     public void onContent(String delta) {
                         streamedContent.append(delta);
-                        ensureConnected(send(emitter, "token", Map.of("text", delta)));
+                        SseRequestSupport.ensureConnected(send(emitter, "token", Map.of("text", delta)));
                     }
 
                     @Override
                     public void onReasoning(String delta) {
-                        ensureConnected(send(emitter, "reasoning", Map.of("text", delta)));
+                        SseRequestSupport.ensureConnected(send(emitter, "reasoning", Map.of("text", delta)));
                     }
 
                     @Override
                     public void onToolCall(String toolName, String arguments) {
-                        ensureConnected(send(emitter, "tool", Map.of("name", toolName, "args", arguments)));
+                        SseRequestSupport.ensureConnected(send(emitter, "tool", Map.of("name", toolName, "args", arguments)));
                     }
 
                     @Override
                     public void onToolResult(String toolName, String result) {
-                        ensureConnected(send(emitter, "tool_result", Map.of("name", toolName, "result", result)));
+                        SseRequestSupport.ensureConnected(send(emitter, "tool_result", Map.of("name", toolName, "result", result)));
                     }
                 }, memoryOwner(owner, scoped.agentId()));
                 if (streamedContent.isEmpty()
                         && response != null
                         && response.response() != null
                         && !response.response().isBlank()) {
-                    ensureConnected(send(emitter, "token", Map.of("text", response.response())));
+                    SseRequestSupport.ensureConnected(send(emitter, "token", Map.of("text", response.response())));
                 }
-                ensureConnected(send(emitter, "done", Map.of()));
+                SseRequestSupport.ensureConnected(send(emitter, "done", Map.of()));
                 emitter.complete();
-            } catch (ClientDisconnectedException e) {
+            } catch (SseRequestSupport.ClientDisconnectedException e) {
                 log.debug("Agent stream client disconnected");
                 emitter.complete();
             } catch (Exception e) {
@@ -187,6 +185,10 @@ public class AgentController {
         });
 
         return emitter;
+    }
+
+    SseEmitter createEmitter() {
+        return new SseEmitter(streamTimeoutMillis);
     }
 
     private static String owner(Jwt jwt) {
@@ -252,9 +254,13 @@ public class AgentController {
     public ResponseEntity<Map<String, String>> handleError(Exception ex,
                                                            HttpServletRequest request,
                                                            HttpServletResponse response) {
-        if (acceptsEventStream(request, response)) {
+        if (SseRequestSupport.acceptsEventStream(request, response)) {
             log.debug("Suppressing HTTP error body for SSE request: {}", ex.getMessage(), ex);
-            response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
+            if (ex instanceof ResponseStatusException statusException) {
+                response.setStatus(statusException.getStatusCode().value());
+            } else {
+                response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
+            }
             return null;
         }
         if (ex instanceof ResponseStatusException statusException) {
@@ -268,33 +274,4 @@ public class AgentController {
                 .body(Map.of("error", ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName()));
     }
 
-    private static boolean acceptsEventStream(HttpServletRequest request, HttpServletResponse response) {
-        if (request == null) {
-            return false;
-        }
-        boolean acceptHeaderMatches = java.util.Collections.list(request.getHeaders("Accept")).stream()
-                .anyMatch(value -> value != null && value.contains(SSE_CONTENT_TYPE));
-        Object produces = request.getAttribute(HandlerMapping.PRODUCIBLE_MEDIA_TYPES_ATTRIBUTE);
-        boolean handlerProducesEventStream = produces instanceof java.util.Set<?> mediaTypes
-                && mediaTypes.stream()
-                .filter(MediaType.class::isInstance)
-                .map(MediaType.class::cast)
-                .anyMatch(mediaType -> mediaType.isCompatibleWith(MediaType.TEXT_EVENT_STREAM));
-        boolean responseIsEventStream = response != null
-                && response.getContentType() != null
-                && response.getContentType().contains(SSE_CONTENT_TYPE);
-        return acceptHeaderMatches || handlerProducesEventStream || responseIsEventStream;
-    }
-
-    private static void ensureConnected(boolean sent) {
-        if (!sent) {
-            throw new ClientDisconnectedException();
-        }
-    }
-
-    /**
-     * Abort the background stream task as soon as a write shows the client has gone away.
-     */
-    private static final class ClientDisconnectedException extends RuntimeException {
-    }
 }
