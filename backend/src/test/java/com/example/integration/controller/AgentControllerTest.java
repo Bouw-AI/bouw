@@ -17,11 +17,13 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.Duration;
@@ -379,8 +381,11 @@ class AgentControllerTest {
     }
 
     @Test
-    void handleErrorSuppressesBodyForAgentStreamEndpointWithoutAcceptHeader() {
-        var request = new MockHttpServletRequest("POST", "/api/agent/stream");
+    void handleErrorSuppressesBodyWhenHandlerProducesEventStream() {
+        var request = new MockHttpServletRequest();
+        request.setAttribute(
+                HandlerMapping.PRODUCIBLE_MEDIA_TYPES_ATTRIBUTE,
+                java.util.Set.of(MediaType.TEXT_EVENT_STREAM));
         var response = new MockHttpServletResponse();
 
         ResponseEntity<Map<String, String>> result =

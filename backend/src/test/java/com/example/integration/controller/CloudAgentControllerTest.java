@@ -8,8 +8,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.web.servlet.HandlerMapping;
 
 import java.time.Duration;
 import java.util.Map;
@@ -63,8 +65,11 @@ class CloudAgentControllerTest {
     }
 
     @Test
-    void handleErrorSuppressesBodyForCloudAgentCreateEndpointWithoutAcceptHeader() {
-        var request = new MockHttpServletRequest("POST", "/api/agents");
+    void handleErrorSuppressesBodyWhenHandlerProducesEventStream() {
+        var request = new MockHttpServletRequest();
+        request.setAttribute(
+                HandlerMapping.PRODUCIBLE_MEDIA_TYPES_ATTRIBUTE,
+                java.util.Set.of(MediaType.TEXT_EVENT_STREAM));
         var response = new MockHttpServletResponse();
 
         var result = controller.handleError(new RuntimeException("stream failed"), request, response);

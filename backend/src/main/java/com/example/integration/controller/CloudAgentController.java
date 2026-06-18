@@ -15,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -174,7 +175,7 @@ public class CloudAgentController {
     public ResponseEntity<Map<String, String>> handleError(Exception ex,
                                                            HttpServletRequest request,
                                                            HttpServletResponse response) {
-        if (acceptsEventStream(request)) {
+        if (acceptsEventStream(request, response)) {
             log.debug("Suppressing HTTP error body for SSE request: {}", ex.getMessage(), ex);
             response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
             return null;
@@ -183,15 +184,22 @@ public class CloudAgentController {
                 .body(Map.of("error", ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName()));
     }
 
-    private static boolean acceptsEventStream(HttpServletRequest request) {
+    private static boolean acceptsEventStream(HttpServletRequest request, HttpServletResponse response) {
         if (request == null) {
             return false;
         }
         boolean acceptHeaderMatches = java.util.Collections.list(request.getHeaders("Accept")).stream()
                 .anyMatch(value -> value != null && value.contains(SSE_CONTENT_TYPE));
-        boolean streamEndpoint = "POST".equalsIgnoreCase(request.getMethod())
-                && "/api/agents".equals(request.getRequestURI());
-        return acceptHeaderMatches || streamEndpoint;
+        Object produces = request.getAttribute(HandlerMapping.PRODUCIBLE_MEDIA_TYPES_ATTRIBUTE);
+        boolean handlerProducesEventStream = produces instanceof java.util.Set<?> mediaTypes
+                && mediaTypes.stream()
+                .filter(MediaType.class::isInstance)
+                .map(MediaType.class::cast)
+                .anyMatch(mediaType -> mediaType.isCompatibleWith(MediaType.TEXT_EVENT_STREAM));
+        boolean responseIsEventStream = response != null
+                && response.getContentType() != null
+                && response.getContentType().contains(SSE_CONTENT_TYPE);
+        return acceptHeaderMatches || handlerProducesEventStream || responseIsEventStream;
     }
 
     private static void ensureConnected(boolean sent) {
