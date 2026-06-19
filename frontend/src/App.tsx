@@ -1029,7 +1029,7 @@ function AgentThreadsScreen(props: {
   );
 }
 
-function HistoryScreen(props: {
+export function HistoryScreen(props: {
   threads: ChatThread[];
   onMenu: () => void;
   onOpen: (thread: ChatThread) => void;
@@ -1102,7 +1102,7 @@ function HistoryScreen(props: {
                     <button
                       type="button"
                       className="history-card-delete"
-                      aria-label="Delete conversation"
+                      aria-label={`Delete ${thread.title}`}
                       title="Delete conversation"
                       disabled={deletingId === thread.id}
                       onClick={() => onDelete(thread)}

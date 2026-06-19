@@ -917,7 +917,8 @@ select {
 }
 
 .history-card-delete:hover {
-  color: #1c1f23;
+  background: #fdecec;
+  color: #cc4444;
 }
 
 .history-card-delete:disabled {
