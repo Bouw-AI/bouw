@@ -15,14 +15,24 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 class BugReportServiceTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final BugReportCatalogService bugReportCatalog = mock(BugReportCatalogService.class);
 
     @TempDir
     Path tempDir;
+
+    BugReportServiceTest() {
+        lenient().when(bugReportCatalog.save(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.Optional.empty());
+    }
 
     @Test
     void writesBugReportIntoWorkspaceWithDateAndTitle() throws Exception {
@@ -38,7 +48,15 @@ class BugReportServiceTest {
         when(workspace.relativize(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_090506-chat-hung-on-tool-result.txt")))
                 .thenReturn("bug-reports/2026-06-18/2026-06-18_090506-chat-hung-on-tool-result.txt");
         Clock clock = Clock.fixed(Instant.parse("2026-06-18T14:05:06Z"), ZoneId.of("America/Chicago"));
-        BugReportService service = new BugReportService(objectMapper, workspace, agentHome, clock);
+        when(bugReportCatalog.save(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.Optional.of(new BugReportCatalogService.StoredBugReport(
+                        "bug-1", "Chat hung on tool result", "session-1", null, null,
+                        "bug-reports/2026-06-18/2026-06-18_090506-chat-hung-on-tool-result.txt",
+                        "body", "2026-06-18T14:05:06Z")));
+        BugReportService service = new BugReportService(objectMapper, bugReportCatalog, workspace, agentHome, clock);
 
         var result = service.writeReport(
                 "session-1",
@@ -75,7 +93,7 @@ class BugReportServiceTest {
         when(workspace.relativize(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_000000-untitled.txt")))
                 .thenReturn("bug-reports/2026-06-18/2026-06-18_000000-untitled.txt");
         Clock clock = Clock.fixed(Instant.parse("2026-06-18T00:00:00Z"), ZoneId.of("UTC"));
-        BugReportService service = new BugReportService(objectMapper, workspace, agentHome, clock);
+        BugReportService service = new BugReportService(objectMapper, bugReportCatalog, workspace, agentHome, clock);
 
         var result = service.writeReport(
                 "session-2",
@@ -108,7 +126,7 @@ class BugReportServiceTest {
         when(workspace.relativize(workspaceRoot.resolve("bug-reports/2026-06-18/2026-06-18_000000-large-log.txt")))
                 .thenReturn("bug-reports/2026-06-18/2026-06-18_000000-large-log.txt");
         Clock clock = Clock.fixed(Instant.parse("2026-06-18T00:00:00Z"), ZoneId.of("UTC"));
-        BugReportService service = new BugReportService(objectMapper, workspace, agentHome, clock);
+        BugReportService service = new BugReportService(objectMapper, bugReportCatalog, workspace, agentHome, clock);
 
         var result = service.writeReport(
                 "session-3",

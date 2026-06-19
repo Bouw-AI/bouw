@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 
 @Service
@@ -33,19 +34,26 @@ public class BugReportService {
     private static final long MAX_LOG_BYTES = 256 * 1024;
 
     private final ObjectMapper objectMapper;
+    private final BugReportCatalogService bugReportCatalog;
     private final Workspace defaultWorkspace;
     private final Path agentHome;
     private final Clock clock;
 
     @Autowired
     public BugReportService(ObjectMapper objectMapper,
+                            BugReportCatalogService bugReportCatalog,
                             Workspace defaultWorkspace,
                             @Value("${agent.home:${user.home}/.hugin}") String agentHome) {
-        this(objectMapper, defaultWorkspace, Path.of(agentHome), Clock.systemDefaultZone());
+        this(objectMapper, bugReportCatalog, defaultWorkspace, Path.of(agentHome), Clock.systemDefaultZone());
     }
 
-    BugReportService(ObjectMapper objectMapper, Workspace defaultWorkspace, Path agentHome, Clock clock) {
+    BugReportService(ObjectMapper objectMapper,
+                     BugReportCatalogService bugReportCatalog,
+                     Workspace defaultWorkspace,
+                     Path agentHome,
+                     Clock clock) {
         this.objectMapper = objectMapper;
+        this.bugReportCatalog = bugReportCatalog;
         this.defaultWorkspace = defaultWorkspace;
         this.agentHome = agentHome.toAbsolutePath().normalize();
         this.clock = clock;
@@ -98,15 +106,25 @@ public class BugReportService {
             }
         }
 
+        String body = out.toString();
         try {
             Files.createDirectories(report.getParent());
-            Files.writeString(report, out.toString(), StandardCharsets.UTF_8);
+            Files.writeString(report, body, StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new IllegalStateException("Could not write bug report: " + e.getMessage(), e);
         }
 
         String relativePath = workspace.relativize(report);
+        Optional<BugReportCatalogService.StoredBugReport> savedBug = bugReportCatalog.save(
+                owner,
+                title,
+                sessionId,
+                agentId,
+                sandboxId,
+                relativePath,
+                body);
         return new BugReportFile(
+                savedBug.map(BugReportCatalogService.StoredBugReport::id).orElse(null),
                 relativePath,
                 report.toString(),
                 workspace.root().toString(),
@@ -196,5 +214,5 @@ public class BugReportService {
 
     private record LogAttachment(String label, Path path, String content) {}
 
-    public record BugReportFile(String relativePath, String absolutePath, String workspaceRoot, List<String> logFiles) {}
+    public record BugReportFile(String id, String relativePath, String absolutePath, String workspaceRoot, List<String> logFiles) {}
 }

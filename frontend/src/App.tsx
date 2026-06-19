@@ -45,6 +45,7 @@ import {
   disconnectGitHub,
   disconnectGoogle,
   cancelAgentRun,
+  fetchBugReports,
   fetchAgentRuns,
   fetchGitHubBranches,
   fetchGitHubRepositories,
@@ -75,6 +76,7 @@ import type {
   ChatEntry,
   ChatThread,
   FileNode,
+  BugReportSummary,
   GitHubBranch,
   GitHubRepository,
   GitHubStatus,
@@ -157,6 +159,14 @@ function resolvePreferredGitHubBranch(
     if (matchingDefault) return matchingDefault.name;
   }
   return branches[0]?.name ?? "";
+}
+
+function buildGitHubBugReportPrompt(report: BugReportSummary) {
+  return [
+    `A bug report has been added to this repository checkout at \`${report.relativePath}\`.`,
+    "Before making changes, read `docs/skills/hugin-bug-reports/SKILL.md` and use that skill's workflow to inspect the bug report.",
+    "Then diagnose the failure, add or update a regression test that covers it, and implement the fix."
+  ].join(" ");
 }
 
 function promptNeedsWorkspace(prompt: string) {
@@ -491,28 +501,36 @@ function RepoSetupScreen(props: {
   busy: boolean;
   loadingRepos: boolean;
   loadingBranches: boolean;
+  loadingBugReports: boolean;
   repositories: GitHubRepository[];
   branches: GitHubBranch[];
+  bugReports: BugReportSummary[];
   selectedRepo: string;
   selectedBranch: string;
+  selectedBugReportId: string;
   error: string | null;
   onBack: () => void;
   onRepoChange: (value: string) => void;
   onBranchChange: (value: string) => void;
+  onBugReportChange: (value: string) => void;
   onConfirm: () => void;
 }) {
   const {
     busy,
     loadingRepos,
     loadingBranches,
+    loadingBugReports,
     repositories,
     branches,
+    bugReports,
     selectedRepo,
     selectedBranch,
+    selectedBugReportId,
     error,
     onBack,
     onRepoChange,
     onBranchChange,
+    onBugReportChange,
     onConfirm
   } = props;
   const selectedRepoMeta = repositories.find((repo) => repo.fullName === selectedRepo);
@@ -559,6 +577,24 @@ function RepoSetupScreen(props: {
             {branches.map((branch) => (
               <option key={branch.name} value={branch.name}>
                 {branch.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="composer-select repo-setup-select">
+          <span>Bug report</span>
+          <select
+            value={selectedBugReportId}
+            onChange={(event) => onBugReportChange(event.target.value)}
+            disabled={busy || loadingBugReports}
+          >
+            <option value="">
+              {loadingBugReports ? "Loading bug reports…" : "None"}
+            </option>
+            {bugReports.map((report) => (
+              <option key={report.id} value={report.id}>
+                {report.title}
               </option>
             ))}
           </select>
@@ -1325,6 +1361,10 @@ export default function App() {
   const [selectedBranch, setSelectedBranch] = useState("");
   const [loadingRepos, setLoadingRepos] = useState(false);
   const [loadingBranches, setLoadingBranches] = useState(false);
+  const [bugReports, setBugReports] = useState<BugReportSummary[]>([]);
+  const [selectedBugReportId, setSelectedBugReportId] = useState("");
+  const [loadingBugReports, setLoadingBugReports] = useState(false);
+  const [pendingAutoPrompt, setPendingAutoPrompt] = useState<string | null>(null);
 
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [integrationBusy, setIntegrationBusy] = useState<string | null>(null);
@@ -1895,6 +1935,12 @@ export default function App() {
     [draft, draftAttachment, busy, session, refreshFiles, models, upsertThread, applyEventToThread]
   );
 
+  useEffect(() => {
+    if (!pendingAutoPrompt || busy) return;
+    setPendingAutoPrompt(null);
+    void send(pendingAutoPrompt);
+  }, [pendingAutoPrompt, busy, send]);
+
   const saveBugReport = useCallback(async () => {
     if (!session || reportingBug) return;
     setReportingBug(true);
@@ -1998,17 +2044,28 @@ export default function App() {
     setMenuOpen(false);
     setBugReportNotice(null);
     setError(null);
+    setPendingAutoPrompt(null);
     setSelectedRepo("");
     setSelectedBranch("");
+    setSelectedBugReportId("");
     setBranchOptions([]);
+    setBugReports([]);
     setLoadingRepos(true);
+    setLoadingBugReports(true);
     try {
-      setRepoOptions(await fetchGitHubRepositories(session.token));
+      const [repos, reports] = await Promise.all([
+        fetchGitHubRepositories(session.token),
+        fetchBugReports(session.token)
+      ]);
+      setRepoOptions(repos);
+      setBugReports(reports);
     } catch (e) {
       setRepoOptions([]);
+      setBugReports([]);
       setError(e instanceof Error ? e.message : "Could not load GitHub repositories.");
     } finally {
       setLoadingRepos(false);
+      setLoadingBugReports(false);
     }
   }, [session, githubStatus?.active, screen, returnScreen]);
 
@@ -2044,28 +2101,35 @@ export default function App() {
     if (!session || !selectedRepo || !selectedBranch) return;
     const repo = repoOptions.find((item) => item.fullName === selectedRepo);
     if (!repo) return;
+    const selectedBugReport = bugReports.find((item) => item.id === selectedBugReportId);
     setBusy(true);
     setError(null);
     try {
-      const sandbox = await createGitHubSandbox(session.token, selectedRepo, selectedBranch);
+      const sandbox = await createGitHubSandbox(session.token, selectedRepo, selectedBranch, selectedBugReportId || undefined);
       setFiles([]);
       setWsOpen(false);
       setDraft("");
       setDraftAttachment(null);
-      setThread(createThread("github", {
+      const nextThread = createThread("github", {
         sandboxId: sandbox.id,
         repoFullName: repo.fullName,
         repoName: repo.name,
         branchName: selectedBranch
-      }));
+      });
+      setThread(nextThread);
+      threadRef.current = nextThread;
+      upsertThread(nextThread);
       setScreen("chat");
+      if (selectedBugReport) {
+        setPendingAutoPrompt(buildGitHubBugReportPrompt(selectedBugReport));
+      }
       void refreshFiles(sandbox.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start a GitHub repo sandbox.");
     } finally {
       setBusy(false);
     }
-  }, [session, selectedRepo, selectedBranch, repoOptions, refreshFiles]);
+  }, [session, selectedRepo, selectedBranch, selectedBugReportId, repoOptions, bugReports, refreshFiles, upsertThread]);
 
   const enabledModels = models.filter((model) => model.enabled);
   const activeModel = enabledModels.find((model) => model.id === thread.modelId) ?? enabledModels[0];
@@ -2182,14 +2246,18 @@ export default function App() {
             busy={busy}
             loadingRepos={loadingRepos}
             loadingBranches={loadingBranches}
+            loadingBugReports={loadingBugReports}
             repositories={repoOptions}
             branches={branchOptions}
+            bugReports={bugReports}
             selectedRepo={selectedRepo}
             selectedBranch={selectedBranch}
+            selectedBugReportId={selectedBugReportId}
             error={error}
             onBack={() => setScreen(returnScreen)}
             onRepoChange={chooseRepo}
             onBranchChange={setSelectedBranch}
+            onBugReportChange={setSelectedBugReportId}
             onConfirm={confirmGitHubRepo}
           />
         ) : screen === "settings" ? (

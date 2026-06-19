@@ -9,6 +9,8 @@ import com.example.agent.model.AgentResponse;
 import com.example.agent.model.ChatMessage;
 import com.example.integration.agent.UserAgent;
 import com.example.integration.agent.UserAgentService;
+import com.example.integration.controller.BugReportSummaryResponse;
+import com.example.integration.service.BugReportCatalogService;
 import com.example.integration.service.BugReportService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -63,6 +65,7 @@ public class AgentController {
     private final long streamTimeoutMillis;
     private final DeveloperModeService developerModeService;
     private final UserAgentService userAgentService;
+    private final BugReportCatalogService bugReportCatalogService;
     private final BugReportService bugReportService;
     private final AgentRunRegistry runRegistry;
 
@@ -72,6 +75,7 @@ public class AgentController {
                            DeveloperModeService developerModeService,
                            UserAgentService userAgentService,
                            AgentRunRegistry runRegistry,
+                           BugReportCatalogService bugReportCatalogService,
                            BugReportService bugReportService,
                            @Value("${agent.request-timeout:5m}") Duration requestTimeout) {
         this.agentService = agentService;
@@ -80,6 +84,7 @@ public class AgentController {
         this.developerModeService = developerModeService;
         this.userAgentService = userAgentService;
         this.runRegistry = runRegistry;
+        this.bugReportCatalogService = bugReportCatalogService;
         this.bugReportService = bugReportService;
         // Allow a margin beyond the agent's own deadline before the SSE connection is torn down.
         this.streamTimeoutMillis = requestTimeout.plusSeconds(60).toMillis();
@@ -138,8 +143,21 @@ public class AgentController {
                 request.thread(),
                 request.clientContext());
         return ResponseEntity.ok(new BugReportResponse(
+                saved.id(),
                 saved.relativePath(),
                 saved.logFiles()));
+    }
+
+    @GetMapping("/bug-reports")
+    public ResponseEntity<List<BugReportSummaryResponse>> listBugReports(@AuthenticationPrincipal Jwt jwt) {
+        String owner = owner(jwt);
+        return ResponseEntity.ok(bugReportCatalogService.list(owner).stream()
+                .map(report -> new BugReportSummaryResponse(
+                        report.id(),
+                        report.title(),
+                        report.relativePath(),
+                        report.createdAt()))
+                .toList());
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

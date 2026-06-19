@@ -142,8 +142,16 @@ export type ModelOption = {
 };
 
 export type BugReportResponse = {
+  id?: string | null;
   relativePath: string;
   logFiles: string[];
+};
+
+export type BugReportSummary = {
+  id: string;
+  title: string;
+  relativePath: string;
+  createdAt: string;
 };
 
 export type AgentRun = {

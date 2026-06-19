@@ -1,6 +1,7 @@
 import type {
   AppState,
   AuthSession,
+  BugReportSummary,
   ChatAttachment,
   ChatEntry,
   ChatKind,
@@ -701,11 +702,12 @@ export async function createSandbox(token: string): Promise<SandboxInfo> {
 export async function createGitHubSandbox(
   token: string,
   repoFullName: string,
-  branch: string
+  branch: string,
+  bugReportId?: string
 ): Promise<SandboxInfo> {
   return apiFetch<SandboxInfo>(
     "/api/sandboxes/github",
-    { method: "POST", body: JSON.stringify({ repoFullName, branch }) },
+    { method: "POST", body: JSON.stringify({ repoFullName, branch, bugReportId }) },
     token
   );
 }
@@ -844,6 +846,10 @@ export async function reportBug(token: string, payload: ReportBugRequest): Promi
     { method: "POST", body: JSON.stringify(payload) },
     token
   );
+}
+
+export async function fetchBugReports(token: string): Promise<BugReportSummary[]> {
+  return apiFetch<BugReportSummary[]>("/api/agent/bug-reports", {}, token);
 }
 
 function parseSseEvent(rawEvent: string): StreamEvent | null {
