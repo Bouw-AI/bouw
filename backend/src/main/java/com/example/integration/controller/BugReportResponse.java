@@ -8,6 +8,7 @@ import java.util.List;
  * disclosing the server's filesystem layout to clients.
  */
 public record BugReportResponse(
+        String id,
         String relativePath,
         List<String> logFiles
 ) {}

@@ -3,9 +3,12 @@ package com.example.integration.controller;
 import com.example.agent.model.FileNode;
 import com.example.agent.model.SandboxInfo;
 import com.example.integration.github.GitHubAppService;
+import com.example.integration.service.BugReportCatalogService;
 import com.example.integration.service.DockerSandboxManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -32,14 +35,18 @@ public class SandboxController {
 
     /** Optional body for {@code POST /api/sandboxes}; {@code image} overrides the configured default. */
     public record CreateSandboxRequest(String image) {}
-    public record CreateGitHubSandboxRequest(String image, String repoFullName, String branch) {}
+    public record CreateGitHubSandboxRequest(String image, String repoFullName, String branch, String bugReportId) {}
 
     private final DockerSandboxManager sandboxManager;
     private final GitHubAppService github;
+    private final BugReportCatalogService bugReportCatalogService;
 
-    public SandboxController(DockerSandboxManager sandboxManager, GitHubAppService github) {
+    public SandboxController(DockerSandboxManager sandboxManager,
+                             GitHubAppService github,
+                             BugReportCatalogService bugReportCatalogService) {
         this.sandboxManager = sandboxManager;
         this.github = github;
+        this.bugReportCatalogService = bugReportCatalogService;
     }
 
     @PostMapping
@@ -50,7 +57,8 @@ public class SandboxController {
     }
 
     @PostMapping("/github")
-    public ResponseEntity<SandboxInfo> createGitHubSandbox(@RequestBody CreateGitHubSandboxRequest req) {
+    public ResponseEntity<SandboxInfo> createGitHubSandbox(@RequestBody CreateGitHubSandboxRequest req,
+                                                           @AuthenticationPrincipal Jwt jwt) {
         if (req == null || req.repoFullName() == null || req.repoFullName().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A GitHub repository must be selected.");
         }
@@ -63,13 +71,26 @@ public class SandboxController {
         }
         String accessToken = github.installationToken()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "GitHub is not connected."));
+        BugReportCatalogService.StoredBugReport bugReport = null;
+        if (req.bugReportId() != null && !req.bugReportId().isBlank()) {
+            bugReport = bugReportCatalogService.find(owner(jwt), req.bugReportId())
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Selected bug report was not found."));
+        }
         SandboxInfo info = sandboxManager.createGitHubRepoSandbox(
                 req.image(),
                 github.cloneUrl(req.repoFullName()),
                 parts[1],
                 req.branch(),
-                accessToken);
+                accessToken,
+                bugReport);
         return ResponseEntity.status(HttpStatus.CREATED).body(info);
+    }
+
+    private static String owner(Jwt jwt) {
+        if (jwt == null || jwt.getSubject() == null || jwt.getSubject().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication is required.");
+        }
+        return jwt.getSubject();
     }
 
     @GetMapping

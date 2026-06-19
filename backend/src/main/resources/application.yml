@@ -66,6 +66,12 @@ memory:
   # Hard cap on stored memories; the oldest are evicted past this.
   max-entries: 1000
 
+bug-reports:
+  redis:
+    # Short-lived catalog of recently reported bugs that can be injected into fresh repo sandboxes.
+    ttl: ${BUG_REPORTS_REDIS_TTL:1d}
+    key-prefix: ${BUG_REPORTS_REDIS_KEY_PREFIX:bug-reports}
+
 embedding:
   # OpenAI-schema embeddings endpoint (POST <base-url>/embeddings) used to vectorise memory text.
   # Defaults to OpenRouter; authenticates with Authorization: Bearer <api-key> when a key is set.

@@ -19,6 +19,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -73,10 +74,11 @@ public class DockerSandboxManager implements SandboxRuntime {
             String cloneUrl,
             String repoName,
             String branch,
-            String accessToken) {
+            String accessToken,
+            BugReportCatalogService.StoredBugReport bugReport) {
         SandboxInfo info = createSandbox(imageOverride);
         try {
-            cloneRepository(info, cloneUrl, repoName, branch, accessToken);
+            cloneRepository(info, cloneUrl, repoName, branch, accessToken, bugReport);
             return info;
         } catch (RuntimeException e) {
             delete(info.id());
@@ -149,7 +151,8 @@ public class DockerSandboxManager implements SandboxRuntime {
             String cloneUrl,
             String repoName,
             String branch,
-            String accessToken) {
+            String accessToken,
+            BugReportCatalogService.StoredBugReport bugReport) {
         Path workspace = Path.of(sandbox.workspace());
         Path targetDir = workspace.resolve(repoName);
         List<String> command = new ArrayList<>(List.of("git", "clone", "--single-branch"));
@@ -167,6 +170,31 @@ public class DockerSandboxManager implements SandboxRuntime {
         if (result.timedOut() || result.exitCode() != 0) {
             throw new RuntimeException("Failed to clone GitHub repository into sandbox: "
                     + (result.timedOut() ? "git clone timed out" : result.output()));
+        }
+        if (bugReport != null) {
+            importBugReport(targetDir, bugReport);
+        }
+    }
+
+    private void importBugReport(Path repoRoot, BugReportCatalogService.StoredBugReport bugReport) {
+        String relativePath = bugReport.relativePath();
+        if (relativePath == null || relativePath.isBlank()) {
+            relativePath = "bug-reports/imported/" + bugReport.id() + ".txt";
+        }
+        Path destination = repoRoot.resolve(relativePath).normalize();
+        if (!destination.startsWith(repoRoot)) {
+            throw new RuntimeException("Bug report path resolves outside the repository workspace.");
+        }
+        try {
+            Files.createDirectories(destination.getParent());
+            Files.writeString(
+                    destination,
+                    bugReport.content(),
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to stage bug report in repository sandbox: " + e.getMessage(), e);
         }
     }
 

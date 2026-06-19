@@ -8,6 +8,7 @@ import com.example.agent.model.AgentRequest;
 import com.example.agent.model.AgentResponse;
 import com.example.agent.model.ChatMessage;
 import com.example.integration.agent.UserAgentService;
+import com.example.integration.service.BugReportCatalogService;
 import com.example.integration.service.BugReportService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -57,6 +58,9 @@ class AgentControllerTest {
     @Mock
     BugReportService bugReportService;
 
+    @Mock
+    BugReportCatalogService bugReportCatalogService;
+
     ObjectMapper objectMapper = new ObjectMapper();
     AgentRunRegistry runRegistry = new AgentRunRegistry();
     AgentController controller;
@@ -70,6 +74,7 @@ class AgentControllerTest {
                 developerModeService,
                 userAgentService,
                 runRegistry,
+                bugReportCatalogService,
                 bugReportService,
                 Duration.ofMinutes(5)
         );
@@ -164,6 +169,7 @@ class AgentControllerTest {
                 any(),
                 any()))
                 .thenReturn(new BugReportService.BugReportFile(
+                        "bug-123",
                         "bug-reports/2026-06-18/report.txt",
                         "/tmp/report.txt",
                         "/workspace",
@@ -173,6 +179,7 @@ class AgentControllerTest {
 
         assertThat(result.getStatusCode().value()).isEqualTo(200);
         assertThat(result.getBody()).isEqualTo(new BugReportResponse(
+                "bug-123",
                 "bug-reports/2026-06-18/report.txt",
                 List.of("/tmp/hugin.log")));
     }
@@ -402,6 +409,7 @@ class AgentControllerTest {
                 developerModeService,
                 userAgentService,
                 runRegistry,
+                bugReportCatalogService,
                 bugReportService,
                 Duration.ofMinutes(5)
         ) {
