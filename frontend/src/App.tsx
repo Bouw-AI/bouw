@@ -2425,7 +2425,6 @@ export default function App() {
             onOpen={openHistory}
             onDelete={deleteThread}
             onNew={startChat}
-            onDelete={deleteThread}
             deletingId={deletingThreadId}
             query={historyQuery}
             onQuery={setHistoryQuery}
