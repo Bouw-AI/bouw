@@ -9,7 +9,6 @@ import com.example.integration.sandbox.SandboxProperties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -29,11 +28,10 @@ class DockerSandboxManagerBugReportTest {
                 true, defaultWorkspace.toString(), Duration.ofSeconds(10), 30_000, List.of()));
         WorkspaceRegistry registry = new WorkspaceRegistry(workspace);
         WorkspaceFactory factory = new WorkspaceFactory();
-        Path fakeDocker = writeFakeDockerUnavailableScript();
         SandboxProperties properties = new SandboxProperties(
                 true,
                 "ubuntu:24.04",
-                fakeDocker.toString(),
+                "/definitely/missing/docker",
                 Duration.ofSeconds(10),
                 Duration.ofSeconds(10),
                 "",
@@ -66,13 +64,6 @@ class DockerSandboxManagerBugReportTest {
                 .resolve("bug-reports/2026-06-18/hung-chat.txt");
         assertThat(clonedReport).exists();
         assertThat(Files.readString(clonedReport)).contains("Hugin Bug Report");
-    }
-
-    private Path writeFakeDockerUnavailableScript() throws IOException {
-        Path script = tmp.resolve("fake-docker-unavailable.sh");
-        Files.writeString(script, "#!/bin/sh\nexit 127\n");
-        assertThat(script.toFile().setExecutable(true)).isTrue();
-        return script;
     }
 
     private Path initRepository(Path repo) throws Exception {
