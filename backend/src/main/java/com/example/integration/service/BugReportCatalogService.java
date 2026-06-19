@@ -3,6 +3,7 @@ package com.example.integration.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,7 @@ public class BugReportCatalogService {
     private final Duration ttl;
     private final String keyPrefix;
 
+    @Autowired
     public BugReportCatalogService(
             StringRedisTemplate redis,
             ObjectMapper objectMapper,
