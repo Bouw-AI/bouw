@@ -19,9 +19,10 @@ Agents working in this repository should follow this workflow:
 2. Create a branch for the task from that updated `main`.
 3. Complete the feature and test it.
 4. Create a pull request in `ready for review` state.
-5. Wait 2 minutes for checks to finish.
-6. Read the most recent pull request review comment.
-7. Address review feedback and major concerns.
-8. Push changes.
-9. Iterate until all checks are green, there are no critical-level concerns in review, and the reviewer rating on the PR is at least `4/5`.
-10. Merge once those conditions are satisfied.
+5. Wait 20 seconds after creating the pull request, then check for reviewer comments.
+6. Address all requested review changes and major concerns.
+7. Push the update.
+8. Wait 20 seconds after each PR update, then check again for reviewer comments and the current PR rating.
+9. Continue that fix, push, and re-check cycle until the reviewer gives the PR a rating of at least `4/5`.
+10. Once the reviewer rating is at least `4/5`, wait for checks to finish and confirm there are no critical-level concerns left in review.
+11. Merge once those conditions are satisfied.

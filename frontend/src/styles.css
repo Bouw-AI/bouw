@@ -874,21 +874,24 @@ select {
 }
 
 .history-card-delete {
-  display: flex;
+  display: inline-flex;
   width: 46px;
   align-items: center;
   justify-content: center;
+  align-self: stretch;
   border: 1px solid #eaebed;
   border-radius: 12px;
   color: #8b9099;
   cursor: pointer;
   flex-shrink: 0;
   background: none;
+  padding: 0 10px;
   transition: background 0.2s ease, color 0.2s ease, opacity 0.2s ease;
 }
 
 .history-card-delete:active {
-  background: #fafafb;
+  background: #f1f2f4;
+  opacity: 0.7;
 }
 
 .history-card-delete:hover {
@@ -930,25 +933,6 @@ select {
   margin-top: 2px;
   color: #8b9099;
   font-size: 12px;
-}
-
-.history-card-delete {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  align-self: stretch;
-  padding: 0 10px;
-  border-radius: 10px;
-  cursor: pointer;
-  transition:
-    background 0.2s ease,
-    opacity 0.2s ease;
-}
-
-.history-card-delete:active {
-  background: #f1f2f4;
-  opacity: 0.7;
 }
 
 .history-empty {
