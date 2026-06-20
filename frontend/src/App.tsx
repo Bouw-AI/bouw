@@ -1426,6 +1426,7 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
+  const integrationsVisibleRef = useRef(false);
 
   const listRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -1438,6 +1439,10 @@ export default function App() {
   useEffect(() => {
     threadRef.current = thread;
   }, [thread]);
+
+  useEffect(() => {
+    integrationsVisibleRef.current = screen === "integrations";
+  }, [screen]);
 
   const upsertThread = useCallback((nextThread: ChatThread) => {
     setState((prev) => {
@@ -1516,22 +1521,31 @@ export default function App() {
   }, []);
 
   const loadIntegrations = useCallback(
-    async (options?: { clearOnFailure?: boolean }) => {
+    async (options?: { clearOnFailure?: boolean; silent?: boolean }) => {
       if (!session) return null;
-      setIntegrationsLoading(true);
-      setIntegrationsError(null);
+      const silent = Boolean(options?.silent);
+      if (!silent) {
+        setIntegrationsLoading(true);
+        setIntegrationsError(null);
+      }
       try {
         const next = await fetchIntegrations(session.token);
-        setIntegrations(next);
+        if (!silent || integrationsVisibleRef.current) {
+          setIntegrations(next);
+        }
         return next;
       } catch (e) {
-        if (options?.clearOnFailure) {
+        if ((!silent || integrationsVisibleRef.current) && options?.clearOnFailure) {
           setIntegrations([]);
         }
-        setIntegrationsError(e instanceof Error ? e.message : "Could not refresh integrations.");
+        if (!silent || integrationsVisibleRef.current) {
+          setIntegrationsError(e instanceof Error ? e.message : "Could not refresh integrations.");
+        }
         return null;
       } finally {
-        setIntegrationsLoading(false);
+        if (!silent) {
+          setIntegrationsLoading(false);
+        }
       }
     },
     [session]
@@ -1885,7 +1899,10 @@ export default function App() {
   const pollGoogleIntegrationRefresh = useCallback(async () => {
     if (!session) return;
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      const next = await loadIntegrations();
+      if (!integrationsVisibleRef.current) {
+        return;
+      }
+      const next = await loadIntegrations({ silent: true });
       if (next?.find((integration) => integration.id === "google")?.connected) {
         return;
       }
