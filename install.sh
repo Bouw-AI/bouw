@@ -711,6 +711,10 @@ GITHUB_TOKEN=${GITHUB_TOKEN:-}
 NEW_RELIC_TOKEN=${NEW_RELIC_TOKEN:-}
 NEW_RELIC_ENABLED=${NEW_RELIC_ENABLED:-false}
 
+# Google Workspace OAuth (optional)
+GOOGLE_OAUTH_CLIENT_SECRETS_FILE=${GOOGLE_OAUTH_CLIENT_SECRETS_FILE:-}
+GOOGLE_OAUTH_TOKEN_DIR=${GOOGLE_OAUTH_TOKEN_DIR:-}
+
 # Hugin home directory (workspace root is $HUGIN_HOME/workspace)
 AGENT_HOME=${HUGIN_HOME}
 HUGIN_HOME=${HUGIN_HOME}
@@ -737,6 +741,7 @@ EOF
 # Load existing values so they can be used as defaults on reconfigure
 _existing_key="" _existing_agent_key="" _existing_redis_host="" _existing_redis_port="6379"
 _existing_model="" _existing_github_token="" _existing_discord_token="" _existing_nr_token=""
+_existing_google_oauth_client_secrets_file="" _existing_google_oauth_token_dir=""
 if [[ -f "$ENV_FILE" ]]; then
   _existing_key=$(grep -E '^OPEN_ROUTER_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
   _existing_agent_key=$(grep -E '^AGENT_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
@@ -746,6 +751,8 @@ if [[ -f "$ENV_FILE" ]]; then
   _existing_github_token=$(grep -E '^GITHUB_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
   _existing_discord_token=$(grep -E '^DISCORD_BOT_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
   _existing_nr_token=$(grep -E '^NEW_RELIC_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
+  _existing_google_oauth_client_secrets_file=$(grep -E '^GOOGLE_OAUTH_CLIENT_SECRETS_FILE=' "$ENV_FILE" | cut -d= -f2- || true)
+  _existing_google_oauth_token_dir=$(grep -E '^GOOGLE_OAUTH_TOKEN_DIR=' "$ENV_FILE" | cut -d= -f2- || true)
 fi
 
 # Initialise all config vars to empty so save_env can be called at any point.
@@ -753,6 +760,7 @@ OPENROUTER_KEY="" LLM_MODEL="" AGENT_API_KEY="" MEMORY_ENABLED=false
 REDIS_HOST_VAL="" REDIS_PORT_VAL=6379 GITHUB_TOKEN="" CLOUD_AGENTS_ENABLED=false
 ADMIN_USERNAME="" ADMIN_PASSWORD="" JWT_SECRET="" DISCORD_BOT_TOKEN=""
 NEW_RELIC_TOKEN="" NEW_RELIC_ENABLED=false
+GOOGLE_OAUTH_CLIENT_SECRETS_FILE="" GOOGLE_OAUTH_TOKEN_DIR=""
 
 if [[ "$SKIP_CREDENTIALS" == "true" ]]; then
   info "Reusing existing credentials from $ENV_FILE — skipping interactive prompts."
@@ -775,6 +783,8 @@ if [[ "$SKIP_CREDENTIALS" == "true" ]]; then
   DISCORD_BOT_TOKEN="${_existing_discord_token:-${DISCORD_BOT_TOKEN:-}}"
   NEW_RELIC_TOKEN="${_existing_nr_token:-}"
   NEW_RELIC_ENABLED=$(grep -E '^NEW_RELIC_ENABLED=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "false")
+  GOOGLE_OAUTH_CLIENT_SECRETS_FILE="${_existing_google_oauth_client_secrets_file:-${GOOGLE_OAUTH_CLIENT_SECRETS_FILE:-}}"
+  GOOGLE_OAUTH_TOKEN_DIR="${_existing_google_oauth_token_dir:-${GOOGLE_OAUTH_TOKEN_DIR:-}}"
   success "Credentials loaded."
 else
 
@@ -1442,6 +1452,8 @@ CLOUD_AGENTS_ENABLED=${CLOUD_AGENTS_ENABLED:-false}
 GITHUB_TOKEN=${GITHUB_TOKEN:-}
 NEW_RELIC_TOKEN=${NEW_RELIC_TOKEN:-}
 NEW_RELIC_ENABLED=${NEW_RELIC_ENABLED:-false}
+GOOGLE_OAUTH_CLIENT_SECRETS_FILE=${GOOGLE_OAUTH_CLIENT_SECRETS_FILE:-}
+GOOGLE_OAUTH_TOKEN_DIR=${GOOGLE_OAUTH_TOKEN_DIR:-}
 AGENT_HOME=${HUGIN_HOME}
 DB_URL=jdbc:h2:file:${HUGIN_HOME}/db/hugin
 ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
