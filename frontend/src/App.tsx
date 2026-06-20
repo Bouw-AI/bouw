@@ -178,9 +178,9 @@ const ACTIVE_THREAD_STORAGE_KEY = "hugin-active-thread-v1";
 
 function readActiveThreadRestore() {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(ACTIVE_THREAD_STORAGE_KEY);
-  if (!raw) return null;
   try {
+    const raw = window.localStorage.getItem(ACTIVE_THREAD_STORAGE_KEY);
+    if (!raw) return null;
     const parsed = JSON.parse(raw) as { threadId?: string; screen?: Screen };
     if (!parsed.threadId || !parsed.screen) return null;
     return parsed;
@@ -191,12 +191,20 @@ function readActiveThreadRestore() {
 
 function saveActiveThreadRestore(threadId: string, screen: Screen) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(ACTIVE_THREAD_STORAGE_KEY, JSON.stringify({ threadId, screen }));
+  try {
+    window.localStorage.setItem(ACTIVE_THREAD_STORAGE_KEY, JSON.stringify({ threadId, screen }));
+  } catch {
+    // Ignore storage write failures so reconnect support never blocks the active session.
+  }
 }
 
 function clearActiveThreadRestore() {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(ACTIVE_THREAD_STORAGE_KEY);
+  try {
+    window.localStorage.removeItem(ACTIVE_THREAD_STORAGE_KEY);
+  } catch {
+    // Ignore storage cleanup failures; the next successful write will overwrite stale data.
+  }
 }
 
 function clearLaunchScreen() {
