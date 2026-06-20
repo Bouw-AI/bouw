@@ -214,6 +214,8 @@ public class ChatSessionService {
                 metadata == null ? Map.of() : new LinkedHashMap<>(metadata),
                 now);
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            // Publish only after the write commits so subscribers never observe an event that a
+            // rollback later discards.
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
@@ -221,6 +223,9 @@ public class ChatSessionService {
                 }
             });
         } else {
+            // Defensive fallback: every caller appends inside a transaction, so this branch is not
+            // exercised today. If a future caller appends without one, the event is already
+            // committed (auto-commit) by the time we publish, so there is still nothing to roll back.
             broker.publish(event);
         }
         return seq;

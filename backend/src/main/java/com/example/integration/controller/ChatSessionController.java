@@ -28,8 +28,10 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.springframework.http.HttpStatus.NOT_FOUND;
+import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 
 @RestController
 @RequestMapping("/api/chat/sessions")
@@ -79,27 +81,31 @@ public class ChatSessionController {
     public SseEmitter stream(@PathVariable String sessionId,
                              @RequestParam(defaultValue = "0") long afterSeq,
                              @AuthenticationPrincipal Jwt jwt) {
+        String owner = owner(jwt);
         // A not-yet-persisted session is allowed: the UI opens the event stream for a freshly
         // created chat before its first message creates the session row, so requiring existence
         // here would 404 every new conversation. Existing sessions must still belong to the caller.
-        if (!chatSessionService.allowStream(sessionId, owner(jwt))) {
+        if (!chatSessionService.allowStream(sessionId, owner)) {
             throw new ResponseStatusException(NOT_FOUND, "Chat session not found");
         }
         SseEmitter emitter = new SseEmitter(Duration.ofMinutes(15).toMillis());
         AtomicBoolean closed = new AtomicBoolean(false);
+        AtomicBoolean cleanedUp = new AtomicBoolean(false);
+        AtomicReference<Runnable> unsubscribe = new AtomicReference<>(() -> { });
+        AtomicReference<ScheduledFuture<?>> heartbeat = new AtomicReference<>();
 
-        chatSessionService.readEvents(sessionId, owner(jwt), afterSeq).forEach(event -> sendEvent(emitter, closed, event));
-        Runnable unsubscribe = broker.subscribe(sessionId, event -> sendEvent(emitter, closed, event));
-        ScheduledFuture<?> heartbeat = chatStreamHeartbeatExecutor.scheduleAtFixedRate(
-                () -> sendHeartbeat(emitter, closed),
-                HEARTBEAT_SECONDS,
-                HEARTBEAT_SECONDS,
-                TimeUnit.SECONDS);
-
+        // Release the broker subscription and heartbeat exactly once, whether the stream ends via the
+        // client disconnecting (onCompletion/onError/onTimeout) or a failed send completing the emitter.
+        // Gated on its own flag rather than `closed` so a send that flips `closed` before completing
+        // the emitter cannot suppress this cleanup (which previously leaked the subscription/heartbeat).
         Runnable cleanup = () -> {
-            if (closed.compareAndSet(false, true)) {
-                unsubscribe.run();
-                heartbeat.cancel(true);
+            if (cleanedUp.compareAndSet(false, true)) {
+                closed.set(true);
+                unsubscribe.get().run();
+                ScheduledFuture<?> scheduled = heartbeat.get();
+                if (scheduled != null) {
+                    scheduled.cancel(true);
+                }
             }
         };
         emitter.onCompletion(cleanup);
@@ -108,6 +114,27 @@ public class ChatSessionController {
             emitter.complete();
         });
         emitter.onError(error -> cleanup.run());
+
+        // Replay persisted history first so the client receives events strictly in seq order (it
+        // drops anything not newer than its cursor), then attach the live subscription.
+        chatSessionService.readEvents(sessionId, owner, afterSeq).forEach(event -> sendEvent(emitter, closed, event));
+        if (closed.get()) {
+            // A replay send already failed and completed the emitter; don't open a subscription or
+            // heartbeat that would immediately leak.
+            cleanup.run();
+            return emitter;
+        }
+        unsubscribe.set(broker.subscribe(sessionId, event -> sendEvent(emitter, closed, event)));
+        heartbeat.set(chatStreamHeartbeatExecutor.scheduleAtFixedRate(
+                () -> sendHeartbeat(emitter, closed),
+                HEARTBEAT_SECONDS,
+                HEARTBEAT_SECONDS,
+                TimeUnit.SECONDS));
+        // If a send raced to completion while the subscription/heartbeat were being wired up, release
+        // them now instead of waiting for a callback that has already fired.
+        if (closed.get()) {
+            cleanup.run();
+        }
         return emitter;
     }
 
@@ -155,7 +182,10 @@ public class ChatSessionController {
 
     private static String owner(Jwt jwt) {
         if (jwt == null || jwt.getSubject() == null || jwt.getSubject().isBlank()) {
-            return "global";
+            // Chat sessions are always owner-scoped. /api/chat/** is already authenticated at the
+            // filter level, so this is defence in depth: fail closed rather than fall back to a
+            // shared "global" owner that an unauthenticated caller could otherwise read or write.
+            throw new ResponseStatusException(UNAUTHORIZED, "Authentication required");
         }
         return jwt.getSubject();
     }
