@@ -12,6 +12,11 @@ REPO_URL="${HUGIN_DEV_REPO_URL:-}"
 
 info() { printf '[hugin-update] %s\n' "$*"; }
 warn() { printf '[hugin-update] %s\n' "$*" >&2; }
+stash_deployment_changes() {
+  local stash_name="hugin-deploy-autostash-$(date +%s)"
+  git stash push --include-untracked --message "$stash_name" >/dev/null
+  info "Saved deployment checkout changes to stash '${stash_name}'."
+}
 kickstart_service() {
   local target="gui/$(id -u)/${SERVICE_LABEL}"
   local attempt
@@ -62,7 +67,10 @@ if [[ ! -d "$DEPLOY_REPO_DIR/.git" ]]; then
     REPO_URL="$(git -C "$REPO_DIR" remote get-url origin)"
   fi
   info "Cloning deployment checkout into ${DEPLOY_REPO_DIR}..."
-  git clone "$REPO_URL" "$DEPLOY_REPO_DIR"
+  git clone "$REPO_URL" "$DEPLOY_REPO_DIR" || {
+    warn "Could not clone ${REPO_URL} into ${DEPLOY_REPO_DIR}."
+    exit 1
+  }
 fi
 
 cd "$DEPLOY_REPO_DIR"
@@ -96,6 +104,7 @@ if ! git diff --quiet --ignore-submodules -- || ! git diff --cached --quiet --ig
   if git merge --ff-only "$remote_head"; then
     :
   else
+    stash_deployment_changes
     warn "Deployment checkout could not fast-forward cleanly; resetting to ${remote_head:0:7}."
     git reset --hard "$remote_head"
   fi
