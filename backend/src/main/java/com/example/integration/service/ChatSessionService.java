@@ -98,14 +98,8 @@ public class ChatSessionService {
                 request.attachments(),
                 request.model(),
                 request.reasoningEffort(),
-                request.model(),
-                request.model(),
-                request.model(),
-                null,
-                null,
                 sessionId,
                 repository.buildPriorMessages(sessionId, userMessageSeq),
-                null,
                 request.sandboxId(),
                 true);
         runRegistry.register(runId, owner, agentRequest, request.model(), Thread.currentThread());
