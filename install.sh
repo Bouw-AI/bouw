@@ -1440,6 +1440,12 @@ cmd_config() {
       info "Long-term memory disabled."
       ;;
   esac
+  local existing_google_oauth_client_secrets_file=""
+  local existing_google_oauth_token_dir=""
+  if [[ -f "$ENV_FILE" ]]; then
+    existing_google_oauth_client_secrets_file=$(grep -E '^GOOGLE_OAUTH_CLIENT_SECRETS_FILE=' "$ENV_FILE" | cut -d= -f2- || true)
+    existing_google_oauth_token_dir=$(grep -E '^GOOGLE_OAUTH_TOKEN_DIR=' "$ENV_FILE" | cut -d= -f2- || true)
+  fi
   cat > "$ENV_FILE" <<ENV
 OPEN_ROUTER_API_KEY=${new_key}
 LLM_MODEL=${LLM_MODEL:-openai/gpt-oss-120b}
@@ -1452,8 +1458,8 @@ CLOUD_AGENTS_ENABLED=${CLOUD_AGENTS_ENABLED:-false}
 GITHUB_TOKEN=${GITHUB_TOKEN:-}
 NEW_RELIC_TOKEN=${NEW_RELIC_TOKEN:-}
 NEW_RELIC_ENABLED=${NEW_RELIC_ENABLED:-false}
-GOOGLE_OAUTH_CLIENT_SECRETS_FILE=${GOOGLE_OAUTH_CLIENT_SECRETS_FILE:-}
-GOOGLE_OAUTH_TOKEN_DIR=${GOOGLE_OAUTH_TOKEN_DIR:-}
+GOOGLE_OAUTH_CLIENT_SECRETS_FILE=${GOOGLE_OAUTH_CLIENT_SECRETS_FILE:-${existing_google_oauth_client_secrets_file:-}}
+GOOGLE_OAUTH_TOKEN_DIR=${GOOGLE_OAUTH_TOKEN_DIR:-${existing_google_oauth_token_dir:-}}
 AGENT_HOME=${HUGIN_HOME}
 DB_URL=jdbc:h2:file:${HUGIN_HOME}/db/hugin
 ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
