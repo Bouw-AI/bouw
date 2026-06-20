@@ -17,7 +17,8 @@ public interface AgentStreamListener {
     /** Emits one-time stream configuration before visible output begins. */
     default void onConfig(boolean developerMode) {}
 
-    /** The model requested a tool call; about to be executed. */
+    /** @deprecated implement the overload with {@code toolCallId} instead. */
+    @Deprecated
     default void onToolCall(String toolName, String arguments) {}
 
     /** The model requested a specific tool call; about to be executed. */
@@ -25,7 +26,8 @@ public interface AgentStreamListener {
         onToolCall(toolName, arguments);
     }
 
-    /** A tool call finished; {@code result} is what will be fed back to the model. */
+    /** @deprecated implement the overload with {@code toolCallId} instead. */
+    @Deprecated
     default void onToolResult(String toolName, String result) {}
 
     /** A specific tool call finished; {@code result} is what will be fed back to the model. */

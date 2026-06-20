@@ -120,4 +120,36 @@ describe("chat session stream replay", () => {
     expect(restored?.thread.id).toBe("thread-2");
     expect(restored?.screen).toBe("chat");
   });
+
+  it("matches legacy tool completion events to the most recent unfinished tool entry", () => {
+    const rebuilt = [
+      event({
+        id: "evt-1",
+        seq: 1,
+        type: "tool_call_started",
+        metadata: { name: "read_file", args: "{\"path\":\"README.md\"}" },
+        createdAt: "2026-06-20T00:00:01.000Z"
+      }),
+      event({
+        id: "evt-2",
+        seq: 2,
+        type: "tool_call_started",
+        metadata: { name: "read_file", args: "{\"path\":\"frontend/src/App.tsx\"}" },
+        createdAt: "2026-06-20T00:00:02.000Z"
+      }),
+      event({
+        id: "evt-3",
+        seq: 3,
+        type: "tool_call_completed",
+        metadata: { name: "read_file", result: "App contents" },
+        createdAt: "2026-06-20T00:00:03.000Z"
+      })
+    ].reduce(reduceChatEvent, baseThread());
+
+    expect(rebuilt.entries).toHaveLength(2);
+    const first = rebuilt.entries[0];
+    const second = rebuilt.entries[1];
+    expect(first.type === "tool" ? first.tool.result : "").toBe("");
+    expect(second.type === "tool" ? second.tool.result : "").toBe("App contents");
+  });
 });

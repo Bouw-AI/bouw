@@ -295,6 +295,21 @@ function toolCallId(event: ChatEvent) {
   return typeof raw === "string" && raw ? raw : undefined;
 }
 
+function findToolCompletionIndex(entries: ChatEntry[], name: string, callId?: string) {
+  if (callId) {
+    return entries.findIndex((entry) => entry.type === "tool" && entry.tool.callId === callId);
+  }
+  // Legacy events may not have callIds. Match the most recent unfinished tool with the same
+  // name so reconnect replay does not accidentally bind to an older completed entry.
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type === "tool" && entry.tool.name === name && !entry.tool.finishedAt) {
+      return index;
+    }
+  }
+  return -1;
+}
+
 export function reduceChatEvent(thread: ChatThread, event: ChatEvent): ChatThread {
   if ((thread.lastSeq ?? 0) >= event.seq) {
     return thread;
@@ -369,10 +384,9 @@ export function reduceChatEvent(thread: ChatThread, event: ChatEvent): ChatThrea
         : "tool";
       const args = typeof event.metadata?.args === "string" ? event.metadata.args : "";
       const callId = toolCallId(event);
-      const toolIndex = entries.findIndex((entry) =>
-        entry.type === "tool"
-          && ((callId && entry.tool.callId === callId)
-            || (!callId && entry.tool.name === name && !entry.tool.finishedAt)));
+      const toolIndex = callId
+        ? entries.findIndex((entry) => entry.type === "tool" && entry.tool.callId === callId)
+        : -1;
       if (toolIndex === -1) {
         entries.push({
           id: event.id,
@@ -405,10 +419,7 @@ export function reduceChatEvent(thread: ChatThread, event: ChatEvent): ChatThrea
         : "tool";
       const result = typeof event.metadata?.result === "string" ? event.metadata.result : "";
       const callId = toolCallId(event);
-      const toolIndex = entries.findIndex((entry) =>
-        entry.type === "tool"
-          && ((callId && entry.tool.callId === callId)
-            || (!callId && entry.tool.name === name && !entry.tool.finishedAt)));
+      const toolIndex = findToolCompletionIndex(entries, name, callId);
       if (toolIndex === -1) {
         entries.push({
           id: event.id,
