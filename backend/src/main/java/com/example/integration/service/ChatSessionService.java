@@ -51,6 +51,12 @@ public class ChatSessionService {
     }
 
     public ChatSessionMessageAcceptance createMessage(String sessionId, String owner, ChatSessionMessageRequest request) {
+        // Reject a session owned by someone else up front. Without this the owner-scoped upsert would
+        // fail to update, fall through to an insert, and blow up on the primary key (a 500) instead of
+        // a clean not-found. Mirror readEvents and avoid leaking the session's existence.
+        if (repository.sessionExists(sessionId) && !repository.sessionExistsForOwner(sessionId, owner)) {
+            throw new ResponseStatusException(NOT_FOUND, "Chat session not found");
+        }
         ChatSessionMessageAcceptance accepted = transactionTemplate.execute(status -> {
             Instant now = Instant.now();
             String trimmedContent = request.content() == null ? "" : request.content().trim();
