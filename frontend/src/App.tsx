@@ -928,8 +928,8 @@ export function Messages({
 function ActivityPanel({ activities }: { activities: ChatActivity[] }) {
   if (!activities.length) return null;
   return (
-    <div className="activity-panel">
-      <div className="activity-header">Activity</div>
+    <details className="activity-panel" open>
+      <summary className="activity-header">Activity</summary>
       <div className="activity-list">
         {activities.map((activity) => (
           <div key={activity.id} className="activity-item">
@@ -941,7 +941,7 @@ function ActivityPanel({ activities }: { activities: ChatActivity[] }) {
           </div>
         ))}
       </div>
-    </div>
+    </details>
   );
 }
 

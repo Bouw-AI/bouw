@@ -288,12 +288,38 @@ select {
 }
 
 .activity-header {
+  display: flex;
+  align-items: center;
   margin-bottom: 8px;
   color: #8b9099;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  cursor: pointer;
+  list-style: none;
+}
+
+.activity-header::-webkit-details-marker {
+  display: none;
+}
+
+.activity-header::after {
+  content: "›";
+  margin-left: auto;
+  color: #8b9099;
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.activity-panel[open] > .activity-header::after {
+  transform: rotate(90deg);
+}
+
+/* When collapsed, drop the header's bottom gap so it reads as a single bar. */
+.activity-panel:not([open]) > .activity-header {
+  margin-bottom: 0;
 }
 
 .activity-list {
