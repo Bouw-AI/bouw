@@ -1440,16 +1440,6 @@ export default function App() {
     });
   }, []);
 
-  const deleteThread = useCallback((threadId: string) => {
-    setState((prev) => {
-      const threads = prev.threads.filter((existing) => existing.id !== threadId);
-      const next = { ...prev, threads };
-      stateRef.current = next;
-      saveAppState(next);
-      return next;
-    });
-  }, []);
-
   const applyEventToThread = useCallback((threadId: string, event: StreamEvent) => {
     let nextThread: ChatThread | null = null;
     const target = stateRef.current.threads.find((candidate) => candidate.id === threadId)
