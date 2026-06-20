@@ -132,6 +132,29 @@ class ChatSessionRepositoryTest {
     }
 
     @Test
+    void toolActivityEventsArePersistedAndReplayedInOrder() {
+        // Mirrors ChatSessionService.appendActivity for the activity panel: tool call lifecycle
+        // events carry no message id but must round-trip their metadata and ordering.
+        repository.insertEvent(SESSION_ID, "run-1", null, 1, "tool_call_started", null,
+                null, Map.of("name", "read_file", "args", "{\"path\":\"a.txt\"}"), Instant.now());
+        repository.insertEvent(SESSION_ID, "run-1", null, 2, "tool_call_completed", null,
+                null, Map.of("name", "read_file", "result", "contents"), Instant.now());
+
+        List<ChatSessionEvent> events = repository.readEvents(SESSION_ID, 0);
+
+        assertThat(events).extracting(ChatSessionEvent::type)
+                .containsExactly("tool_call_started", "tool_call_completed");
+        assertThat(events.get(0).metadata())
+                .containsEntry("name", "read_file")
+                .containsEntry("args", "{\"path\":\"a.txt\"}");
+        assertThat(events.get(1).metadata())
+                .containsEntry("name", "read_file")
+                .containsEntry("result", "contents");
+        // Tool activity has no associated message, so it must not leak into the replayed transcript.
+        assertThat(repository.buildPriorMessages(SESSION_ID, 3)).isEmpty();
+    }
+
+    @Test
     void appendMessageContentAccumulatesTokens() {
         repository.insertMessage("message-1", SESSION_ID, "run-1", "assistant", "", "streaming", Instant.now());
         repository.appendMessageContent("message-1", "Hel", Instant.now());

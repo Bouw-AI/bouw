@@ -1569,8 +1569,9 @@ export default function App() {
         return;
       }
       applyEventsToThread(candidate.id, events, afterSeq == null);
-    } catch {
-      // Leave local state as-is on transient sync failures.
+    } catch (error) {
+      // Leave local state as-is on transient sync failures, but surface the cause for debugging.
+      console.warn("Failed to hydrate chat thread from events", error);
     }
   }, [session, applyEventsToThread, upsertThread]);
 

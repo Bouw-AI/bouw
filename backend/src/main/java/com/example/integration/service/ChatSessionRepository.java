@@ -63,6 +63,17 @@ public class ChatSessionRepository {
         return count != null && count > 0;
     }
 
+    /**
+     * Allocates the next per-session event sequence number.
+     *
+     * <p>The {@code for update} clause takes an exclusive lock on the {@code chat_sessions} row that
+     * is held until the surrounding transaction commits, so concurrent callers in other transactions
+     * block here until the in-flight allocation commits its incremented {@code last_event_seq}. That
+     * makes the read-then-update atomic across transactions and guarantees gap-free, collision-free
+     * sequence numbers. Callers must therefore invoke this inside a transaction (as
+     * {@link ChatSessionService} does); {@code ChatSessionRepositoryTest} exercises the concurrent
+     * path to prove no sequence number is reused.
+     */
     public long nextSeq(String sessionId, Instant now) {
         List<Long> rows = jdbcTemplate.query(
                 "select last_event_seq from chat_sessions where id = ? for update",
