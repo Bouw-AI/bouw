@@ -64,16 +64,20 @@ public class ChatSessionRepository {
     }
 
     public long nextSeq(String sessionId, Instant now) {
-        jdbcTemplate.update("""
-                update chat_sessions
-                set last_event_seq = last_event_seq + 1, updated_at = ?
-                where id = ?
-                """, Timestamp.from(now), sessionId);
-        Long seq = jdbcTemplate.queryForObject("select last_event_seq from chat_sessions where id = ?", Long.class, sessionId);
-        if (seq == null) {
+        List<Long> rows = jdbcTemplate.query(
+                "select last_event_seq from chat_sessions where id = ? for update",
+                (rs, rowNum) -> rs.getLong("last_event_seq"),
+                sessionId);
+        if (rows.isEmpty()) {
             throw new IllegalStateException("Chat session not found: " + sessionId);
         }
-        return seq;
+        long nextSeq = rows.get(0) + 1;
+        jdbcTemplate.update("""
+                update chat_sessions
+                set last_event_seq = ?, updated_at = ?
+                where id = ?
+                """, nextSeq, Timestamp.from(now), sessionId);
+        return nextSeq;
     }
 
     public void insertMessage(String messageId, String sessionId, String runId, String role, String content, String status, Instant now) {
