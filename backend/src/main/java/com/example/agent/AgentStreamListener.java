@@ -20,6 +20,16 @@ public interface AgentStreamListener {
     /** The model requested a tool call; about to be executed. */
     default void onToolCall(String toolName, String arguments) {}
 
+    /** The model requested a specific tool call; about to be executed. */
+    default void onToolCall(String toolCallId, String toolName, String arguments) {
+        onToolCall(toolName, arguments);
+    }
+
     /** A tool call finished; {@code result} is what will be fed back to the model. */
     default void onToolResult(String toolName, String result) {}
+
+    /** A specific tool call finished; {@code result} is what will be fed back to the model. */
+    default void onToolResult(String toolCallId, String toolName, String result) {
+        onToolResult(toolName, result);
+    }
 }
