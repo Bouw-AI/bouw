@@ -470,16 +470,17 @@ function FileNodeRow({ node, depth, defaultOpen }: { node: FileNode; depth: numb
   );
 }
 
-function FileTree(props: {
+export function FileTree(props: {
   sessionId: string;
   files: FileNode[];
   wsOpen: boolean;
   onToggleWs: () => void;
   label: string;
+  rootName: string;
   badge: string;
   defaultOpenDirectories: boolean;
 }) {
-  const { sessionId, files, wsOpen, onToggleWs, label, badge, defaultOpenDirectories } = props;
+  const { sessionId, files, wsOpen, onToggleWs, label, rootName, badge, defaultOpenDirectories } = props;
 
   return (
     <div className="file-tree">
@@ -497,7 +498,7 @@ function FileTree(props: {
         ) : (
           <Folder size={14} strokeWidth={2} color={COLORS.ink} />
         )}
-        <span>workspace</span>
+        <span>{rootName}</span>
       </TreeRow>
 
       {wsOpen ? (
@@ -2316,6 +2317,9 @@ export default function App() {
                 label={thread.kind === "github"
                   ? `${thread.repoName ?? thread.repoFullName ?? "repo"} · ${thread.branchName ?? "branch"}`
                   : `~/sandbox/${thread.id.slice(0, 8)}`}
+                rootName={thread.kind === "github"
+                  ? (thread.repoName ?? thread.repoFullName ?? "repo")
+                  : `sandbox-${thread.id.slice(0, 8)}`}
                 badge={thread.kind === "github" ? "github" : "sandbox"}
                 defaultOpenDirectories={thread.kind !== "github"}
               />
