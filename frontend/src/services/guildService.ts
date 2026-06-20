@@ -2,6 +2,7 @@ import type {
   AppState,
   AuthSession,
   BugReportSummary,
+  ChatActivity,
   ChatAttachment,
   ChatEntry,
   ChatKind,
@@ -57,6 +58,46 @@ export type StreamEvent =
   | (StreamEventMeta & { type: "reset" })
   | (StreamEventMeta & { type: "done" })
   | (StreamEventMeta & { type: "error"; message: string });
+
+export type ChatEvent = {
+  id: string;
+  seq: number;
+  type: string;
+  messageId?: string | null;
+  runId?: string | null;
+  role?: string | null;
+  content?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+type ChatEventsResponse = {
+  sessionId: string;
+  events: ChatEvent[];
+};
+
+type SendChatMessageOptions = {
+  content: string;
+  mode: "CHAT" | "SANDBOX" | "GITHUB";
+  title: string;
+  attachments?: ChatAttachment[];
+  model?: string;
+  reasoningEffort?: string;
+  sandboxId?: string;
+};
+
+type SendChatMessageResponse = {
+  sessionId: string;
+  messageId: string;
+  runId: string;
+  lastSeq: number;
+};
+
+type ChatEventStreamHandlers = {
+  onEvent: (event: ChatEvent) => void;
+  onStatus?: (status: "connecting" | "open" | "reconnecting" | "closed" | "error") => void;
+  onError?: (error: Error) => void;
+};
 
 type StreamHandlers = {
   onEvent: (event: StreamEvent) => void;
@@ -164,6 +205,39 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, token?: string)
   return (await response.json()) as T;
 }
 
+export async function sendChatMessage(
+  token: string,
+  sessionId: string,
+  options: SendChatMessageOptions
+): Promise<SendChatMessageResponse> {
+  return apiFetch<SendChatMessageResponse>(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content: options.content,
+        mode: options.mode,
+        title: options.title,
+        ...(options.attachments?.length ? { attachments: options.attachments } : {}),
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
+        ...(options.sandboxId ? { sandboxId: options.sandboxId } : {})
+      })
+    },
+    token
+  );
+}
+
+export async function fetchChatSessionEvents(token: string, sessionId: string, afterSeq = 0): Promise<ChatEvent[]> {
+  const query = afterSeq > 0 ? `?afterSeq=${afterSeq}` : "";
+  const response = await apiFetch<ChatEventsResponse>(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}/events${query}`,
+    {},
+    token
+  );
+  return response.events;
+}
+
 export async function login(username: string, password: string): Promise<AuthSession> {
   const response = await apiFetch<AuthLoginResponse>("/api/auth/login", {
     method: "POST",
@@ -214,7 +288,10 @@ export function createThread(kind: ChatKind = "chat", options: CreateThreadOptio
     reasoningEffort: undefined,
     createdAt,
     updatedAt: createdAt,
-    entries: []
+    entries: [],
+    activities: [],
+    lastSeq: 0,
+    connectionStatus: "idle"
   };
 }
 
@@ -969,6 +1046,29 @@ function parsePersistedRunEvent(event: PersistedRunEvent): StreamEvent | null {
   return buildStreamEvent(event.type, event.data);
 }
 
+function parseChatSseEvent(rawEvent: string): ChatEvent | null {
+  const lines = rawEvent
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+
+  if (!lines.length) return null;
+
+  let eventName = "";
+  const dataLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trim());
+    }
+  }
+
+  if (eventName !== "chat_event" || !dataLines.length) return null;
+  return JSON.parse(dataLines.join("\n")) as ChatEvent;
+}
+
 function buildStreamEvent(eventName: string, payload: Record<string, unknown>): StreamEvent | null {
   const meta = {
     eventId: typeof payload.eventId === "number" ? payload.eventId : undefined,
@@ -1003,4 +1103,82 @@ function buildStreamEvent(eventName: string, payload: Record<string, unknown>): 
     default:
       return null;
   }
+}
+
+export function openChatEventStream(
+  token: string,
+  sessionId: string,
+  initialAfterSeq: number,
+  handlers: ChatEventStreamHandlers
+) {
+  const controller = new AbortController();
+  let afterSeq = initialAfterSeq;
+  let closed = false;
+
+  const run = async () => {
+    let attempt = 0;
+    while (!closed) {
+      handlers.onStatus?.(attempt === 0 ? "connecting" : "reconnecting");
+      try {
+        const response = await fetch(
+          `/api/chat/sessions/${encodeURIComponent(sessionId)}/stream?afterSeq=${encodeURIComponent(String(afterSeq))}`,
+          {
+            method: "GET",
+            headers: {
+              Accept: "text/event-stream",
+              Authorization: `Bearer ${token}`
+            },
+            signal: controller.signal
+          }
+        );
+        if (!response.ok) {
+          throw await errorFromResponse(response);
+        }
+        if (!response.body) {
+          throw new Error("Stream body was not available.");
+        }
+
+        handlers.onStatus?.("open");
+        attempt = 0;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (!closed) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() ?? "";
+          for (const rawEvent of parts) {
+            const event = parseChatSseEvent(rawEvent);
+            if (!event) continue;
+            afterSeq = Math.max(afterSeq, event.seq);
+            handlers.onEvent(event);
+          }
+        }
+
+        if (closed) {
+          return;
+        }
+      } catch (error) {
+        if (closed || controller.signal.aborted) {
+          return;
+        }
+        handlers.onError?.(error instanceof Error ? error : new Error("Chat stream failed."));
+      }
+
+      attempt += 1;
+      await delay(Math.min(5000, 1000 * attempt));
+    }
+  };
+
+  void run();
+  return {
+    close() {
+      closed = true;
+      controller.abort();
+      handlers.onStatus?.("closed");
+    }
+  };
 }
