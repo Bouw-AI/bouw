@@ -21,7 +21,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
@@ -159,7 +158,11 @@ public class ChatSessionController {
             emitter.send(SseEmitter.event()
                     .name("chat_event")
                     .data(objectMapper.writeValueAsString(toResponse(event))));
-        } catch (IOException e) {
+        } catch (Exception e) {
+            // The send can race a client disconnect: the emitter may complete between the closed
+            // check above and here, in which case send() throws IllegalStateException rather than
+            // IOException. Catch broadly so a dead emitter is retired quietly instead of propagating
+            // into the broker's publish loop and disrupting other subscribers.
             log.debug("Could not send chat session SSE event {}: {}", event.seq(), e.getMessage());
             if (closed.compareAndSet(false, true)) {
                 emitter.complete();
@@ -173,7 +176,9 @@ public class ChatSessionController {
         }
         try {
             emitter.send(SseEmitter.event().comment("heartbeat"));
-        } catch (IOException e) {
+        } catch (Exception e) {
+            // See sendEvent: a heartbeat can race a disconnect and throw IllegalStateException on an
+            // already-completed emitter, so handle any failure by retiring this emitter.
             if (closed.compareAndSet(false, true)) {
                 emitter.complete();
             }

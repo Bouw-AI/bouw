@@ -1,5 +1,7 @@
 package com.example.integration.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -8,6 +10,8 @@ import java.util.function.Consumer;
 
 @Component
 public class ChatSessionEventBroker {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatSessionEventBroker.class);
 
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<Consumer<ChatSessionEvent>>> listeners =
             new ConcurrentHashMap<>();
@@ -26,7 +30,12 @@ public class ChatSessionEventBroker {
             return;
         }
         for (Consumer<ChatSessionEvent> callback : callbacks) {
-            callback.accept(event);
+            try {
+                callback.accept(event);
+            } catch (RuntimeException e) {
+                // A subscriber (e.g. a dead SSE emitter) must not break delivery to the others.
+                log.debug("Chat session subscriber failed for event {}: {}", event.seq(), e.getMessage());
+            }
         }
     }
 }

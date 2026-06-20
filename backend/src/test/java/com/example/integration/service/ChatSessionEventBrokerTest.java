@@ -55,6 +55,19 @@ class ChatSessionEventBrokerTest {
         broker.publish(event("ghost-session", 1));
     }
 
+    @Test
+    void aFailingSubscriberDoesNotBreakDeliveryToOthers() {
+        List<ChatSessionEvent> healthy = new CopyOnWriteArrayList<>();
+        broker.subscribe("session-1", e -> {
+            throw new IllegalStateException("dead emitter");
+        });
+        broker.subscribe("session-1", healthy::add);
+
+        broker.publish(event("session-1", 1));
+
+        assertThat(healthy).extracting(ChatSessionEvent::seq).containsExactly(1L);
+    }
+
     private static ChatSessionEvent event(String sessionId, long seq) {
         return new ChatSessionEvent("event-" + seq, sessionId, "run-1", "message-1", seq,
                 "assistant_token", "assistant", "token", Map.of(), Instant.now());
