@@ -485,16 +485,16 @@ public class GoogleWorkspaceClientFactory {
 
     private String normalizeReturnTo(String returnTo) {
         if (returnTo == null || returnTo.isBlank()) {
-            return "http://localhost:5173/";
+            return "https://hugin.thecognitivejunction.com/";
         }
         try {
             URI uri = URI.create(returnTo.trim());
             if (!"http".equalsIgnoreCase(uri.getScheme()) && !"https".equalsIgnoreCase(uri.getScheme())) {
-                return "http://localhost:5173/";
+                return "https://hugin.thecognitivejunction.com/";
             }
             return returnTo.trim();
         } catch (IllegalArgumentException e) {
-            return "http://localhost:5173/";
+            return "https://hugin.thecognitivejunction.com/";
         }
     }
 
