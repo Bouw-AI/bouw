@@ -11,6 +11,10 @@ import java.util.List;
  * <p>{@code path} is relative to the workspace root. {@code type} is either {@code "file"} or
  * {@code "dir"}. {@code size} is the byte size for files (null for directories), and
  * {@code children} holds a directory's entries (null for files).
+ *
+ * <p>For GitHub-repo sandboxes {@code additions} and {@code deletions} carry the git diff
+ * stats against {@code HEAD} so the UI can show which files have changed and by how much.
+ * Both are null when the sandbox is not a cloned repository or when the file is unmodified.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record FileNode(
@@ -18,16 +22,22 @@ public record FileNode(
         String path,
         String type,
         Long size,
-        List<FileNode> children) {
+        List<FileNode> children,
+        Integer additions,
+        Integer deletions) {
 
     public static final String FILE = "file";
     public static final String DIR = "dir";
 
     public static FileNode file(String name, String path, long size) {
-        return new FileNode(name, path, FILE, size, null);
+        return new FileNode(name, path, FILE, size, null, null, null);
+    }
+
+    public static FileNode file(String name, String path, long size, int additions, int deletions) {
+        return new FileNode(name, path, FILE, size, null, additions, deletions);
     }
 
     public static FileNode directory(String name, String path, List<FileNode> children) {
-        return new FileNode(name, path, DIR, null, children);
+        return new FileNode(name, path, DIR, null, children, null, null);
     }
 }

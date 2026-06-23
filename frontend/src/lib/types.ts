@@ -127,6 +127,8 @@ export type FileNode = {
   path: string;
   type: "file" | "dir";
   size?: number;
+  additions?: number;
+  deletions?: number;
   children?: FileNode[];
 };
 

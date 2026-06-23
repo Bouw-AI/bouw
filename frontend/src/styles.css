@@ -208,6 +208,31 @@ select {
   font-size: 11px;
 }
 
+.tree-diff-badge {
+  margin-left: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  display: flex;
+  gap: 4px;
+}
+
+.tree-diff-badge .diff-additions {
+  color: #1a7f37;
+}
+
+.tree-diff-badge .diff-deletions {
+  color: #cf222e;
+}
+
+.tree-file-modified {
+  color: #2563eb;
+}
+
+.tree-diff-badge .diff-additions + .diff-deletions::before {
+  content: " ";
+}
+
 .mono {
   font-family:
     ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",

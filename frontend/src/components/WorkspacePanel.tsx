@@ -25,6 +25,17 @@ function TreeRow({
   );
 }
 
+function DiffBadge({ additions, deletions }: { additions?: number; deletions?: number }) {
+  if (additions == null && deletions == null) return null;
+  if ((additions ?? 0) === 0 && (deletions ?? 0) === 0) return null;
+  return (
+    <span className="tree-diff-badge">
+      {additions != null && additions > 0 && <span className="diff-additions">+{additions}</span>}
+      {deletions != null && deletions > 0 && <span className="diff-deletions">-{deletions}</span>}
+    </span>
+  );
+}
+
 function FileNodeRow({ node, depth, defaultOpen }: { node: FileNode; depth: number; defaultOpen: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -47,10 +58,13 @@ function FileNodeRow({ node, depth, defaultOpen }: { node: FileNode; depth: numb
     );
   }
 
+  const isModified = (node.additions ?? 0) > 0 || (node.deletions ?? 0) > 0;
+
   return (
     <TreeRow depth={depth}>
       <FileText size={13.5} strokeWidth={2} color={COLORS.muted} />
-      <span className="mono">{node.name}</span>
+      <span className={`mono ${isModified ? "tree-file-modified" : ""}`}>{node.name}</span>
+      <DiffBadge additions={node.additions} deletions={node.deletions} />
       <span className="tree-size mono">{formatBytes(node.size)}</span>
     </TreeRow>
   );

@@ -24,7 +24,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -251,6 +253,9 @@ public class DockerSandboxManager implements SandboxRuntime {
      * Returns the workspace file tree for a sandbox (relative to its workspace root), or empty when
      * the sandbox is unknown. Directories listed in {@link Workspace#IGNORED_DIRECTORIES} are skipped,
      * the walk is depth- and width-bounded, and directories sort before files (each alphabetically).
+     *
+     * <p>When the sandbox is a GitHub repo with uncommitted changes, each file node also carries
+     * {@code additions} / {@code deletions} from {@code git diff --numstat HEAD}.
      */
     public Optional<List<FileNode>> listFiles(String id) {
         LiveSandbox sandbox = sandboxes.get(id);
@@ -258,10 +263,55 @@ public class DockerSandboxManager implements SandboxRuntime {
             return Optional.empty();
         }
         Path root = Path.of(sandbox.info().workspace());
-        return Optional.of(buildChildren(root, root, 0));
+        Map<String, int[]> diffStats = computeGitDiffStats(root, id);
+        return Optional.of(buildChildren(root, root, 0, diffStats));
     }
 
-    private List<FileNode> buildChildren(Path root, Path dir, int depth) {
+    /**
+     * Runs {@code git diff --numstat HEAD} from the workspace root to read per-file addition/deletion
+     * counts. Returns a map of relative file path → [additions, deletions], or empty map on any failure.
+     * Only works for GitHub-repo sandboxes (others have no {@code .git} to diff against).
+     */
+    private Map<String, int[]> computeGitDiffStats(Path workspaceRoot, String sandboxId) {
+        // Only compute for sandboxes registered as GitHub repos
+        if (workspaceRegistry.githubRepo(sandboxId).isEmpty()) {
+            return Map.of();
+        }
+        Path dotGit = workspaceRoot.resolve(".git");
+        if (!Files.isDirectory(dotGit)) {
+            return Map.of();
+        }
+        try {
+            ProcessBuilder pb = new ProcessBuilder("git", "-C", workspaceRoot.toString(),
+                    "diff", "--numstat", "HEAD");
+            pb.redirectErrorStream(true);
+            ProcessResult result = runHostProcess(pb, Duration.ofSeconds(5));
+            if (result.exitCode() != 0 || result.output().isBlank()) {
+                return Map.of();
+            }
+            Map<String, int[]> stats = new java.util.HashMap<>();
+            for (String line : result.output().split("\n")) {
+                line = line.strip();
+                if (line.isBlank()) continue;
+                // Format: additions\tdeletions\tpath
+                String[] parts = line.split("\t", 3);
+                if (parts.length < 3) continue;
+                try {
+                    int additions = Integer.parseInt(parts[0]);
+                    int deletions = Integer.parseInt(parts[1]);
+                    stats.put(parts[2], new int[]{additions, deletions});
+                } catch (NumberFormatException e) {
+                    // skip malformed line
+                }
+            }
+            return stats;
+        } catch (Exception e) {
+            log.debug("Could not compute git diff stats for sandbox {}: {}", sandboxId, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private List<FileNode> buildChildren(Path root, Path dir, int depth, Map<String, int[]> diffStats) {
         if (depth >= MAX_TREE_DEPTH || !Files.isDirectory(dir)) {
             return List.of();
         }
@@ -287,7 +337,7 @@ public class DockerSandboxManager implements SandboxRuntime {
                 if (Workspace.IGNORED_DIRECTORIES.contains(name)) {
                     continue;
                 }
-                nodes.add(FileNode.directory(name, relative, buildChildren(root, entry, depth + 1)));
+                nodes.add(FileNode.directory(name, relative, buildChildren(root, entry, depth + 1, diffStats)));
             } else {
                 long size;
                 try {
@@ -295,7 +345,12 @@ public class DockerSandboxManager implements SandboxRuntime {
                 } catch (IOException e) {
                     size = 0L;
                 }
-                nodes.add(FileNode.file(name, relative, size));
+                int[] stats = diffStats.get(relative);
+                if (stats != null && (stats[0] > 0 || stats[1] > 0)) {
+                    nodes.add(FileNode.file(name, relative, size, stats[0], stats[1]));
+                } else {
+                    nodes.add(FileNode.file(name, relative, size));
+                }
             }
         }
         return nodes;
