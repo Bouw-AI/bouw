@@ -13,6 +13,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -61,6 +62,7 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
 
     private final ConcurrentHashMap<String, LiveSandbox> sandboxes = new ConcurrentHashMap<>();
 
+    @Autowired
     public DockerSandboxManager(
             SandboxProperties properties,
             WorkspaceRegistry workspaceRegistry,
