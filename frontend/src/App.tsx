@@ -1,32 +1,16 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode, type RefObject } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import {
   ArrowLeft,
-  Bug,
   Box,
-  ChevronDown,
   ChevronRight,
-  FileText,
-  Folder,
-  FolderOpen,
-  GitBranch,
   Github,
   History,
-  Image as ImageIcon,
   Lock,
-  Menu,
   MessageCirclePlus,
-  MessageSquare,
   Network,
-  Plus,
   Puzzle,
-  RefreshCw,
   Search,
-  Send,
-  SlidersHorizontal,
   Settings2,
-  Trash2,
   User,
   X
 } from "lucide-react";
@@ -43,7 +27,6 @@ import {
   cancelAgentRun,
   fetchBugReports,
   fetchAgentRuns,
-  fetchChatSessionEvents,
   fetchGitHubBranches,
   fetchGitHubRepositories,
   fetchGitHubStatus,
@@ -53,26 +36,17 @@ import {
   fetchSandboxFiles,
   formatTimestamp,
   getThreadTitle,
-  loadAppState,
   loadAuthSession,
   login as loginRequest,
   reconnectGoogle,
-  removeThread,
   reportBug,
   saveEnabledModels,
-  saveAppState,
-  saveAuthSession,
-  sendChatMessage,
-  openChatEventStream,
-  type ChatEvent
+  saveAuthSession
 } from "./services/guildService";
 import type {
-  AppState,
   AuthSession,
   AgentRun,
-  ChatActivity,
   ChatAttachment,
-  ChatEntry,
   ChatThread,
   FileNode,
   BugReportSummary,
@@ -82,31 +56,25 @@ import type {
   Integration,
   ModelOption
 } from "./lib/types";
+import { COLORS } from "./lib/theme";
+import { defaultReasoningFor } from "./lib/format";
+import { useChatSessionStore } from "./stores/chatSessionStore";
+import { AppHeader } from "./components/AppHeader";
+import { WorkspacePanel } from "./components/WorkspacePanel";
+import { ChatPanel } from "./components/chat/ChatPanel";
+import { HistoryPanel } from "./components/HistoryPanel";
+import { IntegrationPanel } from "./components/IntegrationPanel";
+
+// Re-exports kept stable for tests and external imports after the Phase 2 refactor.
+export { reduceChatEvent } from "./stores/chatEventReducer";
+export { MessageList as Messages } from "./components/chat/MessageList";
+export { WorkspacePanel as FileTree } from "./components/WorkspacePanel";
+export { HistoryPanel as HistoryScreen } from "./components/HistoryPanel";
 
 const LOGO = "/hugin-bird.jpg";
 
-const COLORS = {
-  ink: "#1C1F23",
-  muted: "#8B9099",
-  faint: "#ADB2BA",
-  micro: "#BFC3CA",
-  border: "#EAEBED",
-  badge: "#F1F2F4",
-  hover: "#F4F4F6",
-  bubble: "#EFEFF1",
-  green: "#20A65A",
-  danger: "#E5484D"
-};
-
-const CHIPS = [
-  ["Summarize a document", "Summarize a document for me."],
-  ["Analyze data", "Analyze this dataset and show key trends."],
-  ["Write code", "Write a Python script to clean a CSV file."],
-  ["Brainstorm ideas", "Brainstorm ideas for a product launch."],
-  ["Show me tips", "Show me tips for getting the most out of Hugin."]
-] as const;
-
 type Screen = "login" | "chat" | "purechat" | "history" | "integrations" | "settings" | "github-repo" | "agent-threads";
+
 const WORKSPACE_ACTION_RE =
   /\b(debug|fix|edit|change|update|inspect|investigate|search|grep|find|open|read|write|modify|patch|refactor|run|build|test|render)\b/i;
 const WORKSPACE_TARGET_RE =
@@ -182,28 +150,10 @@ function readActiveThreadRestore() {
     const raw = window.localStorage.getItem(ACTIVE_THREAD_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { threadId?: string; screen?: Screen };
-    if (!parsed.threadId || !parsed.screen) return null;
+    if (!parsed.threadId) return null;
     return parsed;
   } catch {
     return null;
-  }
-}
-
-function saveActiveThreadRestore(threadId: string, screen: Screen) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(ACTIVE_THREAD_STORAGE_KEY, JSON.stringify({ threadId, screen }));
-  } catch {
-    // Ignore storage write failures so reconnect support never blocks the active session.
-  }
-}
-
-function clearActiveThreadRestore() {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(ACTIVE_THREAD_STORAGE_KEY);
-  } catch {
-    // Ignore storage cleanup failures; the next successful write will overwrite stale data.
   }
 }
 
@@ -223,17 +173,6 @@ function delay(ms: number) {
   });
 }
 
-function formatBytes(size?: number) {
-  if (size == null) return "";
-  if (size < 1024) return `${size} b`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} kb`;
-  return `${(size / (1024 * 1024)).toFixed(1)} mb`;
-}
-
-function messageCount(thread: ChatThread) {
-  return thread.entries.filter((entry) => entry.type !== "tool").length;
-}
-
 function formatPrice(value?: string | null) {
   if (!value) return "N/A";
   const amount = Number(value);
@@ -251,272 +190,7 @@ function formatContext(value?: number | null) {
   return `${value} ctx`;
 }
 
-function labelReasoning(value: string) {
-  return value === "none" ? "Off" : value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function defaultReasoningFor(model?: ModelOption) {
-  if (!model || !model.reasoningOptions.length) return undefined;
-  return model.reasoningOptions.includes("medium") ? "medium" : model.reasoningOptions[0];
-}
-
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-
-function activityLabel(event: ChatEvent) {
-  const metadata = event.metadata ?? {};
-  const name = typeof metadata.name === "string" ? metadata.name : event.type;
-  switch (event.type) {
-    case "run_started":
-      return "Run started";
-    case "run_completed":
-      return "Run completed";
-    case "run_error":
-      return "Run failed";
-    case "tool_call_started":
-      return `Tool started: ${name}`;
-    case "tool_call_completed":
-      return `Tool completed: ${name}`;
-    case "tool_call_error":
-      return `Tool failed: ${name}`;
-    default:
-      return event.type.replaceAll("_", " ");
-  }
-}
-
-function activityDetail(event: ChatEvent) {
-  const metadata = event.metadata ?? {};
-  if (typeof metadata.result === "string" && metadata.result) return metadata.result;
-  if (typeof metadata.args === "string" && metadata.args) return metadata.args;
-  if (typeof metadata.message === "string" && metadata.message) return metadata.message;
-  return event.content ?? undefined;
-}
-
-function activityStatus(event: ChatEvent): ChatActivity["status"] {
-  if (event.type.endsWith("_error") || event.type === "run_error") return "error";
-  if (event.type.endsWith("_completed") || event.type === "run_completed") return "completed";
-  if (event.type.endsWith("_started") || event.type === "run_started") return "running";
-  return "info";
-}
-
-function toolCallId(event: ChatEvent) {
-  const raw = event.metadata?.callId;
-  return typeof raw === "string" && raw ? raw : undefined;
-}
-
-function findToolCompletionIndex(entries: ChatEntry[], name: string, callId?: string) {
-  if (callId) {
-    return entries.findIndex((entry) => entry.type === "tool" && entry.tool.callId === callId);
-  }
-  // Legacy events may not have callIds. Match the most recent unfinished tool with the same
-  // name so reconnect replay does not accidentally bind to an older completed entry.
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (entry?.type === "tool" && entry.tool.name === name && !entry.tool.finishedAt) {
-      return index;
-    }
-  }
-  return -1;
-}
-
-export function reduceChatEvent(thread: ChatThread, event: ChatEvent): ChatThread {
-  if ((thread.lastSeq ?? 0) >= event.seq) {
-    return thread;
-  }
-
-  const entries = thread.entries.slice();
-  const activities = (thread.activities ?? []).slice();
-  const messageId = event.messageId ?? undefined;
-  const index = messageId ? entries.findIndex((entry) => entry.id === messageId) : -1;
-  const attachments = Array.isArray(event.metadata?.attachments)
-    ? event.metadata.attachments as ChatAttachment[]
-    : undefined;
-
-  switch (event.type) {
-    case "user_message_created":
-      if (messageId && index === -1) {
-        entries.push({
-          id: messageId,
-          type: "user",
-          content: event.content ?? "",
-          ...(attachments?.length ? { attachments } : {}),
-          createdAt: event.createdAt
-        });
-      }
-      break;
-    case "assistant_message_started":
-      if (messageId && index === -1) {
-        entries.push({
-          id: messageId,
-          type: "assistant",
-          content: "",
-          reasoning: "",
-          createdAt: event.createdAt
-        });
-      }
-      break;
-    case "assistant_reasoning":
-      if (messageId) {
-        if (index === -1) {
-          entries.push({
-            id: messageId,
-            type: "assistant",
-            content: "",
-            reasoning: event.content ?? "",
-            createdAt: event.createdAt
-          });
-        } else if (entries[index]?.type === "assistant") {
-          const current = entries[index] as Extract<ChatEntry, { type: "assistant" }>;
-          entries[index] = { ...current, reasoning: `${current.reasoning}${event.content ?? ""}` };
-        }
-      }
-      break;
-    case "assistant_token":
-      if (messageId) {
-        if (index === -1) {
-          entries.push({
-            id: messageId,
-            type: "assistant",
-            content: event.content ?? "",
-            reasoning: "",
-            createdAt: event.createdAt
-          });
-        } else if (entries[index]?.type === "assistant") {
-          const current = entries[index] as Extract<ChatEntry, { type: "assistant" }>;
-          entries[index] = { ...current, content: `${current.content}${event.content ?? ""}` };
-        }
-      }
-      break;
-    case "tool_call_started": {
-      const name = typeof event.metadata?.name === "string" && event.metadata.name
-        ? event.metadata.name
-        : "tool";
-      const args = typeof event.metadata?.args === "string" ? event.metadata.args : "";
-      const callId = toolCallId(event);
-      const toolIndex = callId
-        ? entries.findIndex((entry) => entry.type === "tool" && entry.tool.callId === callId)
-        : -1;
-      if (toolIndex === -1) {
-        entries.push({
-          id: event.id,
-          type: "tool",
-          tool: {
-            id: event.id,
-            ...(callId ? { callId } : {}),
-            name,
-            args,
-            result: "",
-            startedAt: event.createdAt
-          },
-          createdAt: event.createdAt
-        });
-      }
-      activities.push({
-        id: event.id,
-        runId: event.runId ?? undefined,
-        type: event.type,
-        label: activityLabel(event),
-        status: activityStatus(event),
-        detail: activityDetail(event),
-        createdAt: event.createdAt
-      });
-      break;
-    }
-    case "tool_call_completed": {
-      const name = typeof event.metadata?.name === "string" && event.metadata.name
-        ? event.metadata.name
-        : "tool";
-      const result = typeof event.metadata?.result === "string" ? event.metadata.result : "";
-      const callId = toolCallId(event);
-      const toolIndex = findToolCompletionIndex(entries, name, callId);
-      if (toolIndex === -1) {
-        entries.push({
-          id: event.id,
-          type: "tool",
-          tool: {
-            id: event.id,
-            ...(callId ? { callId } : {}),
-            name,
-            args: "",
-            result,
-            startedAt: event.createdAt,
-            finishedAt: event.createdAt
-          },
-          createdAt: event.createdAt
-        });
-      } else if (entries[toolIndex]?.type === "tool") {
-        const current = entries[toolIndex] as Extract<ChatEntry, { type: "tool" }>;
-        entries[toolIndex] = {
-          ...current,
-          tool: {
-            ...current.tool,
-            result,
-            finishedAt: event.createdAt
-          }
-        };
-      }
-      activities.push({
-        id: event.id,
-        runId: event.runId ?? undefined,
-        type: event.type,
-        label: activityLabel(event),
-        status: activityStatus(event),
-        detail: activityDetail(event),
-        createdAt: event.createdAt
-      });
-      break;
-    }
-    case "assistant_message_completed":
-      if (messageId && index !== -1 && entries[index]?.type === "assistant") {
-        const current = entries[index] as Extract<ChatEntry, { type: "assistant" }>;
-        entries[index] = {
-          ...current,
-          content: current.content || event.content || "",
-          completedAt: event.createdAt
-        };
-      }
-      break;
-    case "assistant_message_error":
-      if (messageId) {
-        if (index === -1) {
-          entries.push({
-            id: messageId,
-            type: "assistant",
-            content: event.content ?? "The run failed.",
-            reasoning: "",
-            createdAt: event.createdAt,
-            completedAt: event.createdAt
-          });
-        } else if (entries[index]?.type === "assistant") {
-          const current = entries[index] as Extract<ChatEntry, { type: "assistant" }>;
-          entries[index] = {
-            ...current,
-            content: current.content || event.content || "The run failed.",
-            completedAt: event.createdAt
-          };
-        }
-      }
-      break;
-    default:
-      activities.push({
-        id: event.id,
-        runId: event.runId ?? undefined,
-        type: event.type,
-        label: activityLabel(event),
-        status: activityStatus(event),
-        detail: activityDetail(event),
-        createdAt: event.createdAt
-      });
-      break;
-  }
-
-  return {
-    ...thread,
-    entries,
-    activities,
-    lastSeq: event.seq,
-    updatedAt: event.createdAt
-  };
-}
 
 function screenForThread(thread: ChatThread): Screen {
   return thread.kind === "chat" ? "purechat" : "chat";
@@ -536,7 +210,7 @@ export function restorePreferredThread(threads: ChatThread[]) {
     if (match) {
       return {
         thread: match,
-        screen: active.screen
+        screen: active.screen ?? screenForThread(match)
       };
     }
   }
@@ -546,141 +220,6 @@ export function restorePreferredThread(threads: ChatThread[]) {
     thread: fallback,
     screen: screenForThread(fallback)
   };
-}
-
-function AppHeader({
-  onMenu,
-  reportAction
-}: {
-  onMenu: () => void;
-  reportAction?: {
-    disabled?: boolean;
-    busy?: boolean;
-    onClick: () => void;
-  };
-}) {
-  return (
-    <div className="app-header">
-      <div className="brand">
-        <img src={LOGO} alt="Hugin" className="brand-logo" />
-        <span className="brand-text">HUGIN</span>
-      </div>
-      <div className="header-actions">
-        {reportAction ? (
-          <button
-            type="button"
-            className="header-action-button"
-            onClick={reportAction.onClick}
-            disabled={reportAction.disabled || reportAction.busy}
-            aria-label="Report bug"
-          >
-            <Bug size={14} strokeWidth={2} />
-            <span>{reportAction.busy ? "Saving…" : "Report bug"}</span>
-          </button>
-        ) : null}
-        <button type="button" className="icon-button" onClick={onMenu} aria-label="Open menu">
-          <Menu size={22} strokeWidth={2} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TreeRow({
-  depth = 0,
-  onClick,
-  children
-}: {
-  depth?: number;
-  onClick?: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      className={`tree-row ${onClick ? "tree-row-clickable" : ""}`}
-      style={{ paddingLeft: depth * 16 }}
-      onClick={onClick}
-    >
-      {children}
-    </div>
-  );
-}
-
-function FileNodeRow({ node, depth, defaultOpen }: { node: FileNode; depth: number; defaultOpen: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
-
-  if (node.type === "dir") {
-    return (
-      <>
-        <TreeRow depth={depth} onClick={() => setOpen((current) => !current)}>
-          {open ? <ChevronDown size={13} color={COLORS.faint} /> : <ChevronRight size={13} color={COLORS.faint} />}
-          {open ? (
-            <FolderOpen size={14} strokeWidth={2} color={COLORS.ink} />
-          ) : (
-            <Folder size={14} strokeWidth={2} color={COLORS.ink} />
-          )}
-          <span>{node.name}</span>
-        </TreeRow>
-        {open ? node.children?.map((child) => (
-          <FileNodeRow key={child.path} node={child} depth={depth + 1} defaultOpen={defaultOpen} />
-        )) : null}
-      </>
-    );
-  }
-
-  return (
-    <TreeRow depth={depth}>
-      <FileText size={13.5} strokeWidth={2} color={COLORS.muted} />
-      <span className="mono">{node.name}</span>
-      <span className="tree-size mono">{formatBytes(node.size)}</span>
-    </TreeRow>
-  );
-}
-
-export function FileTree(props: {
-  sessionId: string;
-  files: FileNode[];
-  wsOpen: boolean;
-  onToggleWs: () => void;
-  label: string;
-  rootName: string;
-  badge: string;
-  defaultOpenDirectories: boolean;
-}) {
-  const { sessionId, files, wsOpen, onToggleWs, label, rootName, badge, defaultOpenDirectories } = props;
-
-  return (
-    <div className="file-tree">
-      <TreeRow>
-        <ChevronDown size={13} color={COLORS.faint} />
-        <Network size={14} strokeWidth={2} color={COLORS.ink} />
-        <span className="mono">{label || `~/sandbox/${sessionId.slice(0, 8)}`}</span>
-        <span className="tree-badge">{badge}</span>
-      </TreeRow>
-
-      <TreeRow depth={1} onClick={onToggleWs}>
-        {wsOpen ? <ChevronDown size={13} color={COLORS.faint} /> : <ChevronRight size={13} color={COLORS.faint} />}
-        {wsOpen ? (
-          <FolderOpen size={14} strokeWidth={2} color={COLORS.ink} />
-        ) : (
-          <Folder size={14} strokeWidth={2} color={COLORS.ink} />
-        )}
-        <span>{rootName}</span>
-      </TreeRow>
-
-      {wsOpen ? (
-        files.length ? (
-          files.map((node) => <FileNodeRow key={node.path} node={node} depth={2} defaultOpen={defaultOpenDirectories} />)
-        ) : (
-          <TreeRow depth={2}>
-            <span className="mono" style={{ color: COLORS.faint }}>
-              (empty)
-            </span>
-          </TreeRow>
-        )
-      ) : null}
-    </div>
-  );
 }
 
 function RepoSetupScreen(props: {
@@ -807,252 +346,6 @@ function RepoSetupScreen(props: {
         </button>
       </div>
     </>
-  );
-}
-
-function Greeting({ name, onChip }: { name: string; onChip: (prompt: string) => void }) {
-  return (
-    <div className="greeting">
-      <h1>Hi {name}! 👋</h1>
-      <p>How can I help you today?</p>
-      <div className="chip-list">
-        {CHIPS.map(([label, prompt]) => (
-          <button key={label} type="button" className="chip" onClick={() => onChip(prompt)}>
-            {label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function TypingDots() {
-  return (
-    <span className="typing-dots">
-      <span className="dot" />
-      <span className="dot" />
-      <span className="dot" />
-    </span>
-  );
-}
-
-function normalizeAssistantMarkdown(content: string) {
-  return content.replace(/<br\s*\/?>/gi, "\n");
-}
-
-export function Messages({
-  entries,
-  busy,
-  listRef
-}: {
-  entries: ChatEntry[];
-  busy: boolean;
-  listRef: RefObject<HTMLDivElement>;
-}) {
-  return (
-    <div ref={listRef} className="messages">
-      {entries.map((entry) => {
-        if (entry.type === "user") {
-          return (
-            <div key={entry.id} className="message-row message-row-user fade-in">
-              <div className="message-bubble message-bubble-user">
-                {entry.attachments?.map((attachment) =>
-                  attachment.dataUrl ? (
-                    <img
-                      key={`${entry.id}-${attachment.name}`}
-                      src={attachment.dataUrl}
-                      alt={attachment.name}
-                      className="message-image"
-                    />
-                  ) : (
-                    <div key={`${entry.id}-${attachment.name}`} className="message-attachment-placeholder">
-                      <ImageIcon size={14} strokeWidth={2} />
-                      <span>{attachment.name}</span>
-                    </div>
-                  )
-                )}
-                {entry.content ? <div>{entry.content}</div> : null}
-              </div>
-            </div>
-          );
-        }
-
-        if (entry.type !== "assistant") {
-          if (entry.type === "tool") {
-            return (
-              <details key={entry.id} className="message-row tool-event fade-in">
-                <summary className="assistant-event">
-                  <div className="assistant-response">
-                    <span className="bullet-mark">•</span>{" "}
-                    <span className="mono">{entry.tool.name}</span>
-                  </div>
-                </summary>
-                <div className="tool-event-body">
-                  <div className="tool-event-section">
-                    <span className="tool-event-label">Arguments</span>
-                    <pre>{entry.tool.args || "(none)"}</pre>
-                  </div>
-                  <div className="tool-event-section">
-                    <span className="tool-event-label">Result</span>
-                    <pre>{entry.tool.result || "(running)"}</pre>
-                  </div>
-                </div>
-              </details>
-            );
-          }
-          return null;
-        }
-
-        const empty = !entry.content && !entry.reasoning;
-        return (
-          <div key={entry.id} className="message-row message-row-assistant fade-in">
-            <div className="assistant-response">
-              {empty && busy ? (
-                <TypingDots />
-              ) : (
-                <>
-                  {entry.reasoning ? <div className="assistant-reasoning">{entry.reasoning}</div> : null}
-                  {entry.content ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeAssistantMarkdown(entry.content)}</ReactMarkdown>
-                  ) : null}
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ActivityPanel({ activities }: { activities: ChatActivity[] }) {
-  if (!activities.length) return null;
-  return (
-    <details className="activity-panel" open>
-      <summary className="activity-header">Activity</summary>
-      <div className="activity-list">
-        {activities.map((activity) => (
-          <div key={activity.id} className="activity-item">
-            <div className="activity-item-head">
-              <span className={`activity-status activity-status-${activity.status}`} />
-              <span>{activity.label}</span>
-            </div>
-            {activity.detail ? <pre className="activity-detail">{activity.detail}</pre> : null}
-          </div>
-        ))}
-      </div>
-    </details>
-  );
-}
-
-function InputBar(props: {
-  value: string;
-  disabled: boolean;
-  attachment: ChatAttachment | null;
-  models: ModelOption[];
-  selectedModelId?: string;
-  selectedReasoning?: string;
-  onChange: (value: string) => void;
-  onModelChange: (value: string) => void;
-  onReasoningChange: (value: string) => void;
-  onPickImage: () => void;
-  onClearImage: () => void;
-  onSend: () => void;
-}) {
-  const {
-    value,
-    disabled,
-    attachment,
-    models,
-    selectedModelId,
-    selectedReasoning,
-    onChange,
-    onModelChange,
-    onReasoningChange,
-    onPickImage,
-    onClearImage,
-    onSend
-  } = props;
-  const activeModel = models.find((model) => model.id === selectedModelId) ?? models[0];
-  const reasoningOptions = activeModel?.reasoningOptions ?? [];
-
-  return (
-    <div className="input-wrap">
-      {attachment ? (
-        <div className="composer-attachment">
-          {attachment.dataUrl ? <img src={attachment.dataUrl} alt={attachment.name} className="composer-attachment-thumb" /> : null}
-          <div className="composer-attachment-copy">
-            <span>{attachment.name}</span>
-            <span>{formatBytes(attachment.size)}</span>
-          </div>
-          <button type="button" className="composer-attachment-remove" onClick={onClearImage} aria-label="Remove image">
-            <X size={14} strokeWidth={2.4} />
-          </button>
-        </div>
-      ) : null}
-      <div className="input-bar">
-        <button type="button" onClick={onPickImage} disabled={disabled} aria-label="Add image">
-          <ImageIcon size={18} strokeWidth={2} color={COLORS.ink} />
-        </button>
-        <input
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !disabled && (value.trim() || attachment)) {
-              event.preventDefault();
-              onSend();
-            }
-          }}
-          enterKeyHint="send"
-          autoComplete="off"
-          autoCorrect="on"
-          autoCapitalize="sentences"
-          spellCheck
-          placeholder={attachment ? "Ask about this image..." : "Message Hugin…"}
-        />
-        <button
-          type="button"
-          onClick={onSend}
-          disabled={disabled || (!value.trim() && !attachment)}
-          aria-label="Send message"
-        >
-          <Send size={19} strokeWidth={2} color={COLORS.ink} />
-        </button>
-      </div>
-      <div className="composer-controls">
-        <label className="composer-select">
-          <span>Model</span>
-          <select
-            value={activeModel?.id ?? ""}
-            onChange={(event) => onModelChange(event.target.value)}
-            disabled={disabled || models.length === 0}
-          >
-            {models.length === 0 ? <option value="">No enabled models</option> : null}
-            {models.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="composer-select">
-          <span>Reasoning</span>
-          <select
-            value={reasoningOptions.length ? (selectedReasoning ?? defaultReasoningFor(activeModel) ?? reasoningOptions[0]) : ""}
-            onChange={(event) => onReasoningChange(event.target.value)}
-            disabled={disabled || reasoningOptions.length === 0}
-          >
-            {reasoningOptions.length === 0 ? <option value="">Unavailable</option> : null}
-            {reasoningOptions.map((option) => (
-              <option key={option} value={option}>
-                {labelReasoning(option)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <p className="input-note">Hugin can make mistakes. Please verify important information.</p>
-    </div>
   );
 }
 
@@ -1189,194 +482,6 @@ function AgentThreadsScreen(props: {
               >
                 {busyRunId === run.id || run.cancellationRequested ? "Cancelling…" : "Cancel"}
               </button>
-            </div>
-          ))
-        )}
-      </div>
-    </>
-  );
-}
-
-export function HistoryScreen(props: {
-  threads: ChatThread[];
-  onMenu: () => void;
-  onOpen: (thread: ChatThread) => void;
-  onDelete: (thread: ChatThread) => void;
-  onNew: () => void;
-  deletingId: string | null;
-  query: string;
-  onQuery: (value: string) => void;
-}) {
-  const { threads, onMenu, onOpen, onNew, onDelete, deletingId, query, onQuery } = props;
-  const lower = query.trim().toLowerCase();
-  const match = (thread: ChatThread) => !lower || thread.title.toLowerCase().includes(lower);
-  const now = Date.now();
-  const isToday = (iso: string) => now - new Date(iso).getTime() < 24 * 60 * 60 * 1000;
-
-  const matched = threads.filter(match);
-  const groups: Array<[string, ChatThread[]]> = [
-    ["TODAY", matched.filter((thread) => isToday(thread.updatedAt))],
-    ["EARLIER", matched.filter((thread) => !isToday(thread.updatedAt))]
-  ];
-  const anyResults = matched.length > 0;
-
-  return (
-    <>
-      <AppHeader onMenu={onMenu} />
-      <h1 className="screen-title">History</h1>
-
-      <div className="screen-pad">
-        <div className="search-bar">
-          <Search size={17} strokeWidth={2} color={COLORS.faint} />
-          <input
-            value={query}
-            onChange={(event) => onQuery(event.target.value)}
-            placeholder="Search history…"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-          />
-          <SlidersHorizontal size={16} strokeWidth={2} color={COLORS.faint} />
-        </div>
-      </div>
-
-      <div className="history-list">
-        {groups.map(([label, items], groupIndex) => {
-          if (!items.length) return null;
-          return (
-            <div key={label} className={groupIndex > 0 ? "history-group history-group-spaced" : "history-group"}>
-              <div className="history-group-label">{label}</div>
-              <div className="history-cards">
-                {items.map((thread) => (
-                  <div key={thread.id} className="history-card-row">
-                    <button type="button" className="history-card" onClick={() => onOpen(thread)}>
-                      <div className="history-card-icon">
-                        {thread.kind === "sandbox" ? (
-                          <Box size={17} strokeWidth={2} color={COLORS.ink} />
-                        ) : thread.kind === "github" ? (
-                          <GitBranch size={17} strokeWidth={2} color={COLORS.ink} />
-                        ) : (
-                          <MessageSquare size={17} strokeWidth={2} color={COLORS.ink} />
-                        )}
-                      </div>
-                      <div className="history-card-copy">
-                        <div className="history-card-title">{thread.title}</div>
-                        <div className="history-card-meta">
-                          {formatTimestamp(thread.updatedAt)} · {messageCount(thread)} messages
-                        </div>
-                      </div>
-                      <ChevronRight size={18} color={COLORS.faint} />
-                    </button>
-                    <button
-                      type="button"
-                      className="history-card-delete"
-                      aria-label={`Delete ${thread.title}`}
-                      title="Delete conversation"
-                      disabled={deletingId === thread.id}
-                      onClick={() => onDelete(thread)}
-                    >
-                      <Trash2 size={17} strokeWidth={2} color={COLORS.danger} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-        {!anyResults ? (
-          <p className="history-empty">
-            {threads.length ? `No sessions match “${query.trim()}”.` : "No conversations yet."}
-          </p>
-        ) : null}
-      </div>
-
-      <div className="screen-pad history-footer">
-        <button type="button" className="primary-button" onClick={onNew}>
-          <Plus size={18} strokeWidth={2.4} /> New chat
-        </button>
-      </div>
-    </>
-  );
-}
-
-function IntegrationsScreen(props: {
-  integrations: Integration[];
-  loading: boolean;
-  error: string | null;
-  busyId: string | null;
-  onBack: () => void;
-  onToggle: (integration: Integration) => void;
-  onReconnect: (integration: Integration) => void;
-}) {
-  const { integrations, loading, error, busyId, onBack, onToggle, onReconnect } = props;
-
-  return (
-    <>
-      <div className="back-row">
-        <button type="button" className="icon-button back-button" onClick={onBack} aria-label="Back">
-          <ArrowLeft size={22} strokeWidth={2} />
-        </button>
-      </div>
-
-      <div className="screen-pad">
-        <h1 className="screen-title integration-title">Integrations</h1>
-        <p className="integration-subtitle">Manage your connected services. Connected tools are made available to Hugin.</p>
-        {loading ? <p className="integration-subtitle">Refreshing integration status…</p> : null}
-        {!loading && error ? <p className="login-error">{error}</p> : null}
-      </div>
-
-      <div className="integrations-list">
-        <div className="history-group-label">SERVICES</div>
-        {integrations.length === 0 ? (
-          <p className="history-empty">{loading ? "Refreshing integrations…" : "No integrations available."}</p>
-        ) : (
-          integrations.map((integration) => (
-            <div key={integration.id} className="integration-card">
-              <Puzzle size={26} strokeWidth={1.7} color={COLORS.ink} />
-              <div className="integration-copy">
-                <div className="integration-name-row">
-                  <span className="integration-name">{integration.name}</span>
-                  {integration.connected ? <span className="integration-badge">CONNECTED</span> : null}
-                </div>
-                <div className="integration-meta">{integration.description}</div>
-              </div>
-              <div className="integration-action">
-                {integration.reconnectable ? (
-                  integration.connected ? (
-                    <>
-                      <button
-                        type="button"
-                        className="icon-button refresh-button"
-                        disabled={busyId === integration.id}
-                        onClick={() => onReconnect(integration)}
-                        aria-label={`Refresh ${integration.name} connection`}
-                        title="Reconnect to refresh permissions"
-                      >
-                        <RefreshCw size={18} strokeWidth={2} />
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        disabled={busyId === integration.id}
-                        onClick={() => onToggle(integration)}
-                      >
-                        {busyId === integration.id ? "…" : "Disconnect"}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      className="dark-button"
-                      disabled={busyId === integration.id}
-                      onClick={() => onToggle(integration)}
-                    >
-                      {busyId === integration.id ? "Connecting…" : "Connect"}
-                    </button>
-                  )
-                ) : (
-                  <span className="integration-meta">{integration.connected ? "Active" : "Off"}</span>
-                )}
-              </div>
             </div>
           ))
         )}
@@ -1560,14 +665,12 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("login");
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const [state, setState] = useState<AppState>(() => loadAppState());
-  const [thread, setThread] = useState<ChatThread>(() => createThread("chat"));
-  const stateRef = useRef(state);
-  const threadRef = useRef(thread);
+  const store = useChatSessionStore(session?.token ?? null);
+  const thread = store.activeThread;
 
   const [draft, setDraft] = useState("");
   const [draftAttachment, setDraftAttachment] = useState<ChatAttachment | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [reportingBug, setReportingBug] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bugReportNotice, setBugReportNotice] = useState<string | null>(null);
@@ -1605,57 +708,24 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const integrationsVisibleRef = useRef(false);
+  const bootstrappedRef = useRef(false);
 
   const listRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const streamRef = useRef<{ threadId: string; close: () => void } | null>(null);
 
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+  const busy = store.activeBusy || workspaceBusy;
 
-  useEffect(() => {
-    threadRef.current = thread;
-  }, [thread]);
+  // Mirror the active sandbox id so file refreshes can fall back to it without depending on the
+  // store object identity (which would otherwise re-run the file-loading effect every render).
+  const activeSandboxRef = useRef<string | undefined>(thread?.sandboxId);
+  activeSandboxRef.current = thread?.sandboxId;
 
   useEffect(() => {
     integrationsVisibleRef.current = screen === "integrations";
   }, [screen]);
 
-  const upsertThread = useCallback((nextThread: ChatThread) => {
-    setState((prev) => {
-      const exists = prev.threads.some((existing) => existing.id === nextThread.id);
-      const threads = exists
-        ? prev.threads.map((existing) => (existing.id === nextThread.id ? nextThread : existing))
-        : [nextThread, ...prev.threads];
-      const next = { ...prev, threads };
-      stateRef.current = next;
-      saveAppState(next);
-      return next;
-    });
-  }, []);
-
-  const applyEventsToThread = useCallback((threadId: string, events: ChatEvent[], replace = false) => {
-    const target = stateRef.current.threads.find((candidate) => candidate.id === threadId)
-      ?? (threadRef.current.id === threadId ? threadRef.current : null);
-    if (!target) return;
-    const start = replace
-      ? { ...target, entries: [], activities: [], lastSeq: 0 }
-      : target;
-    const nextThread = events.reduce((current, event) => reduceChatEvent(current, event), start);
-    upsertThread(nextThread);
-    if (threadRef.current.id === threadId) {
-      setThread(nextThread);
-      threadRef.current = nextThread;
-      if (nextThread.entries.some((entry) => entry.type === "assistant" && !entry.completedAt)) {
-        setBusy(true);
-      } else {
-        setBusy(false);
-      }
-    }
-  }, [upsertThread]);
-
-  // Validate any stored session on load so a refresh keeps the user signed in.
+  // Validate any stored session on load so a refresh keeps the user signed in and re-opens the
+  // last active thread, rebuilt from backend events by the store.
   useEffect(() => {
     const existing = loadAuthSession();
     if (!existing) {
@@ -1664,18 +734,31 @@ export default function App() {
     }
     fetchCurrentUser(existing.token)
       .then((validated) => {
-        const restored = restorePreferredThread(stateRef.current.threads);
-        const restoredThread = restored?.thread ?? createThread("chat");
         saveAuthSession(validated);
         setSession(validated);
-        setThread(restoredThread);
-        threadRef.current = restoredThread;
-        setScreen(readLaunchScreen() === "integrations" ? "integrations" : (restored?.screen ?? screenForThread(restoredThread)));
         fetchGitHubStatus(validated.token).then((status) => setGitHubStatus(status)).catch(() => setGitHubStatus(null));
       })
       .catch(() => saveAuthSession(null))
       .finally(() => setBooting(false));
   }, []);
+
+  // Once authenticated, activate a thread: the restored one from the local index, or a fresh chat.
+  // Runs once per session; sign-in performs its own activation and sets the guard.
+  useEffect(() => {
+    if (!session || bootstrappedRef.current) return;
+    bootstrappedRef.current = true;
+    const restored = restorePreferredThread(store.threads);
+    const launch = readLaunchScreen();
+    if (restored) {
+      store.switchThread(restored.thread);
+      setScreen(launch === "integrations" ? "integrations" : restored.screen);
+    } else {
+      const fresh = createThread("chat");
+      store.switchThread(fresh);
+      setScreen(launch === "integrations" ? "integrations" : "purechat");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
   const loadIntegrations = useCallback(
     async (options?: { clearOnFailure?: boolean; silent?: boolean }) => {
@@ -1745,83 +828,14 @@ export default function App() {
       .catch(() => setGitHubStatus(null));
   }, [session]);
 
-  const hydrateThreadFromEvents = useCallback(async (candidate: ChatThread, afterSeq?: number) => {
-    if (!session) return;
-    try {
-      const events = await fetchChatSessionEvents(session.token, candidate.id, afterSeq ?? 0);
-      if (!events.length && afterSeq == null) {
-        if (candidate.entries.length || (candidate.activities?.length ?? 0)) {
-          // The server has no persisted events for this session yet (e.g. a thread restored
-          // from local storage whose first message was never accepted). Keep the local
-          // transcript instead of wiping it; a real server-side history will replace it.
-          return;
-        }
-        const emptyThread = { ...candidate, entries: [], activities: [], lastSeq: 0 };
-        upsertThread(emptyThread);
-        if (threadRef.current.id === candidate.id) {
-          setThread(emptyThread);
-          threadRef.current = emptyThread;
-          setBusy(false);
-        }
-        return;
-      }
-      applyEventsToThread(candidate.id, events, afterSeq == null);
-    } catch (error) {
-      // Leave local state as-is on transient sync failures, but surface the cause for debugging.
-      console.warn("Failed to hydrate chat thread from events", error);
-    }
-  }, [session, applyEventsToThread, upsertThread]);
-
-  const ensureStream = useCallback((candidate: ChatThread, forceRestart = false) => {
-    if (!session) return;
-    if (!forceRestart && streamRef.current?.threadId === candidate.id) {
-      return;
-    }
-    streamRef.current?.close();
-    streamRef.current = {
-      threadId: candidate.id,
-      close: openChatEventStream(session.token, candidate.id, candidate.lastSeq ?? 0, {
-        onEvent: (event) => applyEventsToThread(candidate.id, [event]),
-        onStatus: (status) => {
-          const target = stateRef.current.threads.find((item) => item.id === candidate.id)
-            ?? (threadRef.current.id === candidate.id ? threadRef.current : null);
-          if (!target) return;
-          const connectionStatus: ChatThread["connectionStatus"] = status === "closed" ? "idle" : status;
-          const nextThread: ChatThread = {
-            ...target,
-            connectionStatus
-          };
-          upsertThread(nextThread);
-          if (threadRef.current.id === candidate.id) {
-            setThread(nextThread);
-            threadRef.current = nextThread;
-          }
-        },
-        onError: () => {
-          const target = stateRef.current.threads.find((item) => item.id === candidate.id)
-            ?? (threadRef.current.id === candidate.id ? threadRef.current : null);
-          if (!target) return;
-          const nextThread: ChatThread = { ...target, connectionStatus: "error" };
-          upsertThread(nextThread);
-          if (threadRef.current.id === candidate.id) {
-            setThread(nextThread);
-            threadRef.current = nextThread;
-          }
-        }
-      }).close
-    };
-  }, [session, applyEventsToThread, upsertThread]);
-
-  useEffect(() => {
-    if (!session) return;
-    void hydrateThreadFromEvents(threadRef.current).then(() => ensureStream(threadRef.current));
-  }, [session, thread.id, hydrateThreadFromEvents, ensureStream]);
-
+  // Keep scrolled to the latest message as the transcript grows.
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [thread.entries]);
+  }, [thread?.entries]);
 
+  // Default the active thread's model/reasoning to an enabled model once models load.
   useEffect(() => {
+    if (!thread) return;
     const enabled = models.filter((model) => model.enabled);
     if (!enabled.length) return;
     const selected = enabled.find((model) => model.id === thread.modelId) ?? enabled[0];
@@ -1829,51 +843,12 @@ export default function App() {
       ? thread.reasoningEffort
       : defaultReasoningFor(selected);
     if (thread.modelId === selected.id && thread.reasoningEffort === nextReasoning) return;
-    setThread((current) => ({
-      ...current,
-      modelId: selected.id,
-      reasoningEffort: nextReasoning
-    }));
-  }, [models, thread.modelId, thread.reasoningEffort]);
-
-  useEffect(() => {
-    upsertThread(thread);
-  }, [thread, upsertThread]);
-
-  useEffect(() => {
-    if (!session) return;
-    if (screen === "chat" || screen === "purechat") {
-      saveActiveThreadRestore(thread.id, screen);
-      return;
-    }
-    if (screen === "login") {
-      clearActiveThreadRestore();
-    }
-  }, [session, thread.id, screen]);
-
-  useEffect(() => {
-    if (!session) return;
-    const handleVisibility = () => {
-      if (document.visibilityState !== "visible") return;
-      const current = threadRef.current;
-      void hydrateThreadFromEvents(current, current.lastSeq ?? 0).then(() => ensureStream(threadRef.current, true));
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleVisibility);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleVisibility);
-    };
-  }, [session, hydrateThreadFromEvents, ensureStream]);
-
-  useEffect(() => () => {
-    streamRef.current?.close();
-    streamRef.current = null;
-  }, []);
+    store.patchThread(thread.id, { modelId: selected.id, reasoningEffort: nextReasoning });
+  }, [models, thread, store]);
 
   const refreshFiles = useCallback(
     async (sandboxId?: string) => {
-      const id = sandboxId ?? threadRef.current.sandboxId;
+      const id = sandboxId ?? activeSandboxRef.current;
       if (!id || !session) return;
       try {
         setFiles(await fetchSandboxFiles(session.token, id));
@@ -1885,23 +860,22 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!session || screen !== "chat" || !thread.sandboxId) {
+    if (!session || screen !== "chat" || !thread?.sandboxId) {
       setFiles([]);
       return;
     }
     setFiles([]);
     void refreshFiles(thread.sandboxId);
-  }, [session, screen, thread.sandboxId, refreshFiles]);
+  }, [session, screen, thread?.sandboxId, refreshFiles]);
 
-  // Refresh the sandbox file tree whenever a run finishes (busy true -> false), so
-  // files the agent created/edited during the run are reflected. The refresh in
-  // send()'s finally block only fires as the stream opens, before any tools run.
+  // Refresh the sandbox file tree whenever a run finishes (busy true -> false), so files the agent
+  // created/edited during the run are reflected.
   const prevBusyRef = useRef(busy);
   useEffect(() => {
     const justFinished = prevBusyRef.current && !busy;
     prevBusyRef.current = busy;
-    if (justFinished && screen === "chat" && threadRef.current.sandboxId) {
-      void refreshFiles(threadRef.current.sandboxId);
+    if (justFinished && screen === "chat" && activeSandboxRef.current) {
+      void refreshFiles(activeSandboxRef.current);
     }
   }, [busy, screen, refreshFiles]);
 
@@ -1912,8 +886,10 @@ export default function App() {
     try {
       const validated = await loginRequest(username.trim(), password);
       saveAuthSession(validated);
+      bootstrappedRef.current = true;
       setSession(validated);
-      setThread(createThread("chat"));
+      const fresh = createThread("chat");
+      store.switchThread(fresh);
       setScreen(readLaunchScreen() === "integrations" ? "integrations" : "purechat");
       fetchModels(validated.token).then((next) => setModels(next)).catch(() => setModels([]));
       fetchGitHubStatus(validated.token).then((status) => setGitHubStatus(status)).catch(() => setGitHubStatus(null));
@@ -1923,10 +899,11 @@ export default function App() {
     } finally {
       setSigningIn(false);
     }
-  }, [username, password, signingIn]);
+  }, [username, password, signingIn, store]);
 
   const startChat = useCallback(() => {
-    setThread(createThread("chat"));
+    const fresh = createThread("chat");
+    store.switchThread(fresh);
     setFiles([]);
     setWsOpen(true);
     setDraftAttachment(null);
@@ -1935,7 +912,7 @@ export default function App() {
     setHistoryQuery("");
     setScreen("purechat");
     setMenuOpen(false);
-  }, []);
+  }, [store]);
 
   const startSandbox = useCallback(async () => {
     if (!session) return;
@@ -1946,25 +923,24 @@ export default function App() {
     setFiles([]);
     setWsOpen(true);
     setDraftAttachment(null);
-    setBusy(true);
+    setWorkspaceBusy(true);
     try {
       const sandbox = await createSandbox(session.token);
-      setThread(createThread("sandbox", { sandboxId: sandbox.id }));
+      store.switchThread(createThread("sandbox", { sandboxId: sandbox.id }));
       setScreen("chat");
       void refreshFiles(sandbox.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start a sandbox.");
-      setThread(createThread("sandbox"));
+      store.switchThread(createThread("sandbox"));
       setScreen("chat");
     } finally {
-      setBusy(false);
+      setWorkspaceBusy(false);
     }
-  }, [session, refreshFiles]);
+  }, [session, store, refreshFiles]);
 
   const openHistory = useCallback(
     (item: ChatThread) => {
-      setThread(item);
-      void hydrateThreadFromEvents(item).then(() => ensureStream(item));
+      store.switchThread(item);
       setDraftAttachment(null);
       setBugReportNotice(null);
       setError(null);
@@ -1983,7 +959,7 @@ export default function App() {
         setScreen("purechat");
       }
     },
-    [refreshFiles, hydrateThreadFromEvents, ensureStream]
+    [store, refreshFiles]
   );
 
   const deleteThread = useCallback(
@@ -2005,19 +981,12 @@ export default function App() {
           await deleteThreadHistory(session.token, item.id);
         }
 
-        setState((prev) => {
-          const next = removeThread(prev, item.id);
-          stateRef.current = next;
-          saveAppState(next);
-          return next;
-        });
-
-        // If the deleted conversation is the one currently open, drop back to a fresh chat.
-        if (threadRef.current.id === item.id) {
-          const fresh = createThread("chat");
-          setThread(fresh);
-          threadRef.current = fresh;
+        const wasActive = store.activeThreadId === item.id;
+        store.removeThread(item.id);
+        if (wasActive) {
+          store.switchThread(createThread("chat"));
           setFiles([]);
+          setScreen("purechat");
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not delete this conversation.");
@@ -2025,7 +994,7 @@ export default function App() {
         setDeletingThreadId(null);
       }
     },
-    [deletingThreadId, session]
+    [deletingThreadId, session, store]
   );
 
   const openIntegrations = useCallback(async () => {
@@ -2153,7 +1122,7 @@ export default function App() {
         setIntegrationBusy(null);
       }
     },
-    [session]
+    [session, loadIntegrations, pollGoogleIntegrationRefresh]
   );
 
   const reconnectIntegration = useCallback(
@@ -2190,84 +1159,78 @@ export default function App() {
         setIntegrationBusy(null);
       }
     },
-    [session]
+    [session, loadIntegrations, pollGoogleIntegrationRefresh]
   );
 
   const send = useCallback(
     async (textArg?: string) => {
       const text = (textArg ?? draft).trim();
       const attachment = draftAttachment;
-      if ((!text && !attachment) || busy || !session) return;
+      const current = store.activeThread;
+      if ((!text && !attachment) || busy || !session || !current) return;
       const enabledModels = models.filter((model) => model.enabled);
-      const selectedModel = enabledModels.find((model) => model.id === threadRef.current.modelId) ?? enabledModels[0];
+      const selectedModel = enabledModels.find((model) => model.id === current.modelId) ?? enabledModels[0];
       if (!selectedModel) {
         setError("Enable at least one model in Model settings before sending a message.");
         return;
       }
-      const selectedReasoning = selectedModel.reasoningOptions.includes(threadRef.current.reasoningEffort ?? "")
-        ? threadRef.current.reasoningEffort
+      const selectedReasoning = selectedModel.reasoningOptions.includes(current.reasoningEffort ?? "")
+        ? current.reasoningEffort
         : defaultReasoningFor(selectedModel);
 
-      let sandboxId = threadRef.current.sandboxId;
+      let sandboxId = current.sandboxId;
       if (!sandboxId && promptNeedsWorkspace(text)) {
-        setBusy(true);
+        setWorkspaceBusy(true);
         setError(null);
         try {
           const sandbox = await createSandbox(session.token);
           sandboxId = sandbox.id;
-          setThread((current) => ({ ...current, kind: current.kind === "github" ? "github" : "sandbox", sandboxId: sandbox.id }));
+          store.patchThread(current.id, { kind: current.kind === "github" ? "github" : "sandbox", sandboxId });
           setScreen("chat");
           setWsOpen(true);
           void refreshFiles(sandbox.id);
         } catch (e) {
-          setBusy(false);
+          setWorkspaceBusy(false);
           setError(e instanceof Error ? e.message : "Could not start a sandbox for this task.");
           return;
         }
+        setWorkspaceBusy(false);
       }
 
       setDraft("");
       setDraftAttachment(null);
-      setBusy(true);
       setBugReportNotice(null);
       setError(null);
 
-      const currentThread = threadRef.current;
-      const isFirst = !currentThread.entries.some((entry) => entry.type === "user");
-      const nextThread: ChatThread = {
-        ...currentThread,
-        ...(sandboxId ? { kind: currentThread.kind === "github" ? "github" as const : "sandbox" as const, sandboxId } : {}),
+      const isFirst = !current.entries.some((entry) => entry.type === "user");
+      const title = isFirst && current.kind !== "github"
+        ? getThreadTitle(text || attachment?.name || "Image attachment")
+        : current.title;
+      store.patchThread(current.id, {
+        ...(sandboxId ? { kind: current.kind === "github" ? "github" as const : "sandbox" as const, sandboxId } : {}),
         modelId: selectedModel.id,
         reasoningEffort: selectedReasoning,
-        title: isFirst && currentThread.kind !== "github"
-          ? getThreadTitle(text || attachment?.name || "Image attachment")
-          : currentThread.title,
+        title,
         updatedAt: nowIso()
-      };
-      setThread(nextThread);
-      threadRef.current = nextThread;
-      upsertThread(nextThread);
+      });
 
       try {
-        await sendChatMessage(session.token, nextThread.id, {
+        await store.sendMessage(current.id, {
           content: text,
-          mode: nextThread.kind === "github" ? "GITHUB" : sandboxId ? "SANDBOX" : "CHAT",
-          title: nextThread.title,
+          mode: current.kind === "github" ? "GITHUB" : sandboxId ? "SANDBOX" : "CHAT",
+          title,
           attachments: attachment ? [attachment] : undefined,
           model: selectedModel.id,
           reasoningEffort: selectedReasoning,
           sandboxId
         });
-        await hydrateThreadFromEvents(nextThread, currentThread.lastSeq ?? 0);
-        ensureStream(nextThread);
       } catch (e) {
-        setBusy(false);
         setError(e instanceof Error ? e.message : "The agent request failed.");
       } finally {
         if (sandboxId) void refreshFiles(sandboxId);
       }
     },
-    [draft, draftAttachment, busy, session, refreshFiles, models, upsertThread, hydrateThreadFromEvents, ensureStream]
+    [draft, draftAttachment, busy, session, refreshFiles, models, store]
   );
 
   useEffect(() => {
@@ -2278,11 +1241,12 @@ export default function App() {
 
   const saveBugReport = useCallback(async () => {
     if (!session || reportingBug) return;
+    const activeThread = store.activeThread;
+    if (!activeThread) return;
     setReportingBug(true);
     setError(null);
     setBugReportNotice(null);
     try {
-      const activeThread = threadRef.current;
       const response = await reportBug(session.token, {
         sessionId: activeThread.id,
         title: activeThread.title,
@@ -2305,7 +1269,7 @@ export default function App() {
     } finally {
       setReportingBug(false);
     }
-  }, [session, reportingBug, screen, busy]);
+  }, [session, reportingBug, screen, busy, store]);
 
   const pickImage = useCallback(() => {
     imageInputRef.current?.click();
@@ -2439,7 +1403,7 @@ export default function App() {
     const repo = repoOptions.find((item) => item.fullName === selectedRepo);
     if (!repo) return;
     const selectedBugReport = bugReports.find((item) => item.id === selectedBugReportId);
-    setBusy(true);
+    setWorkspaceBusy(true);
     setError(null);
     try {
       const sandbox = await createGitHubSandbox(session.token, selectedRepo, selectedBranch, selectedBugReportId || undefined);
@@ -2447,15 +1411,12 @@ export default function App() {
       setWsOpen(false);
       setDraft("");
       setDraftAttachment(null);
-      const nextThread = createThread("github", {
+      store.switchThread(createThread("github", {
         sandboxId: sandbox.id,
         repoFullName: repo.fullName,
         repoName: repo.name,
         branchName: selectedBranch
-      });
-      setThread(nextThread);
-      threadRef.current = nextThread;
-      upsertThread(nextThread);
+      }));
       setScreen("chat");
       if (selectedBugReport) {
         setPendingAutoPrompt(buildGitHubBugReportPrompt(selectedBugReport));
@@ -2464,14 +1425,14 @@ export default function App() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start a GitHub repo sandbox.");
     } finally {
-      setBusy(false);
+      setWorkspaceBusy(false);
     }
-  }, [session, selectedRepo, selectedBranch, selectedBugReportId, repoOptions, bugReports, refreshFiles, upsertThread]);
+  }, [session, selectedRepo, selectedBranch, selectedBugReportId, repoOptions, bugReports, refreshFiles, store]);
 
   const enabledModels = models.filter((model) => model.enabled);
-  const activeModel = enabledModels.find((model) => model.id === thread.modelId) ?? enabledModels[0];
-  const activeReasoning = activeModel?.reasoningOptions.includes(thread.reasoningEffort ?? "")
-    ? thread.reasoningEffort
+  const activeModel = enabledModels.find((model) => model.id === thread?.modelId) ?? enabledModels[0];
+  const activeReasoning = activeModel?.reasoningOptions.includes(thread?.reasoningEffort ?? "")
+    ? thread?.reasoningEffort
     : defaultReasoningFor(activeModel);
 
   if (booting) {
@@ -2488,7 +1449,6 @@ export default function App() {
     );
   }
 
-  const fresh = thread.entries.length === 0;
   const name = session?.username ?? "there";
 
   return (
@@ -2521,8 +1481,8 @@ export default function App() {
               className="visually-hidden"
               tabIndex={-1}
             />
-            {screen === "chat" ? (
-              <FileTree
+            {screen === "chat" && thread ? (
+              <WorkspacePanel
                 sessionId={thread.id}
                 files={files}
                 wsOpen={wsOpen}
@@ -2539,42 +1499,32 @@ export default function App() {
             ) : null}
             {error ? <p className="login-error screen-pad">{error}</p> : null}
             {bugReportNotice ? <p className="screen-note screen-pad">{bugReportNotice}</p> : null}
-            {fresh ? (
-              <div className="chat-body">
-                <Greeting name={name} onChip={send} />
-              </div>
-            ) : (
-              <div className="chat-stack">
-                <Messages entries={thread.entries} busy={busy} listRef={listRef} />
-                <ActivityPanel activities={thread.activities ?? []} />
-              </div>
-            )}
-            <InputBar
-              value={draft}
-              disabled={busy || enabledModels.length === 0}
-              attachment={draftAttachment}
-              models={enabledModels}
-              selectedModelId={activeModel?.id}
-              selectedReasoning={activeReasoning}
-              onChange={setDraft}
-              onModelChange={(modelId) => {
-                const model = enabledModels.find((item) => item.id === modelId);
-                setThread((current) => ({
-                  ...current,
-                  modelId,
-                  reasoningEffort: defaultReasoningFor(model)
-                }));
-              }}
-              onReasoningChange={(reasoningEffort) => {
-                setThread((current) => ({ ...current, reasoningEffort }));
-              }}
-              onPickImage={pickImage}
-              onClearImage={clearImage}
-              onSend={() => send()}
-            />
+            {thread ? (
+              <ChatPanel
+                name={name}
+                entries={thread.entries}
+                activities={thread.activities ?? []}
+                busy={busy}
+                listRef={listRef}
+                draft={draft}
+                attachment={draftAttachment}
+                models={enabledModels}
+                selectedModelId={activeModel?.id}
+                selectedReasoning={activeReasoning}
+                onDraftChange={setDraft}
+                onModelChange={(modelId) => {
+                  const model = enabledModels.find((item) => item.id === modelId);
+                  store.patchThread(thread.id, { modelId, reasoningEffort: defaultReasoningFor(model) });
+                }}
+                onReasoningChange={(reasoningEffort) => store.patchThread(thread.id, { reasoningEffort })}
+                onPickImage={pickImage}
+                onClearImage={clearImage}
+                onSend={send}
+              />
+            ) : null}
           </>
         ) : screen === "integrations" ? (
-          <IntegrationsScreen
+          <IntegrationPanel
             integrations={integrations}
             loading={integrationsLoading}
             error={integrationsError}
@@ -2585,7 +1535,7 @@ export default function App() {
           />
         ) : screen === "github-repo" ? (
           <RepoSetupScreen
-            busy={busy}
+            busy={workspaceBusy}
             loadingRepos={loadingRepos}
             loadingBranches={loadingBranches}
             loadingBugReports={loadingBugReports}
@@ -2613,15 +1563,15 @@ export default function App() {
         ) : screen === "agent-threads" ? (
           <AgentThreadsScreen
             runs={agentRuns}
-            threads={state.threads}
+            threads={store.threads}
             busyRunId={agentRunBusyId}
             loading={agentRunsLoading}
             onBack={() => setScreen(returnScreen)}
             onCancel={cancelRun}
           />
         ) : (
-          <HistoryScreen
-            threads={state.threads}
+          <HistoryPanel
+            threads={store.historyThreads}
             onMenu={() => setMenuOpen(true)}
             onOpen={openHistory}
             onDelete={deleteThread}

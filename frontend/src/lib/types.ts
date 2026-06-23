@@ -29,6 +29,12 @@ export type ChatEntry =
       content: string;
       attachments?: ChatAttachment[];
       createdAt: string;
+      /**
+       * Marks a client-generated optimistic draft that has not yet been confirmed by a
+       * backend `user_message_created` event. This is the only place a frontend id is allowed
+       * to back a chat message; it is reconciled to the backend `messageId` on confirmation.
+       */
+      pending?: boolean;
     }
   | {
       id: string;
@@ -57,6 +63,19 @@ export type ChatActivity = {
 
 export type ChatKind = "chat" | "sandbox" | "github";
 
+export type ConnectionStatus = "idle" | "connecting" | "open" | "reconnecting" | "error";
+
+export type RunStatus = "queued" | "running" | "cancelling" | "completed" | "failed";
+
+/** Per-thread run state, derived entirely from backend run_* events plus optimistic send. */
+export type ChatRun = {
+  id: string | null;
+  status: RunStatus;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+};
+
 export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -79,7 +98,15 @@ export type ChatThread = {
   entries: ChatEntry[];
   activities?: ChatActivity[];
   lastSeq?: number;
-  connectionStatus?: "idle" | "connecting" | "open" | "reconnecting" | "error";
+  /** Active/last run for this thread. Drives send/stop/loading state. */
+  run?: ChatRun | null;
+  connectionStatus?: ConnectionStatus;
+  /**
+   * True once the thread has accepted at least one message and therefore has server-side history.
+   * Drives whether the thread appears in History; transient empty "New chat" drafts stay false so
+   * they don't accumulate as clutter across reloads.
+   */
+  hasHistory?: boolean;
 };
 
 export type AppState = {

@@ -16,6 +16,7 @@ function baseThread(): ChatThread {
     updatedAt: "2026-06-20T00:00:00.000Z",
     entries: [],
     activities: [],
+    run: null,
     lastSeq: 0
   };
 }
@@ -35,7 +36,7 @@ function event(overrides: Partial<ChatEvent> & Pick<ChatEvent, "id" | "seq" | "t
 }
 
 describe("chat session stream replay", () => {
-  it("rebuilds assistant reasoning and inline tool events from persisted chat events", () => {
+  it("projects assistant reasoning into chat and tool events into activity", () => {
     const rebuilt = [
       event({
         id: "evt-1",
@@ -79,17 +80,20 @@ describe("chat session stream replay", () => {
       })
     ].reduce(reduceChatEvent, baseThread());
 
-    expect(rebuilt.entries.map((entry) => entry.type)).toEqual(["assistant", "tool"]);
+    // The main chat carries only the assistant message; tool calls live in the activity projection.
+    expect(rebuilt.entries.map((entry) => entry.type)).toEqual(["assistant"]);
     const assistant = rebuilt.entries[0];
     expect(assistant.type === "assistant" ? assistant.reasoning : "").toBe("Thinking...");
-    const tool = rebuilt.entries[1];
-    expect(tool.type === "tool" ? tool.tool.callId : "").toBe("call-1");
-    expect(tool.type === "tool" ? tool.tool.result : "").toBe("# Hugin");
+    expect((rebuilt.activities ?? []).map((activity) => activity.type)).toEqual([
+      "tool_call_started",
+      "tool_call_completed"
+    ]);
 
     render(<Messages entries={rebuilt.entries} busy={false} listRef={{ current: null }} />);
-    expect(screen.getByText("read_file")).toBeTruthy();
     expect(screen.getByText("Thinking...")).toBeTruthy();
     expect(screen.getByText("Updated the file.")).toBeTruthy();
+    // The tool name does not leak into the main chat transcript.
+    expect(screen.queryByText("read_file")).toBeNull();
   });
 
   it("restores the previously active thread from local storage after a reload", () => {
@@ -119,37 +123,5 @@ describe("chat session stream replay", () => {
 
     expect(restored?.thread.id).toBe("thread-2");
     expect(restored?.screen).toBe("chat");
-  });
-
-  it("matches legacy tool completion events to the most recent unfinished tool entry", () => {
-    const rebuilt = [
-      event({
-        id: "evt-1",
-        seq: 1,
-        type: "tool_call_started",
-        metadata: { name: "read_file", args: "{\"path\":\"README.md\"}" },
-        createdAt: "2026-06-20T00:00:01.000Z"
-      }),
-      event({
-        id: "evt-2",
-        seq: 2,
-        type: "tool_call_started",
-        metadata: { name: "read_file", args: "{\"path\":\"frontend/src/App.tsx\"}" },
-        createdAt: "2026-06-20T00:00:02.000Z"
-      }),
-      event({
-        id: "evt-3",
-        seq: 3,
-        type: "tool_call_completed",
-        metadata: { name: "read_file", result: "App contents" },
-        createdAt: "2026-06-20T00:00:03.000Z"
-      })
-    ].reduce(reduceChatEvent, baseThread());
-
-    expect(rebuilt.entries).toHaveLength(2);
-    const first = rebuilt.entries[0];
-    const second = rebuilt.entries[1];
-    expect(first.type === "tool" ? first.tool.result : "").toBe("");
-    expect(second.type === "tool" ? second.tool.result : "").toBe("App contents");
   });
 });

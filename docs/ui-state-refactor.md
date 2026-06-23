@@ -165,3 +165,58 @@ App
 | `run_started` | No | Yes | - | - |
 | `run_completed` | No | Yes | - | - |
 | `run_error` | No | Yes | - | `message` |
+---
+
+# Phase 2 — Implemented Architecture
+
+Phase 2 makes the React UI a deterministic projection of the backend chat event log. It is a
+frontend-only change; no backend APIs were modified.
+
+## Module map
+
+| Concern | Module |
+|---|---|
+| Pure event → projection reducer | `frontend/src/stores/chatEventReducer.ts` |
+| Chat session store (threads, active thread, run state, SSE lifecycle) | `frontend/src/stores/chatSessionStore.ts` |
+| Main chat transcript (user + assistant only) | `frontend/src/components/chat/MessageList.tsx` |
+| Activity projection (tools, runs, low-level status) | `frontend/src/components/chat/ActivityPanel.tsx` |
+| Composer (input, model/reasoning, attachments) | `frontend/src/components/chat/Composer.tsx` |
+| Chat surface composition | `frontend/src/components/chat/ChatPanel.tsx` |
+| Workspace file tree | `frontend/src/components/WorkspacePanel.tsx` |
+| History list | `frontend/src/components/HistoryPanel.tsx` |
+| Integrations | `frontend/src/components/IntegrationPanel.tsx` |
+| Header | `frontend/src/components/AppHeader.tsx` |
+
+`App.tsx` now composes layout, menus, mode selection, models, sandboxes, GitHub setup, integrations,
+and the top-level panels. All chat-engine logic moved into the store.
+
+## Source of truth & idempotency
+
+- The ordered backend event list is the single source of truth. `reduceChatEvent(thread, event)` is
+  pure, deterministic, and idempotent: it dedups by the monotonic per-session `seq` and merges
+  structural events by `messageId`/`callId`. The same ordered list produces the same projection
+  whether it arrives from `GET /events` or live SSE (verified by tests).
+- Streaming assistant deltas merge into one assistant message.
+- Run lifecycle (`run_started`/`run_completed`/`run_error`) updates `thread.run` without deleting
+  messages; send/stop/loading derive from `isThreadBusy(thread)`.
+
+## Chat vs. activity boundary
+
+`isActivityEvent(type)` in `chatEventReducer.ts` is the single documented classifier seam. Today the
+backend emits tool output only via `tool_call_*` events, so the rule is "anything that is not a
+user/assistant message is activity." If a backend ever encodes tool output as an `assistant_*`
+message, extend this classifier — it is the one place that workaround belongs.
+
+## SSE / reconnect / refresh
+
+- The store centralizes stream handling. It reconnects with `afterSeq = highest applied seq`,
+  switching threads disconnects irrelevant streams, and connection loss never clears messages.
+- On tab focus the active thread re-hydrates (`afterSeq = lastSeq`) and re-attaches its stream.
+- Duplicate SSE frames are dropped by the seq guard.
+
+## localStorage
+
+- Transcripts are no longer the state of record. The store persists only lightweight thread metadata
+  (`hugin-ui-thread-index-v1`) and the active thread id (`hugin-active-thread-v1`). On load the
+  transcript is rebuilt from backend events. `loadAppState`/`saveAppState` are deprecated and kept
+  only for a one-time migration of the legacy `hugin-minimal-ui-state-v1` blob into metadata.

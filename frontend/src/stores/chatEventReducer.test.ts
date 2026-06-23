@@ -1,0 +1,133 @@
+import { describe, expect, it } from "vitest";
+
+import type { ChatThread } from "../lib/types";
+import type { ChatEvent } from "../services/guildService";
+import { isThreadBusy, reduceChatEvent, reduceChatEvents } from "./chatEventReducer";
+
+function baseThread(): ChatThread {
+  return {
+    id: "thread-1",
+    title: "Test thread",
+    kind: "github",
+    createdAt: "2026-06-20T00:00:00.000Z",
+    updatedAt: "2026-06-20T00:00:00.000Z",
+    entries: [],
+    activities: [],
+    run: null,
+    lastSeq: 0
+  };
+}
+
+function event(overrides: Partial<ChatEvent> & Pick<ChatEvent, "id" | "seq" | "type" | "createdAt">): ChatEvent {
+  return {
+    id: overrides.id,
+    seq: overrides.seq,
+    type: overrides.type,
+    createdAt: overrides.createdAt,
+    messageId: overrides.messageId ?? null,
+    runId: overrides.runId ?? "run-1",
+    role: overrides.role ?? null,
+    content: overrides.content ?? null,
+    metadata: overrides.metadata ?? {}
+  };
+}
+
+const FULL_TURN: ChatEvent[] = [
+  event({ id: "e1", seq: 1, type: "user_message_created", messageId: "user-1", content: "Update the README", createdAt: "2026-06-20T00:00:01.000Z" }),
+  event({ id: "e2", seq: 2, type: "run_started", createdAt: "2026-06-20T00:00:02.000Z" }),
+  event({ id: "e3", seq: 3, type: "assistant_message_started", messageId: "assistant-1", createdAt: "2026-06-20T00:00:03.000Z" }),
+  event({ id: "e4", seq: 4, type: "assistant_reasoning", messageId: "assistant-1", content: "Thinking...", createdAt: "2026-06-20T00:00:04.000Z" }),
+  event({ id: "e5", seq: 5, type: "tool_call_started", metadata: { callId: "c1", name: "read_file", args: "{\"path\":\"README.md\"}" }, createdAt: "2026-06-20T00:00:05.000Z" }),
+  event({ id: "e6", seq: 6, type: "tool_call_completed", metadata: { callId: "c1", name: "read_file", result: "# Hugin" }, createdAt: "2026-06-20T00:00:06.000Z" }),
+  event({ id: "e7", seq: 7, type: "assistant_token", messageId: "assistant-1", content: "Done.", createdAt: "2026-06-20T00:00:07.000Z" }),
+  event({ id: "e8", seq: 8, type: "assistant_message_completed", messageId: "assistant-1", content: "Done.", createdAt: "2026-06-20T00:00:08.000Z" }),
+  event({ id: "e9", seq: 9, type: "run_completed", createdAt: "2026-06-20T00:00:09.000Z" })
+];
+
+describe("reduceChatEvent", () => {
+  it("does not duplicate a message when the same event is applied twice", () => {
+    const userEvent = event({ id: "e1", seq: 1, type: "user_message_created", messageId: "user-1", content: "Hi", createdAt: "2026-06-20T00:00:01.000Z" });
+    const once = reduceChatEvent(baseThread(), userEvent);
+    const twice = reduceChatEvent(once, userEvent);
+    expect(twice).toBe(once); // idempotent no-op
+    expect(twice.entries.filter((entry) => entry.type === "user")).toHaveLength(1);
+  });
+
+  it("merges streamed assistant deltas into a single assistant message", () => {
+    const result = reduceChatEvents(baseThread(), [
+      event({ id: "a1", seq: 1, type: "assistant_message_started", messageId: "assistant-1", createdAt: "2026-06-20T00:00:01.000Z" }),
+      event({ id: "a2", seq: 2, type: "assistant_token", messageId: "assistant-1", content: "Hel", createdAt: "2026-06-20T00:00:02.000Z" }),
+      event({ id: "a3", seq: 3, type: "assistant_token", messageId: "assistant-1", content: "lo ", createdAt: "2026-06-20T00:00:03.000Z" }),
+      event({ id: "a4", seq: 4, type: "assistant_token", messageId: "assistant-1", content: "world", createdAt: "2026-06-20T00:00:04.000Z" })
+    ]);
+    const assistants = result.entries.filter((entry) => entry.type === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0].type === "assistant" ? assistants[0].content : "").toBe("Hello world");
+  });
+
+  it("rebuilds the same messages from a fetched event list", () => {
+    const result = reduceChatEvents(baseThread(), FULL_TURN);
+    expect(result.entries.map((entry) => entry.type)).toEqual(["user", "assistant"]);
+    const assistant = result.entries[1];
+    expect(assistant.type === "assistant" ? assistant.content : "").toBe("Done.");
+    expect(assistant.type === "assistant" ? assistant.reasoning : "").toBe("Thinking...");
+    expect(assistant.type === "assistant" ? Boolean(assistant.completedAt) : false).toBe(true);
+  });
+
+  it("routes tool events to the activity projection, never the main chat", () => {
+    const result = reduceChatEvents(baseThread(), FULL_TURN);
+    // No tool entries in the chat transcript.
+    expect(result.entries.some((entry) => entry.type === "tool")).toBe(false);
+    // Tool start + completion are present in the activity projection.
+    const toolActivities = (result.activities ?? []).filter((activity) => activity.type.startsWith("tool_call"));
+    expect(toolActivities.map((activity) => activity.type)).toEqual(["tool_call_started", "tool_call_completed"]);
+    expect(toolActivities[1].detail).toBe("# Hugin");
+  });
+
+  it("updates run state on failure without losing messages", () => {
+    const failed = reduceChatEvents(baseThread(), [
+      event({ id: "e1", seq: 1, type: "user_message_created", messageId: "user-1", content: "Do it", createdAt: "2026-06-20T00:00:01.000Z" }),
+      event({ id: "e2", seq: 2, type: "run_started", createdAt: "2026-06-20T00:00:02.000Z" }),
+      event({ id: "e3", seq: 3, type: "assistant_message_started", messageId: "assistant-1", createdAt: "2026-06-20T00:00:03.000Z" }),
+      event({ id: "e4", seq: 4, type: "assistant_token", messageId: "assistant-1", content: "partial", createdAt: "2026-06-20T00:00:04.000Z" }),
+      event({ id: "e5", seq: 5, type: "run_error", metadata: { message: "boom" }, createdAt: "2026-06-20T00:00:05.000Z" })
+    ]);
+    expect(failed.run?.status).toBe("failed");
+    expect(failed.run?.error).toBe("boom");
+    // The user message and the partial assistant message survive the failure.
+    expect(failed.entries.map((entry) => entry.type)).toEqual(["user", "assistant"]);
+    expect(failed.entries[1].type === "assistant" ? failed.entries[1].content : "").toBe("partial");
+    expect(isThreadBusy(failed)).toBe(false);
+  });
+
+  it("produces an equivalent projection from live SSE events and a fetched list", () => {
+    const fromList = reduceChatEvents(baseThread(), FULL_TURN);
+    // Simulate live delivery one event at a time, with a duplicate redelivery in the middle.
+    let live = baseThread();
+    for (const evt of FULL_TURN) {
+      live = reduceChatEvent(live, evt);
+      if (evt.seq === 5) live = reduceChatEvent(live, evt); // duplicate SSE frame
+    }
+    expect(live.entries).toEqual(fromList.entries);
+    expect(live.activities).toEqual(fromList.activities);
+    expect(live.run).toEqual(fromList.run);
+    expect(live.lastSeq).toBe(fromList.lastSeq);
+  });
+
+  it("reconciles an optimistic pending user draft into the confirmed backend message", () => {
+    const withPending: ChatThread = {
+      ...baseThread(),
+      entries: [
+        { id: "pending-1", type: "user", content: "Hello", createdAt: "2026-06-20T00:00:00.500Z", pending: true }
+      ]
+    };
+    const confirmed = reduceChatEvent(
+      withPending,
+      event({ id: "e1", seq: 1, type: "user_message_created", messageId: "user-1", content: "Hello", createdAt: "2026-06-20T00:00:01.000Z" })
+    );
+    const users = confirmed.entries.filter((entry) => entry.type === "user");
+    expect(users).toHaveLength(1);
+    expect(users[0].id).toBe("user-1");
+    expect(users[0].type === "user" ? users[0].pending : true).toBeFalsy();
+  });
+});
