@@ -4,26 +4,11 @@ import type { ChatAttachment, ChatEntry, ModelOption } from "../../lib/types";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 
-const CHIPS = [
-  ["Summarize a document", "Summarize a document for me."],
-  ["Analyze data", "Analyze this dataset and show key trends."],
-  ["Write code", "Write a Python script to clean a CSV file."],
-  ["Brainstorm ideas", "Brainstorm ideas for a product launch."],
-  ["Show me tips", "Show me tips for getting the most out of Hugin."]
-] as const;
-
-function Greeting({ name, onChip }: { name: string; onChip: (prompt: string) => void }) {
+function Greeting({ name }: { name: string }) {
   return (
     <div className="greeting">
       <h1>Hi {name}! 👋</h1>
       <p>How can I help you today?</p>
-      <div className="chip-list">
-        {CHIPS.map(([label, prompt]) => (
-          <button key={label} type="button" className="chip" onClick={() => onChip(prompt)}>
-            {label}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }
@@ -56,7 +41,7 @@ export function ChatPanel(props: {
     <>
       {fresh ? (
         <div className="chat-body">
-          <Greeting name={props.name} onChip={(prompt) => props.onSend(prompt)} />
+          <Greeting name={props.name} />
         </div>
       ) : (
         <div className="chat-stack">
