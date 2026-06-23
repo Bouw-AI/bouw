@@ -44,7 +44,7 @@ class GoogleWorkspaceToolsTest {
     /** A factory with no credentials configured -> isConfigured() is false. */
     private GoogleWorkspaceClientFactory unconfiguredFactory() {
         return new GoogleWorkspaceClientFactory(
-                new GoogleWorkspaceProperties("", "", "", 8765, "Hugin", "", ""));
+                new GoogleWorkspaceProperties("", "", "", 8765, "", "Hugin", "", ""));
     }
 
     @Test
@@ -171,7 +171,7 @@ class GoogleWorkspaceToolsTest {
         // A present (if dummy) credentials file makes isConfigured() true so guarded runs the call.
         Path creds = Files.writeString(tmp.resolve("creds.json"), "{}");
         GoogleWorkspaceClientFactory f = new GoogleWorkspaceClientFactory(
-                new GoogleWorkspaceProperties(creds.toString(), "", "", 8765, "Hugin", "", ""));
+                new GoogleWorkspaceProperties(creds.toString(), "", "", 8765, "", "Hugin", "", ""));
         assertThat(f.isConfigured()).isTrue();
 
         assertThat(f.guarded(() -> {
@@ -325,7 +325,7 @@ class GoogleWorkspaceToolsTest {
     void docsEditTreatsTextAsOptionalForReplaceButRequiredForAppend(@TempDir Path tmp) throws Exception {
         Path creds = Files.writeString(tmp.resolve("creds.json"), "{}");
         GoogleDocsEditTool tool = new GoogleDocsEditTool(new GoogleWorkspaceClientFactory(
-                new GoogleWorkspaceProperties(creds.toString(), "", "", 8765, "Hugin", "", "")));
+                new GoogleWorkspaceProperties(creds.toString(), "", "", 8765, "", "Hugin", "", "")));
 
         String replace = tool.execute(Map.of(
                 "document_id", "doc1", "operation", "replace", "find", "TODO"));

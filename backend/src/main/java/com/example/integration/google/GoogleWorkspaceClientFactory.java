@@ -1,11 +1,15 @@
 package com.example.integration.google;
 
+import com.google.api.client.auth.oauth2.AuthorizationCodeFlow;
+import com.google.api.client.auth.oauth2.AuthorizationCodeResponseUrl;
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
 import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeTokenRequest;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
+import com.google.api.client.googleapis.auth.oauth2.GoogleTokenResponse;
+import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.HttpRequestInitializer;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.JsonFactory;
@@ -13,13 +17,13 @@ import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.client.util.store.FileDataStoreFactory;
 import com.google.api.services.calendar.Calendar;
 import com.google.api.services.calendar.CalendarScopes;
-import com.google.api.services.gmail.Gmail;
-import com.google.api.services.gmail.GmailScopes;
 import com.google.api.services.docs.v1.Docs;
 import com.google.api.services.docs.v1.DocsScopes;
 import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
 import com.google.api.services.drive.model.Permission;
+import com.google.api.services.gmail.Gmail;
+import com.google.api.services.gmail.GmailScopes;
 import com.google.api.services.sheets.v4.Sheets;
 import com.google.api.services.sheets.v4.SheetsScopes;
 import com.google.auth.http.HttpCredentialsAdapter;
@@ -37,8 +41,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.security.SecureRandom;
 import java.awt.GraphicsEnvironment;
 import java.net.URI;
+import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
 import java.util.List;
 import java.util.Comparator;
@@ -73,6 +79,7 @@ public class GoogleWorkspaceClientFactory {
 
     private final GoogleWorkspaceProperties properties;
     private final JsonFactory jsonFactory = GsonFactory.getDefaultInstance();
+    private final SecureRandom secureRandom = new SecureRandom();
 
     private NetHttpTransport transport;
     private HttpRequestInitializer requestInitializer;
@@ -82,6 +89,9 @@ public class GoogleWorkspaceClientFactory {
     private Gmail gmail;
     private Sheets sheets;
     private Drive drive;
+
+    /** OAuth state token generated for the current reconnect attempt (server-side flow). */
+    private volatile String pendingOAuthState;
 
     public GoogleWorkspaceClientFactory(GoogleWorkspaceProperties properties) {
         this.properties = properties;
@@ -210,6 +220,10 @@ public class GoogleWorkspaceClientFactory {
 
     /**
      * Starts an OAuth reconnect and returns the URL the browser should open.
+     *
+     * <p>When {@code oauthCallbackUrl} is configured (server-side OAuth), the redirect URI points
+     * to that public endpoint and the callback is handled by {@link #handleOAuthCallback(String)}.
+     * When blank, a {@link LocalServerReceiver} is started on localhost (suitable for local dev).
      */
     public synchronized GoogleReconnectResponse beginReconnect(String returnTo) throws IOException, GeneralSecurityException {
         if (hasOauthClientSecrets()) {
@@ -217,10 +231,25 @@ public class GoogleWorkspaceClientFactory {
             clearCachedClients();
 
             GoogleAuthorizationCodeFlow flow = oauthFlow();
+            String callbackUrl = properties.oauthCallbackUrl();
+            boolean useServerFlow = callbackUrl != null && !callbackUrl.isBlank();
+
+            if (useServerFlow) {
+                // Server-side OAuth: use the configured public callback URL.
+                // Generate a state token for CSRF protection.
+                pendingOAuthState = generateOAuthState();
+                String authUrl = flow.newAuthorizationUrl()
+                        .setRedirectUri(callbackUrl)
+                        .setState(pendingOAuthState)
+                        .build();
+                return new GoogleReconnectResponse(status(), authUrl);
+            }
+
+            // Local dev OAuth: start a LocalServerReceiver on the loopback interface.
             String landingPage = buildLandingPage(returnTo, true);
             String failurePage = buildLandingPage(returnTo, false);
             LocalServerReceiver receiver = new LocalServerReceiver.Builder()
-                    .setHost("127.0.0.1")
+                    .setHost("localhost")
                     .setPort(properties.oauthLocalServerPort())
                     .setLandingPages(landingPage, failurePage)
                     .build();
@@ -251,6 +280,56 @@ public class GoogleWorkspaceClientFactory {
 
     public synchronized GoogleReconnectResponse beginReconnect() throws IOException, GeneralSecurityException {
         return beginReconnect(null);
+    }
+
+    /**
+     * Handles the OAuth callback from Google's authorization server (server-side flow).
+     * Exchanges the authorization code for tokens and stores them in the credential store.
+     *
+     * @param code the authorization code from the callback
+     * @return true if the tokens were obtained and stored successfully
+     */
+    public synchronized boolean handleOAuthCallback(String code) {
+        if (code == null || code.isBlank()) {
+            log.warn("Google OAuth callback received without an authorization code");
+            return false;
+        }
+
+        try {
+            GoogleAuthorizationCodeFlow flow = oauthFlow();
+            String callbackUrl = properties.oauthCallbackUrl();
+
+            GoogleTokenResponse tokenResponse = flow.newTokenRequest(code)
+                    .setRedirectUri(callbackUrl)
+                    .execute();
+
+            Credential credential = flow.createAndStoreCredential(tokenResponse, OAUTH_USER_ID);
+            if (credential != null) {
+                requestInitializer = credential;
+                clearCachedClients();
+                invalidateAvailability();
+                log.info("Google OAuth callback succeeded — tokens stored for user {}", OAUTH_USER_ID);
+                return true;
+            }
+
+            log.warn("Google OAuth callback: createAndStoreCredential returned null");
+            return false;
+        } catch (Exception e) {
+            log.warn("Google OAuth callback failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Verifies the OAuth state token. Returns true if the given state matches the pending state
+     * for the current reconnect attempt (basic CSRF protection).
+     */
+    public boolean verifyOAuthState(String state) {
+        String pending = pendingOAuthState;
+        if (pending == null || state == null) {
+            return false;
+        }
+        return pending.equals(state);
     }
 
     /** A Google API operation run inside {@link #guarded(GoogleCall)}. */
@@ -406,8 +485,20 @@ public class GoogleWorkspaceClientFactory {
         if (existing != null) {
             return existing;
         }
+        String callbackUrl = properties.oauthCallbackUrl();
+        boolean useServerFlow = callbackUrl != null && !callbackUrl.isBlank();
+
+        if (useServerFlow) {
+            // Server-side OAuth: cannot authorize interactively through a local server.
+            // The user must go through the reconnect flow (beginReconnect) instead.
+            throw new IOException(
+                    "Google OAuth client secrets are configured with a server callback URL (" + callbackUrl + "). "
+                            + "Use the reconnect endpoint to start the OAuth flow.");
+        }
+
+        // Local dev OAuth: start a LocalServerReceiver on localhost.
         LocalServerReceiver receiver = new LocalServerReceiver.Builder()
-                .setHost("127.0.0.1")
+                .setHost("localhost")
                 .setPort(properties.oauthLocalServerPort())
                 .build();
         return new AuthorizationCodeInstalledApp(flow, receiver).authorize(OAUTH_USER_ID);
@@ -519,6 +610,7 @@ public class GoogleWorkspaceClientFactory {
         // Drop the cached flow: its FileDataStoreFactory keeps token files cached in memory, so a
         // flow built before the wipe would still report the deleted credential as present.
         cachedOauthFlow = null;
+        pendingOAuthState = null;
         Path tokenDir = expandHome(properties.oauthTokenDir());
         if (!Files.exists(tokenDir)) {
             return;
@@ -606,5 +698,12 @@ public class GoogleWorkspaceClientFactory {
                 ? System.getProperty("user.home") + raw.substring(1)
                 : raw;
         return Path.of(expanded);
+    }
+
+    /** Generates a random OAuth state token for CSRF protection. */
+    private String generateOAuthState() {
+        byte[] bytes = new byte[32];
+        secureRandom.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 }
