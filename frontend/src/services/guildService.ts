@@ -2,7 +2,6 @@ import type {
   AppState,
   AuthSession,
   BugReportSummary,
-  ChatActivity,
   ChatAttachment,
   ChatEntry,
   ChatKind,
@@ -94,6 +93,12 @@ export function createEmptyState(): AppState {
   return { threads: [] };
 }
 
+/**
+ * @deprecated Quarantined after the Phase 2 refactor. The server event log is the source of truth
+ * for chat transcripts; the UI now persists only lightweight thread metadata via the chat session
+ * store ({@link ../stores/chatSessionStore}). These full-transcript helpers remain only for the
+ * one-time localStorage migration and must not be used as state of record.
+ */
 export function loadAppState(): AppState {
   if (typeof window === "undefined") return createEmptyState();
   const raw = window.localStorage.getItem(APP_STORAGE_KEY);
@@ -109,6 +114,7 @@ export function loadAppState(): AppState {
   }
 }
 
+/** @deprecated See {@link loadAppState}. Retained only for migration; not the state of record. */
 export function saveAppState(state: AppState) {
   if (typeof window === "undefined") return;
   const sanitized: AppState = {
