@@ -14,7 +14,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *   <li>{@code oauthTokenDir} — directory where OAuth refresh tokens are cached. Defaults to a
  *       directory under {@code ~/.hugin} so the consent flow only needs to run once.</li>
  *   <li>{@code oauthLocalServerPort} — local loopback port used for the OAuth callback during the
- *       initial consent flow.</li>
+ *       initial consent flow on a desktop dev environment.</li>
+ *   <li>{@code oauthCallbackUrl} — the public callback URL registered in the Google Cloud Console
+ *       as the OAuth redirect URI. Set this to the deployed server's callback endpoint
+ *       (e.g. {@code https://hugin.thecognitivejunction.com/Callback}) for server-side OAuth flows.
+ *       When blank, a local loopback server ({@code localhost:oauthLocalServerPort}) is used instead,
+ *       which is suitable for local development only.</li>
  *   <li>{@code credentialsFile} — optional path to a Google <b>service-account</b> JSON key file for
  *       legacy Workspace/domain-wide delegation setups. When blank/missing, the oauth_* flow is used
  *       if configured; otherwise the google_* tools report themselves as unavailable rather than
@@ -37,6 +42,7 @@ public record GoogleWorkspaceProperties(
         String oauthClientSecretsFile,
         String oauthTokenDir,
         Integer oauthLocalServerPort,
+        String oauthCallbackUrl,
         String applicationName,
         String impersonateUser,
         String defaultShareWith) {
@@ -53,6 +59,9 @@ public record GoogleWorkspaceProperties(
         }
         if (oauthLocalServerPort == null || oauthLocalServerPort <= 0) {
             oauthLocalServerPort = 8765;
+        }
+        if (oauthCallbackUrl == null) {
+            oauthCallbackUrl = "";
         }
         if (applicationName == null || applicationName.isBlank()) {
             applicationName = "Hugin";
