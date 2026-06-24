@@ -50,6 +50,9 @@ public class AgentService {
     private static final int TRUNCATED_HEAD_CHARS = 800;
     private static final String TRUNCATION_MARKER = "\n\n…[truncated to fit the model's context window]";
 
+    /** Absolute ceiling on a client-requested tool-call cap, regardless of the configured default. */
+    private static final int MAX_TOOL_CALL_CEILING = 200;
+
     private final int maxIterations;
 
     private final OpenAiClient llmClient;
@@ -142,7 +145,7 @@ public class AgentService {
     }
 
     public AgentResponse chat(AgentRequest request) {
-        return runLoop(request, NO_OP_LISTENER, false, "global", true, null);
+        return runLoop(request, NO_OP_LISTENER, false, "global", true, null, null);
     }
 
     /**
@@ -345,15 +348,24 @@ public class AgentService {
      * once the loop completes.
      */
     public AgentResponse chatStream(AgentRequest request, AgentStreamListener listener) {
-        return runLoop(request, listener, true, "global", true, null);
+        return runLoop(request, listener, true, "global", true, null, null);
     }
 
     public AgentResponse chat(AgentRequest request, String owner) {
-        return runLoop(request, NO_OP_LISTENER, false, normalizeOwner(owner), hasSandbox(request), null);
+        return runLoop(request, NO_OP_LISTENER, false, normalizeOwner(owner), hasSandbox(request), null, null);
+    }
+
+    /**
+     * Non-streaming variant that caps this run's tool-call iterations to {@code maxToolCalls}. See
+     * {@link #chatStream(AgentRequest, AgentStreamListener, String, Long, Integer)} for how the value
+     * is resolved against the configured default and ceiling.
+     */
+    public AgentResponse chat(AgentRequest request, String owner, Integer maxToolCalls) {
+        return runLoop(request, NO_OP_LISTENER, false, normalizeOwner(owner), hasSandbox(request), null, maxToolCalls);
     }
 
     public AgentResponse chatStream(AgentRequest request, AgentStreamListener listener, String owner) {
-        return runLoop(request, listener, true, normalizeOwner(owner), hasSandbox(request), null);
+        return runLoop(request, listener, true, normalizeOwner(owner), hasSandbox(request), null, null);
     }
 
     /**
@@ -366,7 +378,18 @@ public class AgentService {
      */
     public AgentResponse chatStream(AgentRequest request, AgentStreamListener listener, String owner,
                                     Long contextLimit) {
-        return runLoop(request, listener, true, normalizeOwner(owner), hasSandbox(request), contextLimit);
+        return runLoop(request, listener, true, normalizeOwner(owner), hasSandbox(request), contextLimit, null);
+    }
+
+    /**
+     * Streaming variant that also caps the number of tool-call iterations for this run to
+     * {@code maxToolCalls}. A {@code null}, zero, or negative value falls back to the server default
+     * ({@code agent.max-iterations}); larger values are bounded by {@link #MAX_TOOL_CALL_CEILING} so a
+     * client request can lower or raise the limit within a safe range.
+     */
+    public AgentResponse chatStream(AgentRequest request, AgentStreamListener listener, String owner,
+                                    Long contextLimit, Integer maxToolCalls) {
+        return runLoop(request, listener, true, normalizeOwner(owner), hasSandbox(request), contextLimit, maxToolCalls);
     }
 
     public List<ChatMessage> history(String owner, String agentId, String sessionId) {
@@ -393,8 +416,10 @@ public class AgentService {
     }
 
     private AgentResponse runLoop(AgentRequest request, AgentStreamListener listener, boolean stream,
-                                  String owner, boolean includeWorkspaceTools, Long contextLimit) {
+                                  String owner, boolean includeWorkspaceTools, Long contextLimit,
+                                  Integer maxToolCalls) {
         Instant deadline = Instant.now().plus(requestTimeout);
+        int iterationCap = resolveIterationCap(maxToolCalls);
         int contextBudget = contextLimit == null ? 0 : (int) Math.min(Integer.MAX_VALUE, Math.max(0, contextLimit));
         RoutingSelection routing = resolveModel(request);
         String model = routing.model();
@@ -459,7 +484,7 @@ public class AgentService {
         boolean hadToolCalls = false;
         boolean nudgedForEmptyResponse = false;
 
-        for (int i = 0; i < maxIterations; i++) {
+        for (int i = 0; i < iterationCap; i++) {
             ensureNotCancelled();
             if (Instant.now().isAfter(deadline)) {
                 log.warn("Agent request timed out after {}", requestTimeout);
@@ -569,10 +594,22 @@ public class AgentService {
             }
         }
 
-        log.warn("Agent reached max iterations ({}) without a final answer", maxIterations);
+        log.warn("Agent reached max iterations ({}) without a final answer", iterationCap);
         return new AgentResponse(
                 "Reached the maximum number of tool-call iterations without a final answer.",
                 Collections.unmodifiableList(messages));
+    }
+
+    /**
+     * Resolves the per-run tool-call iteration cap. A blank/non-positive request value uses the
+     * configured server default ({@code agent.max-iterations}); otherwise the requested value is used,
+     * bounded to [1, {@link #MAX_TOOL_CALL_CEILING}] so a client cannot drive an unbounded loop.
+     */
+    private int resolveIterationCap(Integer maxToolCalls) {
+        if (maxToolCalls == null || maxToolCalls <= 0) {
+            return maxIterations;
+        }
+        return Math.min(maxToolCalls, MAX_TOOL_CALL_CEILING);
     }
 
     /**

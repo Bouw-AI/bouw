@@ -153,6 +153,7 @@ public class ChatSessionService {
             Long contextLimit = modelContextService
                     .contextLimit(firstNonBlank(request.model(), defaultModel))
                     .orElse(null);
+            Integer maxToolCalls = request.maxToolCalls();
             AgentResponse response = agentService.chatStream(effectiveRequest, new AgentStreamListener() {
                 @Override
                 public void onContent(String delta) {
@@ -190,7 +191,7 @@ public class ChatSessionService {
                             "name", toolName == null ? "tool" : toolName,
                             "result", result == null ? "" : result));
                 }
-            }, owner, contextLimit);
+            }, owner, contextLimit, maxToolCalls);
             String fallback = response == null ? null : response.response();
             String open = openAssistantId.getAndSet(null);
             if (open == null && fallback != null && !fallback.isBlank()) {

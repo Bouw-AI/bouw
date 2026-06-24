@@ -11,5 +11,6 @@ public record ChatSessionMessageRequest(
         List<ChatAttachment> attachments,
         String model,
         String reasoningEffort,
-        String sandboxId
+        String sandboxId,
+        Integer maxToolCalls
 ) {}
