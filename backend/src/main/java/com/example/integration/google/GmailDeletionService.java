@@ -9,9 +9,9 @@ import java.util.List;
 
 /**
  * Carries out the actual move-to-Trash for Gmail messages once a user has approved a
- * {@code google_gmail_delete} request. Kept separate from {@link com.example.integration.tool.GoogleGmailDeleteTool}
- * (which only gathers a preview and asks for approval) so the deletion runs from the approval
- * endpoint, never from the agent loop.
+ * {@code google_gmail_trash} request. Kept separate from {@link com.example.integration.tool.GoogleGmailTrashTool}
+ * (which only gathers a preview and asks for approval) so the move runs from the approval endpoint,
+ * never from the agent loop.
  *
  * <p>Uses {@code trash} rather than a permanent delete: it is reversible from Gmail and only needs the
  * {@code gmail.modify} scope, keeping the integration's footprint smaller than a hard delete would.

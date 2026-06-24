@@ -309,12 +309,12 @@ class ChatSessionServiceTest {
         doAnswer(invocation -> {
             com.example.agent.tool.ToolApprovalRequiredException approval =
                     new com.example.agent.tool.ToolApprovalRequiredException(
-                            "email_delete",
+                            "email_trash",
                             "Approval required to move 2 emails to Trash.",
                             List.of(
                                     java.util.Map.of("id", "m1", "from", "a@x.com", "subject", "Hi"),
                                     java.util.Map.of("id", "m2", "from", "b@y.com", "subject", "Yo")));
-            approval.attachToolCall("call-9", "google_gmail_delete");
+            approval.attachToolCall("call-9", "google_gmail_trash");
             throw approval;
         }).when(agentService).chatStream(any(), any(), any(), any(), any(), any());
 
@@ -330,7 +330,7 @@ class ChatSessionServiceTest {
                 .filter(event -> event.type().equals("approval_required")).findFirst().orElseThrow();
         String approvalId = String.valueOf(approval.metadata().get("approvalId"));
         assertThat(approvalId).isNotBlank();
-        assertThat(approval.metadata()).containsEntry("kind", "email_delete");
+        assertThat(approval.metadata()).containsEntry("kind", "email_trash");
         assertThat(approval.content()).isEqualTo("Approval required to move 2 emails to Trash.");
         assertThat(repository.runStatus(approval.runId())).contains("awaiting_approval");
 
@@ -355,7 +355,7 @@ class ChatSessionServiceTest {
     void decliningAnApprovalDeletesNothingAndCompletesTheRun() {
         doAnswer(invocation -> {
             throw new com.example.agent.tool.ToolApprovalRequiredException(
-                    "email_delete",
+                    "email_trash",
                     "Approval required to move 1 email to Trash.",
                     List.of(java.util.Map.of("id", "m1", "from", "a@x.com", "subject", "Hi")));
         }).when(agentService).chatStream(any(), any(), any(), any(), any(), any());

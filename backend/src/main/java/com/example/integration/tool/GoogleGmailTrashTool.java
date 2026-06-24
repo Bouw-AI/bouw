@@ -17,19 +17,21 @@ import java.util.Map;
 /**
  * Moves one or more Gmail messages to Trash — but only after the user explicitly approves.
  *
- * <p>Deleting mail is destructive, so this tool never acts on its own. When the model calls it, the
- * tool looks up each message's sender and subject, then raises a {@link ToolApprovalRequiredException}
- * carrying that summary. The chat layer turns that into an approval prompt in the UI; the actual move
- * to Trash happens later, from the approval endpoint, only if the user clicks Approve.
+ * <p>This is a recoverable move to the Trash label, <em>not</em> a permanent delete: the messages can
+ * still be restored from Trash (and Gmail purges Trash on its own after ~30 days). Even so, it never
+ * acts on its own. When the model calls it, the tool looks up each message's sender and subject, then
+ * raises a {@link ToolApprovalRequiredException} carrying that summary. The chat layer turns that into
+ * an approval prompt in the UI; the actual move to Trash happens later, from the approval endpoint,
+ * only if the user clicks Approve.
  */
 @Component
-public class GoogleGmailDeleteTool implements LocalTool {
+public class GoogleGmailTrashTool implements LocalTool {
 
-    private static final Logger log = LoggerFactory.getLogger(GoogleGmailDeleteTool.class);
+    private static final Logger log = LoggerFactory.getLogger(GoogleGmailTrashTool.class);
 
     private final GoogleWorkspaceClientFactory google;
 
-    public GoogleGmailDeleteTool(GoogleWorkspaceClientFactory google) {
+    public GoogleGmailTrashTool(GoogleWorkspaceClientFactory google) {
         this.google = google;
     }
 
@@ -40,15 +42,17 @@ public class GoogleGmailDeleteTool implements LocalTool {
 
     @Override
     public String name() {
-        return "google_gmail_delete";
+        return "google_gmail_trash";
     }
 
     @Override
     public String description() {
-        return "Move one or more Gmail messages to Trash. This action ALWAYS requires explicit user "
-                + "approval: it does not delete immediately. Provide the Gmail message ids (from "
-                + "google_gmail_search) to delete; Hugin shows the user a summary of each email and asks "
-                + "them to approve or decline before anything is removed.";
+        return "Move one or more Gmail messages to Trash. This does NOT permanently delete the emails: "
+                + "it moves them to the Trash label, where they can be restored until Gmail empties the "
+                + "Trash (about 30 days later). It also ALWAYS requires explicit user approval and never "
+                + "acts immediately. Provide the Gmail message ids (from google_gmail_search) to trash; "
+                + "Hugin shows the user a summary of each email and asks them to approve or decline before "
+                + "anything is moved.";
     }
 
     @Override
@@ -91,7 +95,7 @@ public class GoogleGmailDeleteTool implements LocalTool {
                 item.put("subject", GmailMessageFormatter.headerValue(message, "Subject"));
                 item.put("snippet", message.getSnippet() == null ? "" : message.getSnippet());
             } catch (Exception e) {
-                log.warn("Could not load Gmail metadata for {} before delete approval: {}", id, e.getMessage());
+                log.warn("Could not load Gmail metadata for {} before trash approval: {}", id, e.getMessage());
                 item.put("from", "");
                 item.put("subject", "(could not load message details)");
                 item.put("snippet", "");
@@ -102,7 +106,7 @@ public class GoogleGmailDeleteTool implements LocalTool {
         String summary = ids.size() == 1
                 ? "Approval required to move 1 email to Trash."
                 : "Approval required to move " + ids.size() + " emails to Trash.";
-        throw new ToolApprovalRequiredException("email_delete", summary, items);
+        throw new ToolApprovalRequiredException("email_trash", summary, items);
     }
 
     private static List<String> toStringList(Object value) {
