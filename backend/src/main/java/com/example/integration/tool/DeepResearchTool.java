@@ -1,6 +1,7 @@
 package com.example.integration.tool;
 
 import com.example.agent.tool.LocalTool;
+import com.example.agent.tool.ToolContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -100,6 +101,19 @@ public class DeepResearchTool implements LocalTool {
 
     @Override
     public String execute(Map<String, Object> arguments) throws Exception {
+        return runResearch(arguments, model);
+    }
+
+    @Override
+    public String execute(Map<String, Object> arguments, ToolContext ctx) throws Exception {
+        // A user can pick a research model in Settings; it arrives per-request via the context and
+        // overrides the server-wide default only for this run. Fall back to the configured model when
+        // nothing was selected.
+        String override = ctx == null ? null : ctx.researchModel();
+        return runResearch(arguments, override != null && !override.isBlank() ? override : model);
+    }
+
+    private String runResearch(Map<String, Object> arguments, String effectiveModel) throws Exception {
         if (!searchClient.isConfigured()) {
             return "deep_research is unavailable: OPEN_ROUTER_API_KEY is not set.";
         }
@@ -123,7 +137,7 @@ public class DeepResearchTool implements LocalTool {
             block.append("## ").append(section).append(". ").append(focus).append("\n");
             try {
                 OpenRouterSearchClient.SearchResult result =
-                        searchClient.search(model, SYSTEM_PROMPT, query, MAX_TOKENS_PER_SEARCH);
+                        searchClient.search(effectiveModel, SYSTEM_PROMPT, query, MAX_TOKENS_PER_SEARCH);
                 succeeded++;
                 block.append(result.content().strip()).append("\n");
                 appendSectionSources(block, result.sources());

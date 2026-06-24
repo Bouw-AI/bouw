@@ -1,5 +1,6 @@
 package com.example.integration.tool;
 
+import com.example.agent.tool.ToolContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,8 +18,12 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -163,6 +168,38 @@ class DeepResearchToolTest {
         assertThatThrownBy(() -> tool.execute(Map.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("topic");
+    }
+
+    @Test
+    void usesPerRequestResearchModelOverrideFromContext() throws Exception {
+        OpenRouterSearchClient client = mock(OpenRouterSearchClient.class);
+        when(client.isConfigured()).thenReturn(true);
+        when(client.search(anyString(), anyString(), anyString(), anyInt())).thenReturn(
+                new OpenRouterSearchClient.SearchResult("finding",
+                        List.of(new OpenRouterSearchClient.Source("https://example.com/a", ""))));
+        var overrideTool = new DeepResearchTool(client, "default-model");
+
+        // researchModel is the last component of ToolContext; a user who picked it in Settings sends
+        // it per request, and it must reach the search call instead of the configured default.
+        var ctx = new ToolContext(null, null, null, null, null, null, null, "override/model");
+        overrideTool.execute(Map.of("topic", "x", "focus_areas", List.of("A")), ctx);
+
+        verify(client).search(eq("override/model"), anyString(), anyString(), anyInt());
+    }
+
+    @Test
+    void fallsBackToConfiguredModelWhenNoOverride() throws Exception {
+        OpenRouterSearchClient client = mock(OpenRouterSearchClient.class);
+        when(client.isConfigured()).thenReturn(true);
+        when(client.search(anyString(), anyString(), anyString(), anyInt())).thenReturn(
+                new OpenRouterSearchClient.SearchResult("finding", List.of()));
+        var defaultTool = new DeepResearchTool(client, "default-model");
+
+        // A blank override (and a null context) must leave the tool on its configured model.
+        var ctx = new ToolContext(null, null, null, null, null, null, null, "  ");
+        defaultTool.execute(Map.of("topic", "x", "focus_areas", List.of("A")), ctx);
+
+        verify(client).search(eq("default-model"), anyString(), anyString(), anyInt());
     }
 
     @Test

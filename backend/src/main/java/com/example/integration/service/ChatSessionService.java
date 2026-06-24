@@ -155,6 +155,7 @@ public class ChatSessionService {
                     .orElse(null);
             Integer maxToolCalls = request.maxToolCalls();
             Integer requestTimeoutSeconds = request.requestTimeoutSeconds();
+            String researchModel = request.researchModel();
             AgentResponse response = agentService.chatStream(effectiveRequest, new AgentStreamListener() {
                 @Override
                 public void onContent(String delta) {
@@ -192,7 +193,7 @@ public class ChatSessionService {
                             "name", toolName == null ? "tool" : toolName,
                             "result", result == null ? "" : result));
                 }
-            }, owner, contextLimit, maxToolCalls, requestTimeoutSeconds);
+            }, owner, contextLimit, maxToolCalls, requestTimeoutSeconds, researchModel);
             String fallback = response == null ? null : response.response();
             String open = openAssistantId.getAndSet(null);
             if (open == null && fallback != null && !fallback.isBlank()) {
