@@ -1466,7 +1466,7 @@ export default function App() {
       setError(null);
 
       const isFirst = !current.entries.some((entry) => entry.type === "user");
-      const title = isFirst && current.kind !== "github"
+      const title = isFirst
         ? getThreadTitle(text || attachment?.name || "Image attachment")
         : current.title;
       store.patchThread(current.id, {
