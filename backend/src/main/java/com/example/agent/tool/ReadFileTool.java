@@ -1,5 +1,7 @@
 package com.example.agent.tool;
 
+import com.example.agent.sandbox.SandboxRuntime;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -8,6 +10,7 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 /** Reads the contents of a text file within the workspace. */
@@ -17,11 +20,20 @@ public class ReadFileTool implements LocalTool {
     private final Workspace workspace;
     private final int maxChars;
     private final PathDenyList denyList;
+    private final Optional<SandboxRuntime> sandboxRuntime;
 
-    public ReadFileTool(Workspace workspace, LocalToolProperties properties, PathDenyList denyList) {
+    @Autowired
+    public ReadFileTool(Workspace workspace, LocalToolProperties properties, PathDenyList denyList,
+                        Optional<SandboxRuntime> sandboxRuntime) {
         this.workspace = workspace;
         this.maxChars = properties.maxOutputChars();
         this.denyList = denyList;
+        this.sandboxRuntime = sandboxRuntime;
+    }
+
+    /** Convenience constructor for tests / hosts without a sandbox runtime (host execution only). */
+    public ReadFileTool(Workspace workspace, LocalToolProperties properties, PathDenyList denyList) {
+        this(workspace, properties, denyList, Optional.empty());
     }
 
     @Override
@@ -69,13 +81,24 @@ public class ReadFileTool implements LocalTool {
                 || arguments.containsKey("replace_all")) {
             return "Error: read_file only reads files. Use edit_file for old_string/new_string replacements.";
         }
-        Workspace ws = ctx.workspace();
-        Path file = ws.resolve(requested);
-        String relative = ws.relativize(file);
         boolean hasStartLine = arguments.containsKey("start_line");
         boolean hasLineCount = arguments.containsKey("line_count");
         int startLine = Math.max(1, optionalInt(arguments, "start_line", 1));
         int lineCount = Math.max(1, optionalInt(arguments, "line_count", 200));
+
+        if (denyList.isDenied(requested)) {
+            return "Error: access to '" + requested + "' is denied by configuration.";
+        }
+
+        // Isolated project chat: read the file from inside the sandbox container, never the host.
+        if (ctx.requiresContainer() && sandboxRuntime.isPresent()) {
+            return ContainerWorkspaceTools.readFile(sandboxRuntime.get(), ctx.workspaceContext().sandboxId(),
+                    requested, maxChars, hasStartLine || hasLineCount, startLine, lineCount);
+        }
+
+        Workspace ws = ctx.workspace();
+        Path file = ws.resolve(requested);
+        String relative = ws.relativize(file);
 
         if (denyList.isDenied(relative)) {
             return "Error: access to '" + requested + "' is denied by configuration.";

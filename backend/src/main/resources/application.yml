@@ -166,11 +166,11 @@ agent:
   # and run_bash is executed inside that container (docker exec). File tools operate on the host-side
   # bind-mount, so file edits and shell commands share one workspace path.
   #
-  # GitHub project chats (POST /api/sandboxes/github) do NOT use Docker: the selected repository is
-  # cloned into a persistent, host-backed workspace at ${agent.home}/workspace/<repo>-<short-id>/ and
-  # the agent's tools run from inside that clone. The binding is persisted (github_workspaces table)
-  # so a chat resumed after a restart rehydrates to the same directory rather than losing its repo
-  # context, and the settings below (image/docker-bin/network) do not apply to it.
+  # GitHub project chats (POST /api/sandboxes/github) are now fully isolated: the selected repository
+  # is cloned INSIDE a dedicated Docker container (never on the host) and all of the agent's file and
+  # shell tools execute in that container. Those project sandboxes are configured under hugin.sandbox.*
+  # (see below) and persisted in the sandbox_sessions table, not by the settings in this block — the
+  # agent.sandbox.* settings here apply only to the generic POST /api/sandboxes bind-mount sandboxes.
   sandbox:
     # Master switch for the /api/sandboxes endpoints and sandbox-routed shell execution.
     enabled: ${SANDBOX_ENABLED:true}
@@ -189,6 +189,39 @@ agent:
     container-prefix: hugin-sbx-
     # Cap on the number of concurrently running sandboxes.
     max-sandboxes: 25
+
+# Fully isolated, containerized project-chat sandboxes (hugin.sandbox.*). Unlike the legacy
+# agent.sandbox.* bind-mount sandboxes above, a project (GitHub repository) chat here gets its own
+# Docker container plus a named volume that holds the repository checkout. The repository is cloned
+# INSIDE the container at /workspace/repo and never written to the host, so every file and shell tool
+# executes inside the container. There is no host-execution fallback for project chats: if Docker is
+# unavailable, sandbox creation fails loudly.
+hugin:
+  sandbox:
+    # Master switch for the isolated project-chat sandbox runtime.
+    enabled: ${SANDBOX_ENABLED:true}
+    # Image new sandbox containers run. Build it from docker/sandbox/Dockerfile:
+    #   docker build -t hugin-agent-sandbox:latest docker/sandbox
+    image: ${HUGIN_SANDBOX_IMAGE:hugin-agent-sandbox:latest}
+    # Hours a sandbox may sit unused before the hourly cleanup job destroys it.
+    idle-timeout-hours: ${HUGIN_SANDBOX_IDLE_TIMEOUT_HOURS:72}
+    # Docker CLI binary used to manage containers and volumes.
+    docker-bin: ${HUGIN_SANDBOX_DOCKER_BIN:docker}
+    # Per-container resource limits.
+    memory: ${HUGIN_SANDBOX_MEMORY:4g}
+    cpus: ${HUGIN_SANDBOX_CPUS:2}
+    pids-limit: ${HUGIN_SANDBOX_PIDS_LIMIT:512}
+    # Docker network for sandbox containers. Blank uses the default bridge; set to "none" to isolate.
+    network: ${HUGIN_SANDBOX_NETWORK:}
+    # Prefix for container/volume names: <prefix><id> and <prefix><id>-workspace.
+    container-prefix: hugin-agent-
+    # Workspace mount point and repository checkout subdirectory inside the container.
+    workspace-path: /workspace
+    repo-subdir: repo
+    # Wall-clock limits for in-container command execution, container start, and the initial clone.
+    exec-timeout: 120s
+    start-timeout: 120s
+    clone-timeout: 300s
 
 auth:
   bootstrap:

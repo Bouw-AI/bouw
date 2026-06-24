@@ -111,3 +111,25 @@ create table if not exists github_workspaces (
     created_at timestamp with time zone not null default current_timestamp,
     updated_at timestamp with time zone not null default current_timestamp
 );
+
+-- Isolated, containerized execution environment backing a project (GitHub repository) chat. Each
+-- project chat owns exactly one sandbox session: a Docker container plus a named volume holding the
+-- repository checkout. This row is the durable handle the backend uses to reconnect to (or clean up)
+-- that container across restarts, and to expire it once it has been idle past hugin.sandbox.idle-timeout-hours.
+create table if not exists sandbox_sessions (
+    id varchar(36) primary key,
+    chat_session_id varchar(36),
+    container_id text,
+    container_name varchar(255),
+    docker_volume_name varchar(255),
+    repository_url text,
+    repository_branch varchar(255),
+    repository_path text,
+    status varchar(32) not null,
+    created_at timestamp with time zone not null default current_timestamp,
+    last_used_at timestamp with time zone not null default current_timestamp,
+    expires_at timestamp with time zone
+);
+
+create index if not exists idx_sandbox_sessions_chat on sandbox_sessions(chat_session_id);
+create index if not exists idx_sandbox_sessions_expires on sandbox_sessions(expires_at);

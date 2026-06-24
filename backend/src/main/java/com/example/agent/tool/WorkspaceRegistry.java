@@ -1,5 +1,6 @@
 package com.example.agent.tool;
 
+import com.example.agent.sandbox.WorkspaceContext;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
@@ -20,6 +21,8 @@ public class WorkspaceRegistry {
     private final Workspace defaultWorkspace;
     private final ConcurrentHashMap<String, Workspace> bySessionId = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> githubRepoBySessionId = new ConcurrentHashMap<>();
+    /** Container execution context for isolated project chats (by sandbox/session id). */
+    private final ConcurrentHashMap<String, WorkspaceContext> containerContextBySessionId = new ConcurrentHashMap<>();
 
     /**
      * Optional hook that restores a persisted workspace whose in-memory registration was lost (e.g.
@@ -91,9 +94,37 @@ public class WorkspaceRegistry {
         return Optional.ofNullable(repo);
     }
 
+    /**
+     * Records the container execution context for an isolated project chat, so the agent loop can mark
+     * the request's filesystem/shell tools as container-only (no host access).
+     */
+    public void registerContainerContext(String sessionId, WorkspaceContext context) {
+        if (sessionId == null || sessionId.isBlank() || context == null) {
+            return;
+        }
+        containerContextBySessionId.put(sessionId, context);
+    }
+
+    /** Returns the container execution context for {@code sessionId}, when it is an isolated project chat. */
+    public Optional<WorkspaceContext> containerContext(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return Optional.empty();
+        }
+        WorkspaceContext context = containerContextBySessionId.get(sessionId);
+        if (context == null && rehydrate(sessionId)) {
+            context = containerContextBySessionId.get(sessionId);
+        }
+        return Optional.ofNullable(context);
+    }
+
+    public void unregisterContainerContext(String sessionId) {
+        containerContextBySessionId.remove(sessionId);
+    }
+
     public void unregister(String sessionId) {
         bySessionId.remove(sessionId);
         githubRepoBySessionId.remove(sessionId);
+        containerContextBySessionId.remove(sessionId);
     }
 
     /**

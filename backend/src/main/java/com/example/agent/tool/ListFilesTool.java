@@ -1,14 +1,18 @@
 package com.example.agent.tool;
 
+import com.example.agent.sandbox.SandboxRuntime;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 /** Lists files and directories within the workspace. */
@@ -16,11 +20,20 @@ import java.util.stream.Stream;
 public class ListFilesTool implements LocalTool {
 
     private static final int MAX_ENTRIES = 1000;
+    private static final Duration CONTAINER_TIMEOUT = Duration.ofSeconds(60);
 
     private final Workspace workspace;
+    private final Optional<SandboxRuntime> sandboxRuntime;
 
-    public ListFilesTool(Workspace workspace) {
+    @Autowired
+    public ListFilesTool(Workspace workspace, Optional<SandboxRuntime> sandboxRuntime) {
         this.workspace = workspace;
+        this.sandboxRuntime = sandboxRuntime;
+    }
+
+    /** Convenience constructor for tests / hosts without a sandbox runtime (host execution only). */
+    public ListFilesTool(Workspace workspace) {
+        this(workspace, Optional.empty());
     }
 
     @Override
@@ -63,6 +76,13 @@ public class ListFilesTool implements LocalTool {
     public String execute(Map<String, Object> arguments, ToolContext ctx) throws IOException {
         String requested = optionalString(arguments, "path", ".");
         boolean recursive = optionalBoolean(arguments, "recursive", false);
+
+        // Isolated project chat: list the directory inside the sandbox container, never the host.
+        if (ctx.requiresContainer() && sandboxRuntime.isPresent()) {
+            return ContainerWorkspaceTools.listFiles(sandboxRuntime.get(), ctx.workspaceContext().sandboxId(),
+                    requested, recursive, MAX_ENTRIES, CONTAINER_TIMEOUT);
+        }
+
         Path dir = ctx.workspace().resolve(requested);
 
         if (!Files.exists(dir)) {

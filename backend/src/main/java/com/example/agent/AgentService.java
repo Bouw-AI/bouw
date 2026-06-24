@@ -6,6 +6,7 @@ import com.example.agent.tool.LocalTool;
 import com.example.agent.tool.LocalToolRegistry;
 import com.example.agent.tool.JustInTimeToolRegistry;
 import com.example.agent.tool.ToolApprovalRequiredException;
+import com.example.agent.sandbox.WorkspaceContext;
 import com.example.agent.tool.ToolContext;
 import com.example.agent.tool.Workspace;
 import com.example.agent.tool.WorkspaceRegistry;
@@ -461,6 +462,9 @@ public class AgentService {
         // sandbox id; otherwise fall back to the session id, preserving the previous behaviour.
         String workspaceKey = firstNonBlank(request.sandboxId(), request.sessionId());
         Workspace workspace = workspaceRegistry.resolve(workspaceKey);
+        // Isolated project chats carry a container WorkspaceContext (hostAccessAllowed=false); the file
+        // and shell tools consult it to route their work into the sandbox container instead of the host.
+        WorkspaceContext workspaceContext = workspaceRegistry.containerContext(workspaceKey).orElse(null);
         // Host-backed agent sessions (the "Agent" mode rooted at ~/) register a workspace by session id
         // but carry no sandbox, so grant them filesystem/shell tools when a workspace is registered.
         boolean workspaceTools = includeWorkspaceTools || workspaceRegistry.isRegistered(workspaceKey);
@@ -585,7 +589,7 @@ public class AgentService {
                     try {
                         toolResult = executeToolCall(toolCall,
                                 workspace, request.sessionId(), owner, request.agentId(), request.recentMessages(),
-                                request.sandboxId(), request.attachments(), researchModel);
+                                request.sandboxId(), request.attachments(), researchModel, workspaceContext);
                     } catch (ToolApprovalRequiredException approval) {
                         // The tool needs user verification before it can act. Tag the call so the chat
                         // layer can resolve its tool card, then unwind the loop: the run pauses here and
@@ -929,7 +933,8 @@ public class AgentService {
     private String executeToolCall(ToolCall toolCall,
                                    Workspace workspace,
                                    String sessionId, String owner, String agentId, List<String> channelMessages,
-                                   String sandboxId, List<ChatAttachment> attachments, String researchModel) {
+                                   String sandboxId, List<ChatAttachment> attachments, String researchModel,
+                                   WorkspaceContext workspaceContext) {
         String toolName = toolCall.function().name();
         Map<String, Object> args = parseArguments(toolCall.function().arguments());
 
@@ -940,7 +945,8 @@ public class AgentService {
         if (localTool != null) {
             log.debug("Executing built-in tool '{}' with args: {}", toolName, args);
             ToolContext ctx = new ToolContext(
-                    workspace, sessionId, owner, agentId, channelMessages, sandboxId, attachments, researchModel);
+                    workspace, sessionId, owner, agentId, channelMessages, sandboxId, attachments,
+                    researchModel, workspaceContext);
             try {
                 return localTool.execute(args, ctx);
             } catch (ToolApprovalRequiredException e) {

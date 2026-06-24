@@ -1,6 +1,7 @@
 package com.example.agent.tool;
 
 import com.example.agent.model.ChatAttachment;
+import com.example.agent.sandbox.WorkspaceContext;
 
 import java.util.List;
 
@@ -37,6 +38,11 @@ import java.util.List;
  * <p>{@code researchModel} is an optional per-request override for the model the {@code deep_research}
  * tool uses for its web searches. It lets a user pick a research model in Settings without changing
  * the server-wide default; when {@code null} or blank the tool falls back to its configured model.
+ *
+ * <p>{@code workspaceContext} describes where filesystem/shell tools may operate. For an isolated
+ * project chat it marks the request as container-only ({@code hostAccessAllowed=false}), so the file
+ * tools route their reads/writes/listings through the sandbox container instead of the host
+ * filesystem. It may be {@code null} for ordinary host-backed requests, which keep host access.
  */
 public record ToolContext(
         Workspace workspace,
@@ -46,7 +52,21 @@ public record ToolContext(
         List<String> channelMessages,
         String sandboxId,
         List<ChatAttachment> attachments,
-        String researchModel) {
+        String researchModel,
+        WorkspaceContext workspaceContext) {
+
+    /** Context without a workspace context (defaults {@code workspaceContext} to {@code null}). */
+    public ToolContext(
+            Workspace workspace,
+            String sessionId,
+            String username,
+            String agentId,
+            List<String> channelMessages,
+            String sandboxId,
+            List<ChatAttachment> attachments,
+            String researchModel) {
+        this(workspace, sessionId, username, agentId, channelMessages, sandboxId, attachments, researchModel, null);
+    }
 
     /** Context without a per-request research-model override (defaults {@code researchModel} to {@code null}). */
     public ToolContext(
@@ -58,6 +78,11 @@ public record ToolContext(
             String sandboxId,
             List<ChatAttachment> attachments) {
         this(workspace, sessionId, username, agentId, channelMessages, sandboxId, attachments, null);
+    }
+
+    /** Whether this request's filesystem/shell tools must execute inside the sandbox container. */
+    public boolean requiresContainer() {
+        return workspaceContext != null && workspaceContext.requiresContainer();
     }
 
     /** Context without attachments (defaults {@code attachments} to {@code null}). */

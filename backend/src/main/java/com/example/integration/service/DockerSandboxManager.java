@@ -2,7 +2,12 @@ package com.example.integration.service;
 
 import com.example.agent.model.FileNode;
 import com.example.agent.model.SandboxInfo;
+import com.example.agent.sandbox.FileEntry;
+import com.example.agent.sandbox.FileResult;
+import com.example.agent.sandbox.RepositoryConfig;
 import com.example.agent.sandbox.SandboxRuntime;
+import com.example.agent.sandbox.SandboxSession;
+import com.example.agent.sandbox.WorkspaceContext;
 import com.example.agent.tool.Workspace;
 import com.example.agent.tool.WorkspaceFactory;
 import com.example.agent.tool.WorkspaceRegistry;
@@ -15,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
@@ -23,7 +29,6 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -45,6 +50,7 @@ import java.util.concurrent.TimeUnit;
  * {@link WorkspaceRegistry} under the sandbox id so the agent loop confines file access to it.
  */
 @Service
+@Primary
 public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator {
 
     private static final Logger log = LoggerFactory.getLogger(DockerSandboxManager.class);
@@ -57,10 +63,13 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
     private final WorkspaceFactory workspaceFactory;
     private final Optional<GitHubWorkspaceStore> githubWorkspaceStore;
     private final Optional<GitHubAppService> github;
+    private final Optional<SandboxSessionService> projectSessions;
+    private final Optional<DockerSandboxRuntime> projectRuntime;
     private final Path sandboxesHome;
-    private final Path githubWorkspacesHome;
 
     private final ConcurrentHashMap<String, LiveSandbox> sandboxes = new ConcurrentHashMap<>();
+    /** In-memory cache of isolated project-chat sessions registered in this process (by sandbox id). */
+    private final ConcurrentHashMap<String, ProjectSandbox> projectSandboxes = new ConcurrentHashMap<>();
 
     @Autowired
     public DockerSandboxManager(
@@ -69,14 +78,32 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
             WorkspaceFactory workspaceFactory,
             Optional<GitHubWorkspaceStore> githubWorkspaceStore,
             Optional<GitHubAppService> github,
+            Optional<SandboxSessionService> projectSessions,
+            Optional<DockerSandboxRuntime> projectRuntime,
             @Value("${agent.home:${user.home}/.hugin}") String agentHome) {
         this.properties = properties;
         this.workspaceRegistry = workspaceRegistry;
         this.workspaceFactory = workspaceFactory;
         this.githubWorkspaceStore = githubWorkspaceStore;
         this.github = github;
+        this.projectSessions = projectSessions;
+        this.projectRuntime = projectRuntime;
         this.sandboxesHome = Path.of(agentHome).resolve("sandboxes");
-        this.githubWorkspacesHome = Path.of(agentHome).resolve("workspace");
+    }
+
+    /**
+     * Convenience constructor for tests / hosts with GitHub-workspace persistence but no isolated
+     * project-sandbox runtime.
+     */
+    public DockerSandboxManager(
+            SandboxProperties properties,
+            WorkspaceRegistry workspaceRegistry,
+            WorkspaceFactory workspaceFactory,
+            Optional<GitHubWorkspaceStore> githubWorkspaceStore,
+            Optional<GitHubAppService> github,
+            String agentHome) {
+        this(properties, workspaceRegistry, workspaceFactory, githubWorkspaceStore, github,
+                Optional.empty(), Optional.empty(), agentHome);
     }
 
     /**
@@ -88,7 +115,8 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
             WorkspaceRegistry workspaceRegistry,
             WorkspaceFactory workspaceFactory,
             String agentHome) {
-        this(properties, workspaceRegistry, workspaceFactory, Optional.empty(), Optional.empty(), agentHome);
+        this(properties, workspaceRegistry, workspaceFactory, Optional.empty(), Optional.empty(),
+                Optional.empty(), Optional.empty(), agentHome);
     }
 
     /** Wires this manager in as the registry's rehydrator so resumed chats restore their workspace. */
@@ -103,18 +131,16 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
     }
 
     /**
-     * Creates a persistent, host-backed workspace whose root <em>is</em> a clone of the given GitHub
-     * repository. The repository is cloned into {@code $AGENT_HOME/workspace/<repo>-<short-id>/} (a
-     * stable per-chat directory, e.g. {@code ~/.hugin/workspace/hugin-1a2b3c4d/}) so the agent and the
-     * file tree see the repository's files at the workspace root.
+     * Creates a fully isolated, containerized workspace for a GitHub project chat. A dedicated Docker
+     * container and named volume are provisioned and the repository is cloned <em>inside</em> the
+     * container at {@code /workspace/repo} — nothing is written to the host. The agent's file and shell
+     * tools all execute inside that container (see {@link WorkspaceContext}), so the repository code and
+     * command execution stay isolated from the host.
      *
-     * <p>Unlike the generic Docker sandboxes, a GitHub project workspace does not start a container:
-     * all tools run on the host from inside the clone. The binding is persisted so a chat resumed long
-     * after creation rehydrates to the same directory (see {@link #rehydrate(String)}), re-cloning when
-     * the directory was removed. The agent's file and shell tools remain confined to this directory.
+     * <p>This replaces the previous host-clone behaviour: project chats now fail loudly when the
+     * isolated sandbox runtime is unavailable rather than silently falling back to running on the host.
      *
-     * @param repoFullName the {@code owner/repo} being cloned; used to name the workspace and to give
-     *                     the agent repository context
+     * @param repoFullName the {@code owner/repo} being cloned; used to give the agent repository context
      */
     public SandboxInfo createGitHubRepoSandbox(
             String imageOverride,
@@ -123,100 +149,137 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
             String branch,
             String accessToken,
             BugReportCatalogService.StoredBugReport bugReport) {
-        String id = UUID.randomUUID().toString();
-        Path workspace;
-        try {
-            Path dir = githubWorkspacesHome.resolve(repoLeafName(repoFullName) + "-" + id.substring(0, 8));
-            Files.createDirectories(dir);
-            workspace = dir.toRealPath();
-        } catch (IOException e) {
-            throw new RuntimeException("Could not create GitHub workspace directory: " + e.getMessage(), e);
+        if (projectSessions.isEmpty() || projectRuntime.isEmpty() || !projectSessions.get().enabled()) {
+            throw new IllegalStateException(
+                    "Project chats require an isolated sandbox container, but the sandbox runtime is "
+                    + "unavailable or disabled (hugin.sandbox.enabled). There is no host fallback for "
+                    + "project chats.");
         }
-
-        SandboxInfo info = new SandboxInfo(id, GITHUB_WORKSPACE_PREFIX + id,
-                imageOverride == null || imageOverride.isBlank() ? "host" : imageOverride,
-                SandboxInfo.RUNNING, Instant.now(), workspace.toString());
+        RepositoryConfig repository = new RepositoryConfig(cloneUrl, repoFullName, branch, accessToken);
+        SandboxSession session = projectSessions.get().createForChat(null, repository);
         try {
-            cloneRepository(workspace, cloneUrl, branch, accessToken, bugReport);
-            workspaceRegistry.register(id, workspaceFactory.create(workspace));
-            workspaceRegistry.registerGithubRepo(id, repoFullName);
-            sandboxes.put(id, new LiveSandbox(info, false, true));
-            githubWorkspaceStore.ifPresent(store -> store.save(
-                    new GitHubWorkspaceStore.Record(id, repoFullName, branch, cloneUrl, info.workspace())));
-            log.info("Created GitHub project workspace {} (repo={}, branch={}, dir={})",
-                    id, repoFullName, branch, workspace);
-            return info;
+            if (bugReport != null) {
+                stageBugReport(session, bugReport);
+            }
+            return registerProjectSandbox(session, repoFullName, imageOverride);
         } catch (RuntimeException e) {
-            workspaceRegistry.unregister(id);
-            deleteQuietly(workspace);
+            projectSessions.get().delete(session.sandboxId());
+            unregisterProjectSandbox(session.sandboxId());
             throw e;
         }
     }
 
     /**
-     * Restores a GitHub project workspace whose in-memory registration was lost (e.g. after a
-     * restart) from its persisted binding, re-cloning the repository when the directory is gone. Used
-     * by {@link WorkspaceRegistry} on a cache miss so a resumed chat resolves to its repository clone
-     * instead of the default host workspace.
+     * Registers an isolated project sandbox in this process: a placeholder host workspace (used only
+     * for skill discovery and path display — never for repository I/O), the container
+     * {@link WorkspaceContext} that routes file/shell tools into the container, and the repository
+     * context. Returns the {@link SandboxInfo} surfaced to the API.
      */
-    @Override
-    public synchronized boolean rehydrate(String sandboxId) {
-        if (sandboxId == null || sandboxId.isBlank() || sandboxes.containsKey(sandboxId)) {
-            return sandboxes.containsKey(sandboxId);
+    private SandboxInfo registerProjectSandbox(SandboxSession session, String repoFullName, String imageOverride) {
+        String id = session.sandboxId();
+        Path placeholder = placeholderWorkspace(id);
+        workspaceRegistry.register(id, workspaceFactory.create(placeholder));
+        if (repoFullName != null && !repoFullName.isBlank()) {
+            workspaceRegistry.registerGithubRepo(id, repoFullName);
         }
-        if (githubWorkspaceStore.isEmpty()) {
-            return false;
+        workspaceRegistry.registerContainerContext(id,
+                WorkspaceContext.container(null, id, session.repositoryPath()));
+        projectSandboxes.put(id, new ProjectSandbox(session, repoFullName));
+        SandboxInfo info = new SandboxInfo(id, containerNameOf(session), sandboxImage(imageOverride),
+                statusLabel(session.status()), session.createdAt(), session.repositoryPath());
+        log.info("Created isolated project sandbox {} (repo={}, branch={})",
+                id, repoFullName, session.repositoryBranch());
+        return info;
+    }
+
+    private void stageBugReport(SandboxSession session, BugReportCatalogService.StoredBugReport bugReport) {
+        String relativePath = bugReport.relativePath();
+        if (relativePath == null || relativePath.isBlank()) {
+            relativePath = "bug-reports/imported/" + bugReport.id() + ".txt";
         }
-        Optional<GitHubWorkspaceStore.Record> stored = githubWorkspaceStore.get().find(sandboxId);
-        if (stored.isEmpty()) {
-            return false;
-        }
-        GitHubWorkspaceStore.Record record = stored.get();
-        Path workspace = Path.of(record.workspacePath());
-        boolean hasClone = Files.isDirectory(workspace.resolve(".git"));
-        if (!hasClone) {
-            try {
-                Files.createDirectories(workspace);
-                deleteContents(workspace);
-                String token = github.flatMap(GitHubAppService::installationToken).orElse(null);
-                cloneRepository(workspace, record.cloneUrl(), record.branch(), token, null);
-                log.info("Re-cloned GitHub project workspace {} (repo={}) into {}",
-                        sandboxId, record.repoFullName(), workspace);
-            } catch (RuntimeException | IOException e) {
-                log.warn("Could not re-clone GitHub workspace {} ({}): {}",
-                        sandboxId, record.repoFullName(), e.getMessage());
-                return false;
-            }
-        }
-        SandboxInfo info = new SandboxInfo(sandboxId, GITHUB_WORKSPACE_PREFIX + sandboxId,
-                "host", SandboxInfo.RUNNING, Instant.now(), workspace.toString());
-        workspaceRegistry.register(sandboxId, workspaceFactory.create(workspace));
-        workspaceRegistry.registerGithubRepo(sandboxId, record.repoFullName());
-        sandboxes.put(sandboxId, new LiveSandbox(info, false, true));
-        log.info("Rehydrated GitHub project workspace {} (repo={}, dir={})",
-                sandboxId, record.repoFullName(), workspace);
-        return true;
+        projectRuntime.orElseThrow().writeFile(session.sandboxId(), relativePath, bugReport.content());
     }
 
     /**
-     * Derives a safe, single-segment workspace directory name from an {@code owner/repo} (or bare
-     * repo) string, falling back to {@code "workspace"} when nothing usable remains.
+     * Restores an isolated project sandbox whose in-memory registration was lost (e.g. after a
+     * restart) from its persisted {@link SandboxSession}, restarting a stopped container as needed.
+     * Used by {@link WorkspaceRegistry} on a cache miss so a resumed chat reconnects to its container.
      */
-    private static String repoLeafName(String repoFullName) {
-        if (repoFullName == null || repoFullName.isBlank()) {
-            return "workspace";
+    @Override
+    public synchronized boolean rehydrate(String sandboxId) {
+        if (sandboxId == null || sandboxId.isBlank() || sandboxes.containsKey(sandboxId)
+                || projectSandboxes.containsKey(sandboxId)) {
+            return sandboxes.containsKey(sandboxId) || projectSandboxes.containsKey(sandboxId);
         }
-        String leaf = repoFullName.trim();
-        int slash = leaf.lastIndexOf('/');
-        if (slash >= 0) {
-            leaf = leaf.substring(slash + 1);
+        if (projectSessions.isEmpty()) {
+            return false;
         }
-        leaf = leaf.replaceAll("[^A-Za-z0-9._-]", "-");
-        while (leaf.startsWith(".")) {
-            leaf = leaf.substring(1);
+        Optional<SandboxSession> reconnected = projectSessions.get().reconnect(sandboxId);
+        if (reconnected.isEmpty()) {
+            return false;
         }
-        return leaf.isBlank() ? "workspace" : leaf;
+        SandboxSession session = reconnected.get();
+        if (session.status() != com.example.agent.sandbox.SandboxStatus.READY) {
+            log.warn("Project sandbox {} is not recoverable (status={})", sandboxId, session.status());
+            return false;
+        }
+        registerProjectSandbox(session, repoFullNameFromUrl(session.repositoryUrl()), null);
+        log.info("Rehydrated isolated project sandbox {} (repo={})",
+                sandboxId, repoFullNameFromUrl(session.repositoryUrl()));
+        return true;
     }
+
+    /** Creates (once) the empty per-sandbox host directory used as the placeholder workspace root. */
+    private Path placeholderWorkspace(String id) {
+        try {
+            Path dir = sandboxesHome.resolve(id).resolve("workspace");
+            Files.createDirectories(dir);
+            return dir.toRealPath();
+        } catch (IOException e) {
+            throw new RuntimeException("Could not create placeholder workspace for sandbox " + id, e);
+        }
+    }
+
+    private void unregisterProjectSandbox(String id) {
+        projectSandboxes.remove(id);
+        workspaceRegistry.unregister(id);
+        workspaceRegistry.unregisterContainerContext(id);
+        deleteQuietly(sandboxesHome.resolve(id));
+    }
+
+    private String containerNameOf(SandboxSession session) {
+        return session.containerName() != null ? session.containerName() : GITHUB_WORKSPACE_PREFIX + session.sandboxId();
+    }
+
+    private String sandboxImage(String imageOverride) {
+        return imageOverride == null || imageOverride.isBlank() ? "hugin-agent-sandbox" : imageOverride;
+    }
+
+    private static String statusLabel(com.example.agent.sandbox.SandboxStatus status) {
+        return status == com.example.agent.sandbox.SandboxStatus.READY ? SandboxInfo.RUNNING
+                : status == com.example.agent.sandbox.SandboxStatus.STOPPED ? SandboxInfo.STOPPED
+                : SandboxInfo.ERROR;
+    }
+
+    /** Best-effort extraction of {@code owner/repo} from an https clone URL. */
+    static String repoFullNameFromUrl(String cloneUrl) {
+        if (cloneUrl == null || cloneUrl.isBlank()) {
+            return null;
+        }
+        String trimmed = cloneUrl.trim();
+        int scheme = trimmed.indexOf("://");
+        String afterScheme = scheme >= 0 ? trimmed.substring(scheme + 3) : trimmed;
+        int slash = afterScheme.indexOf('/');
+        String path = slash >= 0 ? afterScheme.substring(slash + 1) : afterScheme;
+        if (path.endsWith(".git")) {
+            path = path.substring(0, path.length() - 4);
+        }
+        path = path.replaceFirst("^/+", "").replaceFirst("/+$", "");
+        return path.isBlank() ? null : path;
+    }
+
+    /** A registered isolated project sandbox: its persisted session and the {@code owner/repo} it holds. */
+    private record ProjectSandbox(SandboxSession session, String repoFullName) {}
 
     private SandboxInfo createSandbox(String imageOverride) {
         return createSandbox(imageOverride, "workspace");
@@ -282,67 +345,37 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
         return info;
     }
 
-    private void cloneRepository(
-            Path workspace,
-            String cloneUrl,
-            String branch,
-            String accessToken,
-            BugReportCatalogService.StoredBugReport bugReport) {
-        // Clone directly into the workspace root so the repository's files are the workspace root
-        // (no nested workspace/<repo> directory). The workspace directory already exists and is
-        // empty, which git clone accepts as the destination.
-        List<String> command = new ArrayList<>(List.of("git", "clone", "--single-branch"));
-        if (branch != null && !branch.isBlank()) {
-            command.addAll(List.of("--branch", branch));
-        }
-        command.addAll(List.of(cloneUrl, workspace.toString()));
-
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.directory(workspace.getParent().toFile());
-        builder.redirectErrorStream(true);
-        configureGitCredentials(builder, accessToken);
-
-        ProcessResult result = runHostProcess(builder, properties.startTimeout());
-        if (result.timedOut() || result.exitCode() != 0) {
-            throw new RuntimeException("Failed to clone GitHub repository into sandbox: "
-                    + (result.timedOut() ? "git clone timed out" : result.output()));
-        }
-        if (bugReport != null) {
-            importBugReport(workspace, bugReport);
-        }
-    }
-
-    private void importBugReport(Path repoRoot, BugReportCatalogService.StoredBugReport bugReport) {
-        String relativePath = bugReport.relativePath();
-        if (relativePath == null || relativePath.isBlank()) {
-            relativePath = "bug-reports/imported/" + bugReport.id() + ".txt";
-        }
-        Path destination = repoRoot.resolve(relativePath).normalize();
-        if (!destination.startsWith(repoRoot)) {
-            throw new RuntimeException("Bug report path resolves outside the repository workspace.");
-        }
-        try {
-            Files.createDirectories(destination.getParent());
-            Files.writeString(
-                    destination,
-                    bugReport.content(),
-                    StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to stage bug report in repository sandbox: " + e.getMessage(), e);
-        }
-    }
-
     public List<SandboxInfo> list() {
         return sandboxes.values().stream().map(LiveSandbox::info).toList();
     }
 
     public Optional<SandboxInfo> get(String id) {
-        if (id != null && !sandboxes.containsKey(id)) {
+        if (id != null && !sandboxes.containsKey(id) && !projectSandboxes.containsKey(id)) {
             rehydrate(id);
         }
+        ProjectSandbox project = projectSandboxes.get(id);
+        if (project != null) {
+            return Optional.of(projectSandboxInfo(project));
+        }
         return Optional.ofNullable(sandboxes.get(id)).map(LiveSandbox::info);
+    }
+
+    /** Builds the API view of an isolated project sandbox, reflecting the container's live status. */
+    private SandboxInfo projectSandboxInfo(ProjectSandbox project) {
+        SandboxSession session = project.session();
+        String status = statusLabel(session.status());
+        if (projectRuntime.isPresent()) {
+            try {
+                SandboxRuntime.SandboxState state = projectRuntime.get().inspect(session.sandboxId());
+                if (state != null) {
+                    status = statusLabel(state.status());
+                }
+            } catch (RuntimeException ignored) {
+                // fall back to the last persisted status
+            }
+        }
+        return new SandboxInfo(session.sandboxId(), containerNameOf(session), "hugin-agent-sandbox",
+                status, session.createdAt(), session.repositoryPath());
     }
 
     /** Maximum directory depth walked when building a workspace file tree. */
@@ -356,8 +389,30 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
      * the walk is depth- and width-bounded, and directories sort before files (each alphabetically).
      */
     public Optional<List<FileNode>> listFiles(String id) {
-        if (id != null && !sandboxes.containsKey(id)) {
+        if (id != null && !sandboxes.containsKey(id) && !projectSandboxes.containsKey(id)) {
             rehydrate(id);
+        }
+        if (projectSandboxes.containsKey(id) && projectRuntime.isPresent()) {
+            // Isolated project sandboxes have no host workspace: list the repository tree inside the
+            // container instead of walking the (empty) placeholder directory.
+            try {
+                List<FileEntry> entries = projectRuntime.get().listFiles(id, ".");
+                List<FileNode> nodes = new ArrayList<>();
+                for (FileEntry entry : entries) {
+                    if (entry.directory()) {
+                        if (Workspace.IGNORED_DIRECTORIES.contains(entry.name())) {
+                            continue;
+                        }
+                        nodes.add(FileNode.directory(entry.name(), entry.path(), List.of()));
+                    } else {
+                        nodes.add(FileNode.file(entry.name(), entry.path(), entry.size()));
+                    }
+                }
+                return Optional.of(nodes);
+            } catch (RuntimeException e) {
+                log.warn("Could not list project sandbox {} files: {}", id, e.getMessage());
+                return Optional.of(List.of());
+            }
         }
         LiveSandbox sandbox = sandboxes.get(id);
         if (sandbox == null) {
@@ -408,11 +463,19 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
     }
 
     /** Stops and removes the sandbox container and deletes its workspace. */
+    @Override
     public void delete(String id) {
-        if (id != null && !sandboxes.containsKey(id)) {
-            // Rehydrate first so deleting a chat resumed after a restart still removes its on-disk
-            // clone and persisted binding, not just the (already absent) in-memory entry.
+        if (id != null && !sandboxes.containsKey(id) && !projectSandboxes.containsKey(id)) {
+            // Rehydrate first so deleting a chat resumed after a restart still removes its container
+            // and persisted session, not just the (already absent) in-memory entry.
             rehydrate(id);
+        }
+        if (projectSandboxes.containsKey(id)) {
+            // Isolated project chat: destroy the container + volume and its persisted session.
+            projectSessions.ifPresent(svc -> svc.delete(id));
+            unregisterProjectSandbox(id);
+            log.info("Deleted isolated project sandbox {}", id);
+            return;
         }
         LiveSandbox sandbox = sandboxes.remove(id);
         workspaceRegistry.unregister(id);
@@ -449,13 +512,21 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
         if (sandboxes.containsKey(sandboxId)) {
             return true;
         }
-        return rehydrate(sandboxId);
+        if (!projectSandboxes.containsKey(sandboxId) && !rehydrate(sandboxId)) {
+            return false;
+        }
+        // Project sandbox: defer to the container's live state.
+        return projectRuntime.map(rt -> rt.isActive(sandboxId)).orElse(false);
     }
 
     @Override
     public ExecResult exec(String sandboxId, String command, Duration timeout) {
-        if (sandboxId != null && !sandboxes.containsKey(sandboxId)) {
+        if (sandboxId != null && !sandboxes.containsKey(sandboxId) && !projectSandboxes.containsKey(sandboxId)) {
             rehydrate(sandboxId);
+        }
+        // Isolated project chats run every command inside their container; no host fallback.
+        if (projectSandboxes.containsKey(sandboxId) && projectRuntime.isPresent()) {
+            return projectRuntime.get().exec(sandboxId, command, timeout);
         }
         LiveSandbox sandbox = sandboxes.get(sandboxId);
         if (sandbox == null) {
@@ -471,6 +542,47 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
                 info.containerName(), "/bin/sh", "-c", command);
         ProcessResult result = runProcess(execCmd, effective);
         return new ExecResult(result.exitCode(), result.output(), result.timedOut());
+    }
+
+    @Override
+    public FileResult readFile(String sandboxId, String path) {
+        ensureProjectRuntime(sandboxId);
+        return projectRuntime.get().readFile(sandboxId, path);
+    }
+
+    @Override
+    public void writeFile(String sandboxId, String path, String content) {
+        ensureProjectRuntime(sandboxId);
+        projectRuntime.get().writeFile(sandboxId, path, content);
+    }
+
+    @Override
+    public List<FileEntry> listFiles(String sandboxId, String path) {
+        ensureProjectRuntime(sandboxId);
+        return projectRuntime.get().listFiles(sandboxId, path);
+    }
+
+    @Override
+    public void restart(String sandboxId) {
+        ensureProjectRuntime(sandboxId);
+        projectRuntime.get().restart(sandboxId);
+    }
+
+    @Override
+    public SandboxState inspect(String sandboxId) {
+        ensureProjectRuntime(sandboxId);
+        return projectRuntime.get().inspect(sandboxId);
+    }
+
+    /** Routes a sandbox-id–keyed file/lifecycle call to the isolated runtime, failing loudly otherwise. */
+    private void ensureProjectRuntime(String sandboxId) {
+        if (sandboxId != null && !projectSandboxes.containsKey(sandboxId)) {
+            rehydrate(sandboxId);
+        }
+        if (projectRuntime.isEmpty()) {
+            throw new IllegalStateException(
+                    "No isolated sandbox runtime is available for sandbox " + sandboxId);
+        }
     }
 
     @PreDestroy
@@ -551,55 +663,6 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
      */
     private record LiveSandbox(SandboxInfo info, boolean dockerBacked, boolean persistentGithub) {}
 
-    private void configureGitCredentials(ProcessBuilder builder, String accessToken) {
-        if (accessToken == null || accessToken.isBlank()) {
-            return;
-        }
-        var env = builder.environment();
-        env.put("GIT_TERMINAL_PROMPT", "0");
-        env.put("GIT_CONFIG_COUNT", "1");
-        env.put("GIT_CONFIG_KEY_0", "credential.helper");
-        env.put("GIT_CONFIG_VALUE_0", "!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f");
-        env.put("GITHUB_TOKEN", accessToken);
-    }
-
-    private ProcessResult runHostProcess(ProcessBuilder builder, Duration timeout) {
-        Process process;
-        try {
-            process = builder.start();
-        } catch (IOException e) {
-            return new ProcessResult(-1, "Could not run '" + builder.command().get(0) + "': " + e.getMessage(), false);
-        }
-        StringBuilder output = new StringBuilder();
-        Thread reader = new Thread(() -> {
-            try (BufferedReader in = new BufferedReader(
-                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = in.readLine()) != null) {
-                    output.append(line).append('\n');
-                }
-            } catch (IOException ignored) {
-                // stream closed; keep what we have
-            }
-        });
-        reader.setDaemon(true);
-        reader.start();
-        try {
-            boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                reader.join(1000);
-                return new ProcessResult(-1, output.toString().strip(), true);
-            }
-            reader.join(2000);
-            return new ProcessResult(process.exitValue(), output.toString().strip(), false);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            process.destroyForcibly();
-            return new ProcessResult(-1, output.toString().strip(), false);
-        }
-    }
-
     /** Runs a host process (the docker CLI), capturing combined stdout/stderr. */
     private ProcessResult runProcess(List<String> command, Duration timeout) {
         ProcessBuilder builder = new ProcessBuilder(command);
@@ -637,16 +700,6 @@ public class DockerSandboxManager implements SandboxRuntime, WorkspaceRehydrator
             Thread.currentThread().interrupt();
             process.destroyForcibly();
             return new ProcessResult(-1, output.toString().strip(), false);
-        }
-    }
-
-    /** Removes everything under {@code dir} (but not {@code dir} itself), e.g. to empty a stale clone. */
-    private static void deleteContents(Path dir) throws IOException {
-        if (dir == null || !Files.isDirectory(dir)) {
-            return;
-        }
-        try (var stream = Files.list(dir)) {
-            stream.forEach(DockerSandboxManager::deleteQuietly);
         }
     }
 

@@ -35,6 +35,7 @@ import {
   fetchCurrentUser,
   fetchIntegrations,
   fetchSandboxFiles,
+  fetchSandbox,
   formatTimestamp,
   getThreadTitle,
   loadAuthSession,
@@ -909,6 +910,7 @@ export default function App() {
   const [bugReportNotice, setBugReportNotice] = useState<string | null>(null);
 
   const [files, setFiles] = useState<FileNode[]>([]);
+  const [sandboxStatus, setSandboxStatus] = useState<string | undefined>(undefined);
   const [wsOpen, setWsOpen] = useState(true);
   const [githubStatus, setGitHubStatus] = useState<GitHubStatus | null>(null);
   const [repoOptions, setRepoOptions] = useState<GitHubRepository[]>([]);
@@ -1117,6 +1119,12 @@ export default function App() {
       } catch {
         setFiles([]);
       }
+      // Surface the isolated container's health alongside the file tree (Sandbox Ready/Starting/Failed).
+      try {
+        setSandboxStatus((await fetchSandbox(session.token, id)).status);
+      } catch {
+        setSandboxStatus(undefined);
+      }
     },
     [session]
   );
@@ -1134,9 +1142,11 @@ export default function App() {
   useEffect(() => {
     if (!session || screen !== "chat" || !thread) {
       setFiles([]);
+      setSandboxStatus(undefined);
       return;
     }
     setFiles([]);
+    setSandboxStatus(undefined);
     if (thread.kind === "agent") {
       void refreshAgentFiles();
     } else if (thread.sandboxId) {
@@ -1766,6 +1776,7 @@ export default function App() {
                   ? (thread.repoName ?? thread.repoFullName ?? "repo")
                   : "~"}
                 badge={thread.kind === "github" ? "github" : "agent"}
+                sandboxStatus={thread.kind === "github" ? sandboxStatus : undefined}
                 defaultOpenDirectories={thread.kind !== "github"}
               />
             ) : null}

@@ -1,5 +1,7 @@
 package com.example.agent.tool;
 
+import com.example.agent.sandbox.SandboxRuntime;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -7,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /** Applies a targeted string replacement to a file, for surgical code edits. */
 @Component
@@ -14,10 +17,18 @@ public class EditFileTool implements LocalTool {
 
     private final Workspace workspace;
     private final PathDenyList denyList;
+    private final Optional<SandboxRuntime> sandboxRuntime;
 
-    public EditFileTool(Workspace workspace, PathDenyList denyList) {
+    @Autowired
+    public EditFileTool(Workspace workspace, PathDenyList denyList, Optional<SandboxRuntime> sandboxRuntime) {
         this.workspace = workspace;
         this.denyList = denyList;
+        this.sandboxRuntime = sandboxRuntime;
+    }
+
+    /** Convenience constructor for tests / hosts without a sandbox runtime (host execution only). */
+    public EditFileTool(Workspace workspace, PathDenyList denyList) {
+        this(workspace, denyList, Optional.empty());
     }
 
     @Override
@@ -76,6 +87,16 @@ public class EditFileTool implements LocalTool {
         }
         if (oldString.equals(newString)) {
             return "Error: old_string and new_string are identical; nothing to change.";
+        }
+
+        if (denyList.isDenied(requested)) {
+            return "Error: access to '" + requested + "' is denied by configuration.";
+        }
+
+        // Isolated project chat: edit the file inside the sandbox container, never the host.
+        if (ctx.requiresContainer() && sandboxRuntime.isPresent()) {
+            return ContainerWorkspaceTools.editFile(sandboxRuntime.get(),
+                    ctx.workspaceContext().sandboxId(), requested, oldString, newString, replaceAll);
         }
 
         Path file = ws.resolve(requested);
