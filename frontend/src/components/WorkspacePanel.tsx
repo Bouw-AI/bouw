@@ -56,6 +56,23 @@ function FileNodeRow({ node, depth, defaultOpen }: { node: FileNode; depth: numb
   );
 }
 
+/**
+ * Maps a project chat's raw sandbox container status to a user-facing badge. The container id is
+ * intentionally never exposed — only its health (Sandbox Ready / Starting / Failed).
+ */
+function describeSandboxStatus(status?: string): { label: string; color: string } | null {
+  switch (status) {
+    case "running":
+      return { label: "Sandbox Ready", color: COLORS.ink };
+    case "stopped":
+      return { label: "Sandbox Starting", color: COLORS.muted };
+    case "error":
+      return { label: "Sandbox Failed", color: "#c0392b" };
+    default:
+      return null;
+  }
+}
+
 /** Sandbox / GitHub repository file tree shown alongside workspace-backed chats. */
 export function WorkspacePanel(props: {
   sessionId: string;
@@ -65,9 +82,12 @@ export function WorkspacePanel(props: {
   label: string;
   rootName: string;
   badge: string;
+  /** Raw container status for a project chat's sandbox ("running" | "stopped" | "error"); omitted otherwise. */
+  sandboxStatus?: string;
   defaultOpenDirectories: boolean;
 }) {
-  const { files, wsOpen, onToggleWs, label, rootName, badge, defaultOpenDirectories } = props;
+  const { files, wsOpen, onToggleWs, label, rootName, badge, sandboxStatus, defaultOpenDirectories } = props;
+  const sandboxBadge = describeSandboxStatus(sandboxStatus);
 
   return (
     <div className="file-tree">
@@ -76,6 +96,11 @@ export function WorkspacePanel(props: {
         <Network size={14} strokeWidth={2} color={COLORS.ink} />
         <span className="mono">{label || "~/"}</span>
         <span className="tree-badge">{badge}</span>
+        {sandboxBadge ? (
+          <span className="tree-badge" style={{ color: sandboxBadge.color }} title="Isolated sandbox container health">
+            {sandboxBadge.label}
+          </span>
+        ) : null}
       </TreeRow>
 
       <TreeRow depth={1} onClick={onToggleWs}>

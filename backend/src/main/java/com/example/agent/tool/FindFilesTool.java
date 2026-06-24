@@ -1,5 +1,7 @@
 package com.example.agent.tool;
 
+import com.example.agent.sandbox.SandboxRuntime;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -8,9 +10,11 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
@@ -22,11 +26,20 @@ public class FindFilesTool implements LocalTool {
 
     private static final int DEFAULT_MAX_RESULTS = 200;
     private static final int HARD_MAX_RESULTS = 2000;
+    private static final Duration CONTAINER_TIMEOUT = Duration.ofSeconds(60);
 
     private final Workspace workspace;
+    private final Optional<SandboxRuntime> sandboxRuntime;
 
-    public FindFilesTool(Workspace workspace) {
+    @Autowired
+    public FindFilesTool(Workspace workspace, Optional<SandboxRuntime> sandboxRuntime) {
         this.workspace = workspace;
+        this.sandboxRuntime = sandboxRuntime;
+    }
+
+    /** Convenience constructor for tests / hosts without a sandbox runtime (host execution only). */
+    public FindFilesTool(Workspace workspace) {
+        this(workspace, Optional.empty());
     }
 
     @Override
@@ -82,6 +95,12 @@ public class FindFilesTool implements LocalTool {
         String typeFilter = optionalString(arguments, "type", "file").toLowerCase();
         int requestedMax = Math.min(optionalInt(arguments, "max_results", DEFAULT_MAX_RESULTS), HARD_MAX_RESULTS);
         int maxResults = requestedMax <= 0 ? DEFAULT_MAX_RESULTS : requestedMax;
+
+        // Isolated project chat: run the file search inside the sandbox container, never the host.
+        if (ctx.requiresContainer() && sandboxRuntime.isPresent()) {
+            return ContainerWorkspaceTools.findFiles(sandboxRuntime.get(), ctx.workspaceContext().sandboxId(),
+                    pattern, requested, typeFilter, maxResults, CONTAINER_TIMEOUT);
+        }
 
         Workspace ws = ctx.workspace();
         Path base = ws.resolve(requested);

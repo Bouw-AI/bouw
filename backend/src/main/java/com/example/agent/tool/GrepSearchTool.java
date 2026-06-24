@@ -1,5 +1,7 @@
 package com.example.agent.tool;
 
+import com.example.agent.sandbox.SandboxRuntime;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -8,9 +10,11 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Stream;
@@ -21,11 +25,20 @@ public class GrepSearchTool implements LocalTool {
 
     private static final int DEFAULT_MAX_RESULTS = 200;
     private static final int HARD_MAX_RESULTS = 2000;
+    private static final Duration CONTAINER_TIMEOUT = Duration.ofSeconds(60);
 
     private final Workspace workspace;
+    private final Optional<SandboxRuntime> sandboxRuntime;
 
-    public GrepSearchTool(Workspace workspace) {
+    @Autowired
+    public GrepSearchTool(Workspace workspace, Optional<SandboxRuntime> sandboxRuntime) {
         this.workspace = workspace;
+        this.sandboxRuntime = sandboxRuntime;
+    }
+
+    /** Convenience constructor for tests / hosts without a sandbox runtime (host execution only). */
+    public GrepSearchTool(Workspace workspace) {
+        this(workspace, Optional.empty());
     }
 
     @Override
@@ -81,6 +94,12 @@ public class GrepSearchTool implements LocalTool {
         boolean ignoreCase = optionalBoolean(arguments, "ignore_case", false);
         int requestedMax = Math.min(optionalInt(arguments, "max_results", DEFAULT_MAX_RESULTS), HARD_MAX_RESULTS);
         final int maxResults = requestedMax <= 0 ? DEFAULT_MAX_RESULTS : requestedMax;
+
+        // Isolated project chat: run the content search inside the sandbox container, never the host.
+        if (ctx.requiresContainer() && sandboxRuntime.isPresent()) {
+            return ContainerWorkspaceTools.grep(sandboxRuntime.get(), ctx.workspaceContext().sandboxId(),
+                    patternText, requested, glob, ignoreCase, maxResults, CONTAINER_TIMEOUT);
+        }
 
         Pattern pattern;
         try {

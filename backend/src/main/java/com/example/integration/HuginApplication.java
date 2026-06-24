@@ -10,16 +10,20 @@ import com.example.agent.tool.LocalToolProperties;
 import com.example.integration.auth.AuthJwtProperties;
 import com.example.integration.github.GitHubProperties;
 import com.example.integration.google.GoogleWorkspaceProperties;
+import com.example.integration.sandbox.ProjectSandboxProperties;
 import com.example.integration.sandbox.SandboxProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication(scanBasePackages = "com.example")
+@EnableScheduling
 @EnableConfigurationProperties({LlmProperties.class, LocalToolProperties.class,
         EmbeddingProperties.class, MemoryProperties.class, ConversationMemoryProperties.class,
         CloudAgentProperties.class, SchedulerProperties.class, GoogleWorkspaceProperties.class,
-        GitHubProperties.class, AuthJwtProperties.class, SandboxProperties.class})
+        GitHubProperties.class, AuthJwtProperties.class, SandboxProperties.class,
+        ProjectSandboxProperties.class})
 public class HuginApplication {
 
     public static void main(String[] args) {

@@ -694,6 +694,11 @@ export async function fetchSandboxFiles(token: string, id: string): Promise<File
   return apiFetch<FileNode[]>(`/api/sandboxes/${encodeURIComponent(id)}/files`, {}, token);
 }
 
+/** Fetches a project chat's sandbox metadata (including its container health status). */
+export async function fetchSandbox(token: string, id: string): Promise<SandboxInfo> {
+  return apiFetch<SandboxInfo>(`/api/sandboxes/${encodeURIComponent(id)}`, {}, token);
+}
+
 export async function fetchIntegrations(token: string): Promise<Integration[]> {
   return apiFetch<Integration[]>("/api/integrations", {}, token);
 }

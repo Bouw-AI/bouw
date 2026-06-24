@@ -1,4 +1,8 @@
-# Optional override that enables Hugin's per-session Docker sandboxes.
+# Optional override that enables Hugin's per-session Docker sandboxes, including the fully isolated
+# project-chat (GitHub repository) sandboxes that clone the repo inside a dedicated container.
+#
+#   # Build the agent sandbox image once so new project chats have an image to run:
+#   docker build -t hugin-agent-sandbox:latest docker/sandbox
 #
 #   docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up --build
 #
@@ -12,8 +16,11 @@ services:
   hugin:
     environment:
       SANDBOX_ENABLED: "true"
-      # Image used for new sandboxes; must be pullable/available to the host daemon.
+      # Image for the generic agent.sandbox.* bind-mount sandboxes (POST /api/sandboxes).
       SANDBOX_IMAGE: ${SANDBOX_IMAGE:-ubuntu:24.04}
+      # Image for the isolated project-chat sandboxes (hugin.sandbox.*); build it from
+      # docker/sandbox/Dockerfile. Must be available to the host daemon.
+      HUGIN_SANDBOX_IMAGE: ${HUGIN_SANDBOX_IMAGE:-hugin-agent-sandbox:latest}
     volumes:
       # ⚠️  Host Docker control — see warning above.
       - /var/run/docker.sock:/var/run/docker.sock
