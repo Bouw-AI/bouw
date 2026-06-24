@@ -78,6 +78,14 @@ git clone https://github.com/jeremyunck/hugin.git && cd hugin
 ./install.sh
 ```
 
+`install.sh` installs the system dependencies it needs — Java 21, Maven, git, curl, Node, and
+**Docker** — then builds the jars and the project-chat sandbox image. Docker is required because
+project (GitHub repository) chats run in an isolated container: the repo is cloned **inside** the
+container and never written to the host. Without it the dashboard reports *"the Docker CLI is
+unavailable"* when you open a project. On Linux the installer pulls in `docker.io`, enables the
+daemon, and adds you to the `docker` group; on macOS it installs Docker Desktop, which you must
+launch so the daemon is running.
+
 Then run the app:
 
 ```bash
@@ -85,7 +93,8 @@ hugin
 ```
 
 The backend listens on `http://localhost:8080` and serves the built frontend from the same
-process.
+process. Run `hugin doctor` at any time to verify Docker, the sandbox image, and the rest of the
+stack.
 
 ## Commands
 
@@ -103,6 +112,9 @@ Set `LLM_REASONING_EFFORT` to override the reasoning effort sent to the model.
 ## Prerequisites
 
 - Java 21 and Maven
+- Docker (CLI + a running daemon) — required for project/GitHub repository chats, which execute in
+  an isolated container. Build the sandbox image once with
+  `docker build -t hugin-agent-sandbox:latest docker/sandbox` (`install.sh` does this for you).
 - An OpenAI-compatible chat endpoint
 - Optional: Redis, if you enable long-term memory
 - Optional: Google credentials, if you want the Google Workspace tools

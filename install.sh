@@ -193,6 +193,10 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   OS_TYPE="macos"
 fi
 
+# Set to true if we add the install user to the docker group during this run; used to
+# remind the user that interactive `docker` use needs a fresh login to pick up the group.
+DOCKER_GROUP_PENDING=false
+
 if [[ -n "${HUGIN_LAUNCHER_PATH:-}" ]]; then
   LAUNCHER_PATH="${HUGIN_LAUNCHER_PATH}"
 else
@@ -218,6 +222,31 @@ if [[ "$OS_TYPE" == "macos" ]]; then
       || die "Could not install Temurin 21 via Homebrew. Install manually from https://adoptium.net"
   }
   pkg_install_redis()   { brew install redis; }
+
+  pkg_install_docker() {
+    # Project (GitHub repository) chats run in isolated Docker containers, so the Docker
+    # CLI + daemon are required. On macOS that means Docker Desktop.
+    if require_cmd docker; then
+      info "Docker already present."
+    else
+      warn "Docker not found — installing Docker Desktop via Homebrew..."
+      brew install --cask docker 2>/dev/null \
+        || die "Could not install Docker Desktop via Homebrew. Install it from https://www.docker.com/products/docker-desktop/ and re-run."
+    fi
+  }
+  docker_daemon_ok() { docker info >/dev/null 2>&1; }
+  docker_start_daemon() {
+    docker_daemon_ok && return 0
+    info "Starting Docker Desktop (this can take up to a minute)..."
+    open -a Docker >/dev/null 2>&1 || open -a "Docker Desktop" >/dev/null 2>&1 || return 1
+    local waited=0
+    until docker_daemon_ok; do
+      waited=$((waited + 2))
+      [[ $waited -ge 60 ]] && return 1
+      sleep 2
+    done
+  }
+  docker_build_sandbox_image() { docker build -t "$1" "$2"; }
 
   svc_install() {
     # Write a LaunchAgent plist (user-level, no sudo).
@@ -441,6 +470,34 @@ DISCORD_SERVICE
 
   pkg_install_redis()   { sudo apt-get install -y redis-server; }
 
+  pkg_install_docker() {
+    # Project (GitHub repository) chats run in isolated Docker containers, so the Docker
+    # CLI + daemon are required. docker.io provides both from the distro repositories.
+    if require_cmd docker; then
+      info "Docker already present."
+    else
+      warn "Docker not found — installing Docker Engine (docker.io)..."
+      pkg_update
+      sudo apt-get install -y docker.io
+    fi
+    # Run the daemon now and on boot; project-chat sandboxes need it.
+    sudo systemctl enable --now docker 2>/dev/null || true
+    # Let the install user (and the hugin systemd service) reach the daemon without sudo.
+    # systemd re-reads supplementary groups when the service (re)starts later in this script.
+    if ! id -nG "$INSTALL_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+      sudo usermod -aG docker "$INSTALL_USER" 2>/dev/null || true
+      DOCKER_GROUP_PENDING=true
+    fi
+  }
+  docker_daemon_ok() { sudo docker info >/dev/null 2>&1; }
+  docker_start_daemon() {
+    sudo systemctl enable --now docker 2>/dev/null || true
+    docker_daemon_ok
+  }
+  # During install the current shell is not yet in the docker group, so build via sudo; the
+  # image lives in the shared daemon and is visible to the hugin service user once it restarts.
+  docker_build_sandbox_image() { sudo docker build -t "$1" "$2"; }
+
   svc_install() {
     sudo_retry --reason "write systemd service file to /etc/systemd/system/" tee "$SERVICE_FILE" > /dev/null <<SERVICE
 # Hugin agent service — managed by install.sh
@@ -648,6 +705,7 @@ if [[ "$OS_TYPE" == "macos" ]]; then
   require_cmd mvn     || pkg_install maven
   require_cmd curl    || pkg_install curl
   require_cmd node    || pkg_install node
+  pkg_install_docker
 
 else
   # Linux: apt-based installs
@@ -675,6 +733,8 @@ else
     pkg_update
     pkg_install "${pkgs_to_install[@]}"
   fi
+
+  pkg_install_docker
 fi
 
 # ── 3. prompts ────────────────────────────────────────────────────────────────
@@ -1113,6 +1173,36 @@ else
         clean package -DskipTests -q
   cp "$REPO_DIR"/backend/target/hugin-backend-*.jar  "$HUGIN_HOME/bin/hugin-server.jar"
   success "Jars built and copied to $HUGIN_HOME/bin/"
+fi
+
+# ── 7. build the project-chat sandbox image ──────────────────────────────────
+# Project (GitHub repository) chats run in an isolated Docker container built from
+# docker/sandbox/Dockerfile. Without a running Docker daemon and this image, the dashboard
+# reports "the Docker CLI is unavailable" when opening a project. Built regardless of
+# SKIP_BUILD since it is independent of the Maven jar build.
+HUGIN_SANDBOX_IMAGE="${HUGIN_SANDBOX_IMAGE:-hugin-agent-sandbox:latest}"
+if require_cmd docker; then
+  if docker_start_daemon; then
+    info "Building project-chat sandbox image ($HUGIN_SANDBOX_IMAGE) — this may take a minute..."
+    if docker_build_sandbox_image "$HUGIN_SANDBOX_IMAGE" "$REPO_DIR/docker/sandbox"; then
+      success "Sandbox image ready: $HUGIN_SANDBOX_IMAGE"
+    else
+      warn "Failed to build the sandbox image. Project chats will not work until it is built:"
+      warn "  docker build -t $HUGIN_SANDBOX_IMAGE $REPO_DIR/docker/sandbox"
+    fi
+  else
+    warn "Docker is installed but the daemon is not reachable — skipping sandbox image build."
+    if [[ "$OS_TYPE" == "macos" ]]; then
+      warn "Start Docker Desktop, then run:"
+    else
+      warn "Start it with 'sudo systemctl enable --now docker', then run:"
+    fi
+    warn "  docker build -t $HUGIN_SANDBOX_IMAGE $REPO_DIR/docker/sandbox"
+  fi
+else
+  warn "Docker CLI not found — project (GitHub repository) chats require Docker."
+  warn "Install Docker, then build the sandbox image:"
+  warn "  docker build -t $HUGIN_SANDBOX_IMAGE $REPO_DIR/docker/sandbox"
 fi
 
 # ── 8. install the hugin launcher ────────────────────────────────────────────
@@ -1660,6 +1750,32 @@ cmd_doctor() {
   fi
 
   echo
+  # ── Sandbox (project chats) ───────────────────────────────────────────────────
+  printf '\033[1;34m[Sandbox]\033[0m\n'
+
+  # Prefer a direct docker call (works when in the docker group); fall back to non-interactive
+  # sudo so the check never hangs waiting for a password.
+  _docker() { docker "$@" 2>/dev/null || sudo -n docker "$@" 2>/dev/null; }
+  _sandbox_image="${HUGIN_SANDBOX_IMAGE:-hugin-agent-sandbox:latest}"
+  if command -v docker >/dev/null 2>&1; then
+    _dr_pass "Docker CLI present ($(docker --version 2>/dev/null | head -1))"
+    if _docker info >/dev/null 2>&1; then
+      _dr_pass "Docker daemon reachable"
+      if _docker image inspect "$_sandbox_image" >/dev/null 2>&1; then
+        _dr_pass "Sandbox image present ($_sandbox_image)"
+      else
+        _dr_fail "Sandbox image missing — build: docker build -t $_sandbox_image $REPO_DIR/docker/sandbox"
+      fi
+    elif [[ "$OS_TYPE" == "macos" ]]; then
+      _dr_fail "Docker daemon not running — start Docker Desktop"
+    else
+      _dr_fail "Docker daemon not running — start: sudo systemctl enable --now docker"
+    fi
+  else
+    _dr_fail "Docker CLI not found — project (GitHub repository) chats require Docker. Re-run install.sh"
+  fi
+
+  echo
   # ── Summary ──────────────────────────────────────────────────────────────────
   printf '\033[1;34m────────────────────────────────────────────────────────────────────────\033[0m\n'
   if [[ $_fails -eq 0 ]]; then
@@ -1958,3 +2074,9 @@ cat <<MSG
   Uninstall:            hugin uninstall
 MSG
 echo
+
+if [[ "$DOCKER_GROUP_PENDING" == "true" ]]; then
+  warn "Added $INSTALL_USER to the 'docker' group. The hugin service already picks this up,"
+  warn "but to run 'docker' yourself without sudo, log out and back in (or run: newgrp docker)."
+  echo
+fi
