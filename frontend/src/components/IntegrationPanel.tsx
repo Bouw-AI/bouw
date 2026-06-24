@@ -1,8 +1,40 @@
-import { ArrowLeft, Puzzle, RefreshCw } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle,
+  Github,
+  Globe,
+  Search,
+  type LucideIcon,
+} from "lucide-react";
 
 import type { Integration } from "../lib/types";
 
-/** Connected-services management screen (Google, GitHub, …). */
+/* ------------------------------------------------------------------ */
+/*  Integration icon map                                               */
+/* ------------------------------------------------------------------ */
+
+const ICON_MAP: Record<string, LucideIcon> & { __brand?: string } = {
+  google: Globe,
+  github: Github,
+  web_search: Search,
+} as Record<string, LucideIcon>;
+
+const LABEL_COLOR_MAP: Record<string, string> = {
+  google: "#4285F4",
+  github: "#1C1F23",
+  web_search: "#8B9099",
+};
+
+const BG_COLOR_MAP: Record<string, string> = {
+  google: "#E8F0FE",
+  github: "#F0F0F1",
+  web_search: "#F4F4F6",
+};
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
+
 export function IntegrationPanel(props: {
   integrations: Integration[];
   loading: boolean;
@@ -12,79 +44,138 @@ export function IntegrationPanel(props: {
   onToggle: (integration: Integration) => void;
   onReconnect: (integration: Integration) => void;
 }) {
-  const { integrations, loading, error, busyId, onBack, onToggle, onReconnect } = props;
+  const { integrations, loading, error, busyId, onBack } = props;
+
+  const connected = integrations.filter((i) => i.connected);
 
   return (
     <>
+      {/* ── Header ─────────────────────────────── */}
       <div className="back-row">
-        <button type="button" className="icon-button back-button" onClick={onBack} aria-label="Back">
+        <button
+          type="button"
+          className="icon-button back-button"
+          onClick={onBack}
+          aria-label="Back"
+        >
           <ArrowLeft size={22} strokeWidth={2} />
         </button>
       </div>
 
-      <div className="screen-pad">
-        <h1 className="screen-title integration-title">Integrations</h1>
-        <p className="integration-subtitle">Manage your connected services. Connected tools are made available to Hugin.</p>
-        {loading ? <p className="integration-subtitle">Refreshing integration status…</p> : null}
-        {!loading && error ? <p className="login-error">{error}</p> : null}
-      </div>
+      {/* ── Loading / Error ────────────────────── */}
+      {loading ? (
+        <div className="screen-pad">
+          <p className="integration-subtitle">Refreshing integration status…</p>
+        </div>
+      ) : null}
+      {!loading && error ? (
+        <div className="screen-pad">
+          <p className="login-error">{error}</p>
+        </div>
+      ) : null}
 
-      <div className="integrations-list">
-        <div className="history-group-label">SERVICES</div>
-        {integrations.length === 0 ? (
-          <p className="history-empty">{loading ? "Refreshing integrations…" : "No integrations available."}</p>
+      {/* ── Connected Tools ────────────────────── */}
+      <div className="integrations-section">
+        <div className="integrations-section-label">Connected Tools</div>
+
+        {connected.length === 0 && !loading ? (
+          <p className="history-empty">No connected tools.</p>
         ) : (
-          integrations.map((integration) => (
-            <div key={integration.id} className="integration-card">
-              <Puzzle size={26} strokeWidth={1.7} color="#1C1F23" />
-              <div className="integration-copy">
-                <div className="integration-name-row">
-                  <span className="integration-name">{integration.name}</span>
-                  {integration.connected ? <span className="integration-badge">CONNECTED</span> : null}
-                </div>
-                <div className="integration-meta">{integration.description}</div>
-              </div>
-              <div className="integration-action">
-                {integration.reconnectable ? (
-                  integration.connected ? (
-                    <>
-                      <button
-                        type="button"
-                        className="icon-button refresh-button"
-                        disabled={busyId === integration.id}
-                        onClick={() => onReconnect(integration)}
-                        aria-label={`Refresh ${integration.name} connection`}
-                        title="Reconnect to refresh permissions"
-                      >
-                        <RefreshCw size={18} strokeWidth={2} />
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        disabled={busyId === integration.id}
-                        onClick={() => onToggle(integration)}
-                      >
-                        {busyId === integration.id ? "…" : "Disconnect"}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      className="dark-button"
-                      disabled={busyId === integration.id}
-                      onClick={() => onToggle(integration)}
-                    >
-                      {busyId === integration.id ? "Connecting…" : "Connect"}
-                    </button>
-                  )
-                ) : (
-                  <span className="integration-meta">{integration.connected ? "Active" : "Off"}</span>
-                )}
-              </div>
-            </div>
-          ))
+          <div className="integrations-cards">
+            {connected.map((integration) => (
+              <IntegrationCard
+                key={integration.id}
+                integration={integration}
+                busyId={busyId}
+              />
+            ))}
+          </div>
         )}
       </div>
+
+      {/* ── Available Tools (empty placeholder) ── */}
+      <div className="integrations-section">
+        <div className="integrations-section-label">Available Tools</div>
+        <div className="integrations-empty">
+          <Globe size={24} strokeWidth={1.5} color="#d0d2d6" />
+          <p className="integrations-empty-text">
+            Browse and install new tools for Hugin to use.
+          </p>
+        </div>
+      </div>
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Single integration card                                            */
+/* ------------------------------------------------------------------ */
+
+function IntegrationCard({
+  integration,
+  busyId,
+}: {
+  integration: Integration;
+  busyId: string | null;
+}) {
+  const Icon = ICON_MAP[integration.id] ?? CheckCircle;
+  const iconColor = LABEL_COLOR_MAP[integration.id] ?? "#1C1F23";
+  const iconBg = BG_COLOR_MAP[integration.id] ?? "#F4F4F6";
+
+  return (
+    <div className="integration-card">
+      {/* Left: icon */}
+      <div
+        className="integration-card-icon"
+        style={{ background: iconBg, color: iconColor }}
+      >
+        <Icon size={26} strokeWidth={1.7} />
+      </div>
+
+      {/* Right: content */}
+      <div className="integration-card-body">
+        {/* Title row */}
+        <div className="integration-card-title-row">
+          <span className="integration-card-name">{integration.name}</span>
+          <span className="integration-card-badge">
+            <CheckCircle size={13} strokeWidth={2.5} />
+            Connected
+          </span>
+        </div>
+
+        {/* Tool chips */}
+        {integration.tools.length > 0 && (
+          <div className="integration-card-chips">
+            {integration.tools.map((tool) => {
+              const label = tool
+                .replace(/^google_/, "")
+                .replace(/^github_/, "")
+                .replace(/_/g, " ")
+                .replace(/\b\w/g, (c) => c.toUpperCase());
+              return (
+                <span key={tool} className="integration-chip">
+                  {label}
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Status row */}
+        <div className="integration-card-status">
+          <span
+            className={
+              busyId === integration.id
+                ? "integration-card-status-busy"
+                : "integration-card-status-idle"
+            }
+          >
+            {busyId === integration.id
+              ? "Reconnecting…"
+              : integration.message || `${integration.tools.length} tool${integration.tools.length !== 1 ? "s" : ""} available`}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
