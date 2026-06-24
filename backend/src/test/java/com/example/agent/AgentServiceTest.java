@@ -150,6 +150,33 @@ class AgentServiceTest {
     }
 
     @Test
+    void shouldHonorPerRequestToolCallCapBelowDefault() {
+        var tool = new RecordingLocalTool("always_call", "done");
+        var service = serviceWithTools(tool);
+
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithToolCall("call_x", "always_call", "{}"));
+
+        AgentResponse result = service.chat(new AgentRequest(PROMPT, MODEL), "owner", 3);
+
+        assertThat(result.response()).contains("maximum number of tool-call iterations");
+        assertThat(tool.callCount).isEqualTo(3);
+    }
+
+    @Test
+    void shouldFallBackToDefaultCapWhenRequestedToolCallsAreNonPositive() {
+        var tool = new RecordingLocalTool("always_call", "done");
+        var service = serviceWithTools(tool);
+
+        when(llmClient.chat(eq(MODEL), anyList(), anyList()))
+                .thenReturn(responseWithToolCall("call_x", "always_call", "{}"));
+
+        AgentResponse result = service.chat(new AgentRequest(PROMPT, MODEL), "owner", 0);
+
+        assertThat(tool.callCount).isEqualTo(MAX_ITERATIONS);
+    }
+
+    @Test
     void shouldHandleToolCallFailureGracefully() {
         var tool = new RecordingLocalTool("flaky_tool", "ignored");
         tool.throwMessage = "Something went wrong";

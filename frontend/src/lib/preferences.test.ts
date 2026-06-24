@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveDefaultModelId } from "./preferences";
+import { MAX_TOOL_CALLS_MAX, MAX_TOOL_CALLS_MIN, normalizeMaxToolCalls, resolveDefaultModelId } from "./preferences";
 import type { ModelOption } from "./types";
 
 function model(id: string, enabled: boolean): ModelOption {
@@ -36,5 +36,29 @@ describe("resolveDefaultModelId", () => {
   it("returns null when no models are enabled", () => {
     const models = [model("a", false), model("b", false)];
     expect(resolveDefaultModelId(models, "a")).toBeNull();
+  });
+});
+
+describe("normalizeMaxToolCalls", () => {
+  it("keeps a valid in-range value", () => {
+    expect(normalizeMaxToolCalls(25)).toBe(25);
+  });
+
+  it("parses numeric strings and rounds to whole steps", () => {
+    expect(normalizeMaxToolCalls("12")).toBe(12);
+    expect(normalizeMaxToolCalls("12.6")).toBe(13);
+  });
+
+  it("treats blank, zero, negative, and non-numeric input as the server default (null)", () => {
+    expect(normalizeMaxToolCalls("")).toBeNull();
+    expect(normalizeMaxToolCalls(0)).toBeNull();
+    expect(normalizeMaxToolCalls(-5)).toBeNull();
+    expect(normalizeMaxToolCalls("abc")).toBeNull();
+    expect(normalizeMaxToolCalls(null)).toBeNull();
+  });
+
+  it("clamps values to the supported range", () => {
+    expect(normalizeMaxToolCalls(5000)).toBe(MAX_TOOL_CALLS_MAX);
+    expect(normalizeMaxToolCalls(MAX_TOOL_CALLS_MIN)).toBe(MAX_TOOL_CALLS_MIN);
   });
 });

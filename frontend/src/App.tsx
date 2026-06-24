@@ -61,8 +61,11 @@ import { COLORS } from "./lib/theme";
 import { defaultReasoningFor } from "./lib/format";
 import {
   FONT_SIZE_OPTIONS,
+  MAX_TOOL_CALLS_MAX,
+  MAX_TOOL_CALLS_MIN,
   applyFontSize,
   loadPreferences,
+  normalizeMaxToolCalls,
   resolveDefaultModelId,
   savePreferences,
   type AppPreferences,
@@ -507,14 +510,21 @@ function AgentThreadsScreen(props: {
 function PreferencesScreen(props: {
   fontSize: FontSizeId;
   defaultModelId: string | null;
+  maxToolCalls: number | null;
   enabledModels: ModelOption[];
   onBack: () => void;
   onFontSizeChange: (fontSize: FontSizeId) => void;
   onDefaultModelChange: (modelId: string) => void;
+  onMaxToolCallsChange: (value: number | null) => void;
   onOpenModelSettings: () => void;
 }) {
-  const { fontSize, defaultModelId, enabledModels, onBack, onFontSizeChange, onDefaultModelChange, onOpenModelSettings } = props;
+  const { fontSize, defaultModelId, maxToolCalls, enabledModels, onBack, onFontSizeChange, onDefaultModelChange, onMaxToolCallsChange, onOpenModelSettings } = props;
   const resolvedDefault = enabledModels.find((model) => model.id === defaultModelId)?.id ?? enabledModels[0]?.id ?? "";
+  const [maxToolCallsDraft, setMaxToolCallsDraft] = useState(maxToolCalls == null ? "" : String(maxToolCalls));
+
+  useEffect(() => {
+    setMaxToolCallsDraft(maxToolCalls == null ? "" : String(maxToolCalls));
+  }, [maxToolCalls]);
 
   return (
     <>
@@ -576,6 +586,34 @@ function PreferencesScreen(props: {
         <button type="button" className="secondary-button settings-manage-button" onClick={onOpenModelSettings}>
           Manage models
         </button>
+      </div>
+
+      <div className="settings-section">
+        <div className="history-group-label">MAX TOOL CALLS</div>
+        <p className="settings-hint">
+          Caps how many tool-call steps the agent may take to answer a single message. Leave blank to
+          use the server default.
+        </p>
+        <label className="composer-select settings-select">
+          <span>Limit per message</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={MAX_TOOL_CALLS_MIN}
+            max={MAX_TOOL_CALLS_MAX}
+            value={maxToolCallsDraft}
+            placeholder="Server default"
+            onChange={(event) => setMaxToolCallsDraft(event.target.value)}
+            onBlur={() => {
+              const normalized = maxToolCallsDraft.trim() === "" ? null : normalizeMaxToolCalls(maxToolCallsDraft);
+              onMaxToolCallsChange(normalized);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+            className="settings-number-input"
+          />
+        </label>
       </div>
     </>
   );
@@ -1344,7 +1382,8 @@ export default function App() {
           attachments: attachment ? [attachment] : undefined,
           model: selectedModel.id,
           reasoningEffort: selectedReasoning,
-          sandboxId
+          sandboxId,
+          maxToolCalls: preferences.maxToolCalls
         });
       } catch (e) {
         setError(e instanceof Error ? e.message : "The agent request failed.");
@@ -1356,7 +1395,7 @@ export default function App() {
         }
       }
     },
-    [draft, draftAttachment, busy, session, refreshFiles, refreshAgentFiles, models, store, preferences.defaultModelId]
+    [draft, draftAttachment, busy, session, refreshFiles, refreshAgentFiles, models, store, preferences.defaultModelId, preferences.maxToolCalls]
   );
 
   useEffect(() => {
@@ -1692,10 +1731,12 @@ export default function App() {
           <PreferencesScreen
             fontSize={preferences.fontSize}
             defaultModelId={preferences.defaultModelId}
+            maxToolCalls={preferences.maxToolCalls}
             enabledModels={enabledModels}
             onBack={() => setScreen(returnScreen)}
             onFontSizeChange={(fontSize) => updatePreferences({ fontSize })}
             onDefaultModelChange={(modelId) => updatePreferences({ defaultModelId: modelId })}
+            onMaxToolCallsChange={(maxToolCalls) => updatePreferences({ maxToolCalls })}
             onOpenModelSettings={openSettings}
           />
         ) : screen === "agent-threads" ? (

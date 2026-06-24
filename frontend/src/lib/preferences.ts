@@ -21,14 +21,31 @@ export const FONT_SIZE_OPTIONS: FontSizeOption[] = [
 
 export const DEFAULT_FONT_SIZE: FontSizeId = "medium";
 
+/** Bounds for the user-configurable tool-call cap; mirrors the server's safety ceiling. */
+export const MAX_TOOL_CALLS_MIN = 1;
+export const MAX_TOOL_CALLS_MAX = 200;
+
 export type AppPreferences = {
   fontSize: FontSizeId;
   /** Preferred model for new chats; falls back to the first enabled model when unset/disabled. */
   defaultModelId: string | null;
+  /**
+   * Maximum tool-call iterations the agent may run per message. `null` keeps the server default;
+   * a number overrides it (bounded by the server to a safe range).
+   */
+  maxToolCalls: number | null;
 };
 
 export function defaultPreferences(): AppPreferences {
-  return { fontSize: DEFAULT_FONT_SIZE, defaultModelId: null };
+  return { fontSize: DEFAULT_FONT_SIZE, defaultModelId: null, maxToolCalls: null };
+}
+
+/** Coerces arbitrary input into a valid tool-call cap, or null to use the server default. */
+export function normalizeMaxToolCalls(value: unknown): number | null {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  const rounded = Math.round(numeric);
+  return Math.min(MAX_TOOL_CALLS_MAX, Math.max(MAX_TOOL_CALLS_MIN, rounded));
 }
 
 function isFontSizeId(value: unknown): value is FontSizeId {
@@ -43,7 +60,8 @@ export function loadPreferences(): AppPreferences {
     const parsed = JSON.parse(raw) as Partial<AppPreferences>;
     return {
       fontSize: isFontSizeId(parsed.fontSize) ? parsed.fontSize : DEFAULT_FONT_SIZE,
-      defaultModelId: typeof parsed.defaultModelId === "string" ? parsed.defaultModelId : null
+      defaultModelId: typeof parsed.defaultModelId === "string" ? parsed.defaultModelId : null,
+      maxToolCalls: normalizeMaxToolCalls(parsed.maxToolCalls)
     };
   } catch {
     return defaultPreferences();

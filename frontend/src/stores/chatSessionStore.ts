@@ -230,6 +230,7 @@ export type SendMessageInput = {
   model?: string;
   reasoningEffort?: string;
   sandboxId?: string;
+  maxToolCalls?: number | null;
 };
 
 export type ChatSessionStore = {
@@ -449,7 +450,8 @@ export function useChatSessionStore(
         attachments: input.attachments,
         model: input.model,
         reasoningEffort: input.reasoningEffort,
-        sandboxId: input.sandboxId
+        sandboxId: input.sandboxId,
+        maxToolCalls: input.maxToolCalls
       });
       const seq = await hydrateSession(threadId, { afterSeq });
       // If a stream is already attached for this thread it keeps running; otherwise open one from the

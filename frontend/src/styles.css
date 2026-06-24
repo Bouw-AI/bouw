@@ -1397,6 +1397,20 @@ select {
   gap: 8px;
 }
 
+.settings-number-input {
+  width: 100%;
+  border: 1px solid #e4e5e8;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 12px;
+  color: #1c1f23;
+  font-size: calc(13px * var(--font-scale));
+}
+
+.settings-number-input::placeholder {
+  color: #a8adb5;
+}
+
 .settings-manage-button {
   margin-top: 12px;
 }
