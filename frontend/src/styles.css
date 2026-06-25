@@ -1183,7 +1183,7 @@ select {
 
 .menu-dropdown {
   position: absolute;
-  right: 12px;
+  right: 16px;
   top: 12px;
   display: flex;
   width: min(78%, 300px);
@@ -1193,19 +1193,23 @@ select {
   animation: menuDropIn 0.18s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
+/* The top-action row overlays the app header so the hamburger appears to morph
+   into the close button and the single "Report bug" action stays put. Right
+   padding and gap mirror the header so the buttons land exactly on top of the
+   header's controls rather than duplicating them. */
 .menu-top-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .menu-close-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 34px;
-  width: 34px;
+  height: 38px;
+  width: 38px;
   flex-shrink: 0;
   border-radius: 999px;
   background: #1c1f23;
