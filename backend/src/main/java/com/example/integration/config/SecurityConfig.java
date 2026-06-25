@@ -105,7 +105,7 @@ public class SecurityConfig {
     @Bean
     @Order(2)
     public SecurityFilterChain actuatorFilterChain(HttpSecurity http) throws Exception {
-        http.securityMatcher("/actuator/health", "/actuator/info")
+        http.securityMatcher("/actuator/health", "/actuator/info", "/health")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
@@ -113,7 +113,7 @@ public class SecurityConfig {
     }
 
     @Bean
-    @Order(2)
+    @Order(3)
     public SecurityFilterChain apiFilterChain(
             HttpSecurity http,
             JwtAuthenticationConverter jwtAuthenticationConverter) throws Exception {
@@ -133,7 +133,7 @@ public class SecurityConfig {
     }
 
     @Bean
-    @Order(3)
+    @Order(4)
     public SecurityFilterChain publicFilterChain(HttpSecurity http) throws Exception {
         http.authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 .csrf(csrf -> csrf.disable())
