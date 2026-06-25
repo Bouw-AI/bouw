@@ -18,7 +18,6 @@ export function AppHeader({
     <div className="app-header">
       <div className="brand">
         <img src={LOGO} alt="Hugin" className="brand-logo" />
-        <span className="brand-text">HUGIN</span>
       </div>
       <div className="header-actions">
         {reportAction ? (
