@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "reac
 import { createThread, getThreadTitle } from "./services/threadApi";
 import { fetchModels, reportBug, saveEnabledModels } from "./services/integrationApi";
 import { fetchGitHubStatus } from "./services/githubApi";
+import { deleteSandbox } from "./services/runApi";
 import type {
   AuthSession,
   ChatAttachment,
@@ -118,6 +119,14 @@ export default function App() {
   const bootstrappedRef = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Tracks state from the previous render to detect when the user abandons an empty github sandbox.
+  const prevNavRef = useRef<{
+    screen: Screen;
+    sandboxId: string | undefined;
+    kind: string | undefined;
+    hasUserEntries: boolean;
+  }>({ screen: "login", sandboxId: undefined, kind: undefined, hasUserEntries: false });
 
   // The workspace file tree only refreshes after an agent run finishes, so it tracks the run-busy
   // flag; the UI-level busy below additionally folds in the project-creation flag.
@@ -240,6 +249,28 @@ export default function App() {
   useEffect(() => {
     applyFontSize(preferences.fontSize);
   }, [preferences.fontSize]);
+
+  // When the user navigates away from the chat screen without sending a message to a GitHub project,
+  // the sandbox has been created but the thread was never persisted — delete the orphaned sandbox.
+  useEffect(() => {
+    const prev = prevNavRef.current;
+    const leavingChat = prev.screen === "chat" && screen !== "chat";
+    if (
+      leavingChat &&
+      session &&
+      prev.kind === "github" &&
+      prev.sandboxId &&
+      !prev.hasUserEntries
+    ) {
+      deleteSandbox(session.token, prev.sandboxId).catch(() => {});
+    }
+    prevNavRef.current = {
+      screen,
+      sandboxId: thread?.sandboxId,
+      kind: thread?.kind,
+      hasUserEntries: thread?.entries.some((e) => e.type === "user") ?? false
+    };
+  }, [screen, thread, session]);
 
   // Keep the default model pointing at an enabled model: when it gets disabled in Model settings,
   // fall through to the next enabled model in the list (and seed a default once models first load).

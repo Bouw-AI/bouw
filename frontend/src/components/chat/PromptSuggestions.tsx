@@ -91,7 +91,6 @@ export function PromptSuggestions({
     <div className="prompt-suggestions">
       {groups.map((group) => (
         <div key={group.label} className="prompt-group">
-          <span className="prompt-group-label">{group.label}</span>
           <div className="prompt-chips">
             {group.prompts.map((prompt) => (
               <button

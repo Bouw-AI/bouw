@@ -1,6 +1,7 @@
-import { ArrowLeft, Github } from "lucide-react";
+import { Github } from "lucide-react";
 
 import type { BugReportSummary, GitHubBranch, GitHubRepository } from "../lib/types";
+import { AppHeader } from "../components/AppHeader";
 
 /**
  * Picks the branch to preselect in the project setup screen: the currently chosen branch if it still
@@ -62,87 +63,84 @@ export function GitHubProjectSetupScreen(props: {
 
   return (
     <>
-      <div className="back-row">
-        <button type="button" className="icon-button back-button" onClick={onBack} aria-label="Back">
-          <ArrowLeft size={22} strokeWidth={2} />
-        </button>
-      </div>
+      <AppHeader backAction={{ onClick: onBack }} title="Project" />
 
-      <div className="screen-pad">
-        <h1 className="screen-title integration-title">Project</h1>
-        <p className="integration-subtitle">
-          Pick a repository and branch, then Hugin will open a fresh workspace with a clean pull of that branch.
-        </p>
-      </div>
+      <div className="screen-content">
+        <div className="screen-pad">
+          <p className="integration-subtitle">
+            Pick a repository and branch, then Hugin will open a fresh workspace with a clean pull of that branch.
+          </p>
+        </div>
 
-      <div className="repo-setup-card">
-        <label className="composer-select repo-setup-select">
-          <span>Repository</span>
-          <select value={selectedRepo} onChange={(event) => onRepoChange(event.target.value)} disabled={busy || loadingRepos}>
-            <option value="">{loadingRepos ? "Loading repositories…" : "Select a repository"}</option>
-            {repositories.map((repo) => (
-              <option key={repo.fullName} value={repo.fullName}>
-                {repo.fullName}
+        <div className="repo-setup-card">
+          <label className="composer-select repo-setup-select">
+            <span>Repository</span>
+            <select value={selectedRepo} onChange={(event) => onRepoChange(event.target.value)} disabled={busy || loadingRepos}>
+              <option value="">{loadingRepos ? "Loading repositories…" : "Select a repository"}</option>
+              {repositories.map((repo) => (
+                <option key={repo.fullName} value={repo.fullName}>
+                  {repo.fullName}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="composer-select repo-setup-select">
+            <span>Branch</span>
+            <select
+              value={selectedBranch}
+              onChange={(event) => onBranchChange(event.target.value)}
+              disabled={busy || !selectedRepo || loadingBranches}
+            >
+              <option value="">
+                {!selectedRepo ? "Select a repository first" : loadingBranches ? "Loading branches…" : "Select a branch"}
               </option>
-            ))}
-          </select>
-        </label>
+              {branches.map((branch) => (
+                <option key={branch.name} value={branch.name}>
+                  {branch.name}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="composer-select repo-setup-select">
-          <span>Branch</span>
-          <select
-            value={selectedBranch}
-            onChange={(event) => onBranchChange(event.target.value)}
-            disabled={busy || !selectedRepo || loadingBranches}
-          >
-            <option value="">
-              {!selectedRepo ? "Select a repository first" : loadingBranches ? "Loading branches…" : "Select a branch"}
-            </option>
-            {branches.map((branch) => (
-              <option key={branch.name} value={branch.name}>
-                {branch.name}
+          <label className="composer-select repo-setup-select">
+            <span>Bug report</span>
+            <select
+              value={selectedBugReportId}
+              onChange={(event) => onBugReportChange(event.target.value)}
+              disabled={busy || loadingBugReports}
+            >
+              <option value="">
+                {loadingBugReports ? "Loading bug reports…" : "None"}
               </option>
-            ))}
-          </select>
-        </label>
+              {bugReports.map((report) => (
+                <option key={report.id} value={report.id}>
+                  {report.title}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="composer-select repo-setup-select">
-          <span>Bug report</span>
-          <select
-            value={selectedBugReportId}
-            onChange={(event) => onBugReportChange(event.target.value)}
-            disabled={busy || loadingBugReports}
-          >
-            <option value="">
-              {loadingBugReports ? "Loading bug reports…" : "None"}
-            </option>
-            {bugReports.map((report) => (
-              <option key={report.id} value={report.id}>
-                {report.title}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {selectedRepoMeta ? (
-          <div className="repo-summary">
-            <div className="repo-summary-title">
-              <Github size={16} strokeWidth={2} />
-              <span>{selectedRepoMeta.fullName}</span>
+          {selectedRepoMeta ? (
+            <div className="repo-summary">
+              <div className="repo-summary-title">
+                <Github size={16} strokeWidth={2} />
+                <span>{selectedRepoMeta.fullName}</span>
+              </div>
+              <div className="repo-summary-meta">
+                <span>{selectedRepoMeta.privateRepo ? "Private" : "Public"}</span>
+                <span>Default {selectedRepoMeta.defaultBranch || "unknown"}</span>
+              </div>
+              {selectedRepoMeta.description ? <p>{selectedRepoMeta.description}</p> : null}
             </div>
-            <div className="repo-summary-meta">
-              <span>{selectedRepoMeta.privateRepo ? "Private" : "Public"}</span>
-              <span>Default {selectedRepoMeta.defaultBranch || "unknown"}</span>
-            </div>
-            {selectedRepoMeta.description ? <p>{selectedRepoMeta.description}</p> : null}
-          </div>
-        ) : null}
+          ) : null}
 
-        {error ? <p className="login-error">{error}</p> : null}
+          {error ? <p className="login-error">{error}</p> : null}
 
-        <button type="button" className="primary-button repo-confirm-button" onClick={onConfirm} disabled={!ready}>
-          {busy ? "Creating workspace…" : "Open project"}
-        </button>
+          <button type="button" className="primary-button repo-confirm-button" onClick={onConfirm} disabled={!ready}>
+            {busy ? "Creating workspace…" : "Open project"}
+          </button>
+        </div>
       </div>
     </>
   );
