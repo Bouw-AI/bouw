@@ -1,7 +1,6 @@
-import { ArrowLeft } from "lucide-react";
-
 import type { AgentRun, ChatThread } from "../lib/types";
 import { formatTimestamp } from "../services/apiClient";
+import { AppHeader } from "../components/AppHeader";
 
 /**
  * Lists agent runs still executing on the server. Runs continue server-side after a client
@@ -25,21 +24,16 @@ export function AgentThreadsScreen(props: {
   };
 
   return (
-    <>
-      <div className="back-row">
-        <button type="button" className="icon-button back-button" onClick={onBack} aria-label="Back">
-          <ArrowLeft size={22} strokeWidth={2} />
-        </button>
-      </div>
+    <div className="model-settings-screen">
+      <AppHeader backAction={{ onClick: onBack }} title="Agent threads" />
 
       <div className="screen-pad">
-        <h1 className="screen-title integration-title">Agent threads</h1>
         <p className="integration-subtitle">
           Running agent requests continue on the server after a client disconnect. Cancel them here when needed.
         </p>
       </div>
 
-      <div className="integrations-list">
+      <div className="model-settings-list">
         <div className="history-group-label">ACTIVE RUNS</div>
         {loading && runs.length === 0 ? (
           <p className="history-empty">Loading active runs…</p>
@@ -72,6 +66,6 @@ export function AgentThreadsScreen(props: {
           ))
         )}
       </div>
-    </>
+    </div>
   );
 }

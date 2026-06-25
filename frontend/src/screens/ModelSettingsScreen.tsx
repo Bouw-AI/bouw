@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { ArrowLeft, Search } from "lucide-react";
+import { Search } from "lucide-react";
 
 import type { ModelOption } from "../lib/types";
 import { COLORS } from "../lib/theme";
+import { AppHeader } from "../components/AppHeader";
 
 function formatPrice(value?: string | null) {
   if (!value) return "N/A";
@@ -42,15 +43,10 @@ export function ModelSettingsScreen(props: {
     : models;
 
   return (
-    <>
-      <div className="back-row">
-        <button type="button" className="icon-button back-button" onClick={onBack} aria-label="Back">
-          <ArrowLeft size={22} strokeWidth={2} />
-        </button>
-      </div>
+    <div className="model-settings-screen">
+      <AppHeader backAction={{ onClick: onBack }} title="Model settings" />
 
       <div className="screen-pad">
-        <h1 className="screen-title integration-title">Model settings</h1>
         <p className="integration-subtitle">
           Choose which OpenRouter models appear in chat. Prices are shown per million input and output tokens.
         </p>
@@ -70,7 +66,7 @@ export function ModelSettingsScreen(props: {
         </div>
       </div>
 
-      <div className="integrations-list">
+      <div className="model-settings-list">
         <div className="history-group-label">AVAILABLE MODELS</div>
         {filteredModels.length === 0 ? (
           <p className="history-empty">No models match your search.</p>
@@ -105,6 +101,6 @@ export function ModelSettingsScreen(props: {
           {saving ? "Saving…" : "Save model settings"}
         </button>
       </div>
-    </>
+    </div>
   );
 }

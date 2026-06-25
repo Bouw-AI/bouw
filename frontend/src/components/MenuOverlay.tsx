@@ -129,7 +129,6 @@ export function MenuOverlay(props: {
             <div className="profile-avatar">{initials}</div>
             <div className="profile-copy">
               <div className="profile-name">{username}</div>
-              <div className="profile-email">{roles.join(", ") || "member"}</div>
             </div>
           </div>
 

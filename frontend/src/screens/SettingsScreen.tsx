@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft } from "lucide-react";
 
 import type { ModelOption } from "../lib/types";
+import { AppHeader } from "../components/AppHeader";
 import {
   DEFAULT_REQUEST_TIMEOUT_SECONDS,
   FONT_SIZE_OPTIONS,
@@ -85,14 +85,9 @@ export function SettingsScreen(props: {
 
   return (
     <div className="settings-body">
-      <div className="back-row">
-        <button type="button" className="icon-button back-button" onClick={onBack} aria-label="Back">
-          <ArrowLeft size={22} strokeWidth={2} />
-        </button>
-      </div>
+      <AppHeader backAction={{ onClick: onBack }} title="Settings" />
 
       <div className="screen-pad">
-        <h1 className="screen-title integration-title">Settings</h1>
         <p className="integration-subtitle">Personalize how Hugin looks and how the agent runs. Changes apply when you press Save.</p>
       </div>
 
