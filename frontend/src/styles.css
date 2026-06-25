@@ -112,18 +112,20 @@ select {
   }
 }
 
+/* The header reads as floating: no solid fill or divider bar, just the logo and
+   the floating-chip action buttons resting above the conversation. */
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
-  border-bottom: 1px solid #eaebed;
+  padding: 12px 16px;
+  background: transparent;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .brand {
@@ -133,19 +135,11 @@ select {
 }
 
 .brand-logo {
-  height: 24px;
+  height: 28px;
   width: auto;
 }
 
-.brand-text {
-  color: #1c1f23;
-  font-size: calc(17px * var(--font-scale));
-  font-weight: 800;
-  letter-spacing: 0.16em;
-}
-
 .icon-button {
-  margin-right: -6px;
   padding: 6px;
   border-radius: 8px;
   cursor: pointer;
@@ -153,14 +147,29 @@ select {
   color: #1c1f23;
 }
 
+/* Floating-chip treatment for the header controls: solid (opaque) fill with a
+   soft shadow so they read as floating above the conversation without being
+   see-through. */
+.app-header .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #ececee;
+  box-shadow: 0 2px 10px rgba(17, 20, 24, 0.1);
+}
+
 .header-action-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid #e4e5e8;
   border-radius: 999px;
   padding: 8px 12px;
-  background: #fafafb;
+  background: #fff;
+  border: 1px solid #ececee;
+  box-shadow: 0 2px 10px rgba(17, 20, 24, 0.1);
   color: #3c414a;
   font-size: calc(12.5px * var(--font-scale));
   font-weight: 500;
@@ -1010,14 +1019,10 @@ select {
 }
 
 .input-bar {
+  gap: 8px;
   border-radius: 999px;
-  padding: 10px 16px;
-}
-
-.input-bar button:first-child {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  padding: 7px 8px 7px 8px;
+  box-shadow: 0 2px 14px rgba(17, 20, 24, 0.06);
 }
 
 .input-bar input,
@@ -1038,18 +1043,54 @@ select {
   color: #a8adb5;
 }
 
-.input-bar button {
+/* Image attach: rounded-square button tucked inside the pill (left). */
+.input-bar-attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  width: 36px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  background: #f1f2f4;
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition:
+    background 0.2s ease,
+    opacity 0.2s ease;
 }
 
-.input-bar button:disabled {
-  opacity: 0.3;
+.input-bar-attach:hover:not(:disabled) {
+  background: #e9eaed;
+}
+
+.input-bar-attach:disabled {
+  opacity: 0.4;
   cursor: default;
 }
 
-.input-bar button:active:not(:disabled) {
-  opacity: 0.5;
+/* Send/stop: solid circular button (right). */
+.input-bar-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  width: 36px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: #1c1f23;
+  cursor: pointer;
+  transition:
+    opacity 0.2s ease,
+    background 0.2s ease;
+}
+
+.input-bar-send:disabled {
+  background: #c8cace;
+  cursor: default;
+}
+
+.input-bar-send:active:not(:disabled) {
+  opacity: 0.85;
 }
 
 .input-note {
@@ -1081,20 +1122,48 @@ select {
   text-transform: uppercase;
 }
 
-.composer-select select {
-  width: 100%;
+/* Pill field that frames the native <select> with a leading glyph and a custom
+   trailing caret, matching the mock's model/reasoning controls. */
+.composer-field {
+  position: relative;
+  display: flex;
+  align-items: center;
   border: 1px solid #e4e5e8;
   border-radius: 12px;
   background: #fff;
-  padding: 10px 12px;
+}
+
+.composer-field-icon {
+  position: absolute;
+  left: 12px;
+  pointer-events: none;
+}
+
+.composer-field-caret {
+  position: absolute;
+  right: 11px;
+  pointer-events: none;
+}
+
+.composer-select select {
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  padding: 10px 34px 10px 36px;
   color: #1c1f23;
   font-size: calc(13px * var(--font-scale));
   white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .composer-select select:disabled {
   color: #a8adb5;
+  cursor: default;
 }
 
 .menu-overlay {
@@ -1103,11 +1172,13 @@ select {
   z-index: 30;
 }
 
+/* Transparent so the dropdown floats without dimming or covering the text
+   behind it; it stays click-through only as a dismiss target. */
 .menu-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(20, 22, 26, 0.45);
-  cursor: pointer;
+  background: transparent;
+  cursor: default;
 }
 
 .menu-dropdown {

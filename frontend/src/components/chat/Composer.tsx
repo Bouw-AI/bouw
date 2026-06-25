@@ -1,9 +1,10 @@
-import { Image as ImageIcon, Send, Square, X } from "lucide-react";
+import { ChevronDown, Gauge, Image as ImageIcon, Send, Sparkles, Square, X } from "lucide-react";
 
 import type { ChatAttachment, ModelOption } from "../../lib/types";
 import { defaultReasoningFor, formatBytes, labelReasoning } from "../../lib/format";
 
 const INK = "#1C1F23";
+const MUTED = "#8B9099";
 
 /**
  * The message composer: text input, image attachment, model/reasoning selectors, and send. Its
@@ -62,7 +63,7 @@ export function Composer(props: {
         </div>
       ) : null}
       <div className="input-bar">
-        <button type="button" onClick={onPickImage} disabled={disabled} aria-label="Add image">
+        <button type="button" className="input-bar-attach" onClick={onPickImage} disabled={disabled} aria-label="Add image">
           <ImageIcon size={18} strokeWidth={2} color={INK} />
         </button>
         <input
@@ -82,50 +83,59 @@ export function Composer(props: {
           placeholder={attachment ? "Ask about this image..." : "Message Hugin…"}
         />
         {busy ? (
-          <button type="button" onClick={onStop} aria-label="Stop run">
-            <Square size={17} strokeWidth={2.4} color={INK} fill={INK} />
+          <button type="button" className="input-bar-send" onClick={onStop} aria-label="Stop run">
+            <Square size={16} strokeWidth={2.4} color="#fff" fill="#fff" />
           </button>
         ) : (
           <button
             type="button"
+            className="input-bar-send"
             onClick={onSend}
             disabled={disabled || (!value.trim() && !attachment)}
             aria-label="Send message"
           >
-            <Send size={19} strokeWidth={2} color={INK} />
+            <Send size={17} strokeWidth={2} color="#fff" />
           </button>
         )}
       </div>
       <div className="composer-controls">
         <label className="composer-select">
           <span>Model</span>
-          <select
-            value={activeModel?.id ?? ""}
-            onChange={(event) => onModelChange(event.target.value)}
-            disabled={disabled || models.length === 0}
-          >
-            {models.length === 0 ? <option value="">No enabled models</option> : null}
-            {models.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
-          </select>
+          <div className="composer-field">
+            <Sparkles className="composer-field-icon" size={15} strokeWidth={2} color={MUTED} />
+            <select
+              value={activeModel?.id ?? ""}
+              onChange={(event) => onModelChange(event.target.value)}
+              disabled={disabled || models.length === 0}
+            >
+              {models.length === 0 ? <option value="">No enabled models</option> : null}
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="composer-field-caret" size={15} strokeWidth={2} color={MUTED} />
+          </div>
         </label>
         <label className="composer-select">
           <span>Reasoning</span>
-          <select
-            value={reasoningOptions.length ? (selectedReasoning ?? defaultReasoningFor(activeModel) ?? reasoningOptions[0]) : ""}
-            onChange={(event) => onReasoningChange(event.target.value)}
-            disabled={disabled || reasoningOptions.length === 0}
-          >
-            {reasoningOptions.length === 0 ? <option value="">Unavailable</option> : null}
-            {reasoningOptions.map((option) => (
-              <option key={option} value={option}>
-                {labelReasoning(option)}
-              </option>
-            ))}
-          </select>
+          <div className="composer-field">
+            <Gauge className="composer-field-icon" size={15} strokeWidth={2} color={MUTED} />
+            <select
+              value={reasoningOptions.length ? (selectedReasoning ?? defaultReasoningFor(activeModel) ?? reasoningOptions[0]) : ""}
+              onChange={(event) => onReasoningChange(event.target.value)}
+              disabled={disabled || reasoningOptions.length === 0}
+            >
+              {reasoningOptions.length === 0 ? <option value="">Unavailable</option> : null}
+              {reasoningOptions.map((option) => (
+                <option key={option} value={option}>
+                  {labelReasoning(option)}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="composer-field-caret" size={15} strokeWidth={2} color={MUTED} />
+          </div>
         </label>
       </div>
       <p className="input-note">Hugin can make mistakes. Please verify important information.</p>
