@@ -69,7 +69,7 @@ select {
 
 .mock-page {
   display: flex;
-  min-height: 100vh;
+  min-height: 100dvh;
   width: 100%;
   align-items: center;
   justify-content: center;
@@ -81,17 +81,17 @@ select {
 .device-shell {
   position: relative;
   display: flex;
-  height: 844px;
-  width: 390px;
+  width: 100%;
+  max-width: 768px;
+  height: calc(100vh - 48px);
   flex-direction: column;
   overflow: hidden;
   flex-shrink: 0;
   border: 1px solid #dadbde;
-  border-radius: 44px;
+  border-radius: 16px;
   background: #fff;
   box-shadow:
-    0 40px 90px rgba(18, 21, 25, 0.2),
-    0 12px 30px rgba(18, 21, 25, 0.08);
+    0 4px 24px rgba(18, 21, 25, 0.08);
 }
 
 @media (max-width: 480px) {
