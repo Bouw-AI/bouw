@@ -164,25 +164,40 @@ public class DockerSandboxRuntime implements SandboxRuntime {
                     + (result.timedOut() ? "git clone timed out" : result.output()));
         }
 
-        persistGitCredentials(containerName, repository);
+        persistGitCredentials(containerName, repository.accessToken());
     }
 
     /**
-     * Persists the repository's access token as a git credential helper <em>inside</em> the container
-     * so subsequent git operations (push/fetch/pull) authenticate without a prompt.
+     * Refreshes the persisted git credentials of an already-running sandbox with a freshly minted
+     * token. Called when a chat reconnects to its sandbox: GitHub App installation tokens expire after
+     * roughly an hour, so the token captured at clone time is typically stale by the time a resumed
+     * chat tries to push. Re-running the credential helper setup with a current token keeps
+     * {@code git_push}/{@code fetch}/{@code pull} working across reconnects. A null/blank token is a
+     * no-op (nothing to refresh).
+     */
+    public void refreshCredentials(String sandboxId, String accessToken) {
+        if (accessToken == null || accessToken.isBlank()) {
+            return;
+        }
+        persistGitCredentials(properties.containerName(sandboxId), accessToken);
+    }
+
+    /**
+     * Persists an access token as a git credential helper <em>inside</em> the container so subsequent
+     * git operations (push/fetch/pull) authenticate without a prompt.
      *
-     * <p>The clone above only sees the token through transient {@code docker exec} env vars; once it
-     * returns, nothing remembers the credential. Without this step a later {@code git_push} fails with
+     * <p>The clone only sees the token through transient {@code docker exec} env vars; once it returns,
+     * nothing remembers the credential. Without this step a later {@code git_push} fails with
      * {@code fatal: could not read Username for 'https://github.com': No such device or address},
      * because {@link #exec} runs commands with no token and {@code GIT_TERMINAL_PROMPT} disabled.
      *
      * <p>The token is base64-encoded on the host (avoiding any shell-quoting hazards) and decoded into
      * a {@code 0600} file under {@code $HOME} — outside the {@code /workspace/repo} working tree, so it
      * is never committed or pushed. A global credential helper reads {@code username=x-access-token}
-     * and the password from that file, mirroring the helper used for the clone itself.
+     * and the password from that file. Re-running it simply overwrites the token file, so it is also
+     * the refresh path (see {@link #refreshCredentials}).
      */
-    private void persistGitCredentials(String containerName, RepositoryConfig repository) {
-        String token = repository.accessToken();
+    private void persistGitCredentials(String containerName, String token) {
         if (token == null || token.isBlank()) {
             return;
         }

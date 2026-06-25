@@ -116,6 +116,47 @@ class DockerSandboxRuntimeTest {
     }
 
     @Test
+    void refreshCredentialsReplacesTheStoredTokenForReconnect() throws Exception {
+        Path source = initSourceRepo(tmp.resolve("source"));
+        RepositoryConfig repo = new RepositoryConfig(
+                source.toUri().toString(), "octo/source", "main", "clone-time-token");
+
+        SandboxSession session = runtime.create(java.util.UUID.randomUUID().toString(), repo);
+        String id = session.sandboxId();
+
+        // Simulate a reconnect minting a fresh installation token after the clone-time one expired.
+        runtime.refreshCredentials(id, "refreshed-token");
+
+        SandboxRuntime.ExecResult filled = runtime.exec(id,
+                "printf 'protocol=https\\nhost=github.com\\n\\n' | git credential fill",
+                Duration.ofSeconds(10));
+        assertThat(filled.exitCode()).isZero();
+        assertThat(filled.output()).contains("password=refreshed-token");
+        assertThat(filled.output()).doesNotContain("clone-time-token");
+
+        runtime.delete(id);
+    }
+
+    @Test
+    void refreshCredentialsWithBlankTokenIsANoOp() throws Exception {
+        Path source = initSourceRepo(tmp.resolve("source"));
+        RepositoryConfig repo = new RepositoryConfig(
+                source.toUri().toString(), "octo/source", "main", "clone-time-token");
+
+        SandboxSession session = runtime.create(java.util.UUID.randomUUID().toString(), repo);
+        String id = session.sandboxId();
+
+        // A blank token must not clobber the previously persisted credential.
+        runtime.refreshCredentials(id, "  ");
+
+        SandboxRuntime.ExecResult token = runtime.exec(
+                id, "cat \"$HOME/.config/hugin/github-token\"", Duration.ofSeconds(10));
+        assertThat(token.output().strip()).isEqualTo("clone-time-token");
+
+        runtime.delete(id);
+    }
+
+    @Test
     void createWithoutTokenDoesNotConfigureCredentialHelper() throws Exception {
         Path source = initSourceRepo(tmp.resolve("source"));
         RepositoryConfig repo = new RepositoryConfig(source.toUri().toString(), "octo/source", "main", null);
