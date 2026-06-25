@@ -163,6 +163,43 @@ public class DockerSandboxRuntime implements SandboxRuntime {
             throw new RuntimeException("Failed to clone repository into sandbox container: "
                     + (result.timedOut() ? "git clone timed out" : result.output()));
         }
+
+        persistGitCredentials(containerName, repository);
+    }
+
+    /**
+     * Persists the repository's access token as a git credential helper <em>inside</em> the container
+     * so subsequent git operations (push/fetch/pull) authenticate without a prompt.
+     *
+     * <p>The clone above only sees the token through transient {@code docker exec} env vars; once it
+     * returns, nothing remembers the credential. Without this step a later {@code git_push} fails with
+     * {@code fatal: could not read Username for 'https://github.com': No such device or address},
+     * because {@link #exec} runs commands with no token and {@code GIT_TERMINAL_PROMPT} disabled.
+     *
+     * <p>The token is base64-encoded on the host (avoiding any shell-quoting hazards) and decoded into
+     * a {@code 0600} file under {@code $HOME} — outside the {@code /workspace/repo} working tree, so it
+     * is never committed or pushed. A global credential helper reads {@code username=x-access-token}
+     * and the password from that file, mirroring the helper used for the clone itself.
+     */
+    private void persistGitCredentials(String containerName, RepositoryConfig repository) {
+        String token = repository.accessToken();
+        if (token == null || token.isBlank()) {
+            return;
+        }
+        String tokenB64 = Base64.getEncoder().encodeToString(token.getBytes(StandardCharsets.UTF_8));
+        String tokenFile = "$HOME/.config/hugin/github-token";
+        String helper = "!f() { echo username=x-access-token; echo password=$(cat " + tokenFile + "); }; f";
+        String script = "umask 077"
+                + " && mkdir -p \"$HOME/.config/hugin\""
+                + " && printf %s " + shellQuote(tokenB64) + " | base64 -d > \"" + tokenFile + "\""
+                + " && git config --global credential.helper " + shellQuote(helper);
+
+        List<String> cmd = List.of(properties.dockerBin(), "exec", containerName, "bash", "-lc", script);
+        ProcessResult result = run(cmd, properties.startTimeout(), null);
+        if (!result.ok()) {
+            throw new RuntimeException("Failed to configure git credentials in sandbox container: "
+                    + (result.timedOut() ? "timed out" : result.output()));
+        }
     }
 
     @Override

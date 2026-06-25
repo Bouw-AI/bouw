@@ -85,6 +85,52 @@ class DockerSandboxRuntimeTest {
         assertThat(runtime.isActive(id)).isFalse();
     }
 
+    @Test
+    void createPersistsGitCredentialsSoLaterGitOpsAuthenticate() throws Exception {
+        Path source = initSourceRepo(tmp.resolve("source"));
+        // A token supplied at clone time must be persisted as an in-container credential helper so a
+        // subsequent git_push (run through exec, with GIT_TERMINAL_PROMPT=0) can authenticate instead
+        // of failing with "could not read Username for 'https://github.com'".
+        RepositoryConfig repo = new RepositoryConfig(
+                source.toUri().toString(), "octo/source", "main", "secret-token-123");
+
+        SandboxSession session = runtime.create(java.util.UUID.randomUUID().toString(), repo);
+        String id = session.sandboxId();
+
+        // The token is stored in a 0600 file outside the repository working tree.
+        SandboxRuntime.ExecResult token = runtime.exec(
+                id, "cat \"$HOME/.config/hugin/github-token\"", Duration.ofSeconds(10));
+        assertThat(token.exitCode()).isZero();
+        assertThat(token.output().strip()).isEqualTo("secret-token-123");
+
+        // A global credential helper is configured and resolves github.com to the token, so git can
+        // authenticate without prompting.
+        SandboxRuntime.ExecResult filled = runtime.exec(id,
+                "printf 'protocol=https\\nhost=github.com\\n\\n' | git credential fill",
+                Duration.ofSeconds(10));
+        assertThat(filled.exitCode()).isZero();
+        assertThat(filled.output()).contains("username=x-access-token");
+        assertThat(filled.output()).contains("password=secret-token-123");
+
+        runtime.delete(id);
+    }
+
+    @Test
+    void createWithoutTokenDoesNotConfigureCredentialHelper() throws Exception {
+        Path source = initSourceRepo(tmp.resolve("source"));
+        RepositoryConfig repo = new RepositoryConfig(source.toUri().toString(), "octo/source", "main", null);
+
+        SandboxSession session = runtime.create(java.util.UUID.randomUUID().toString(), repo);
+        String id = session.sandboxId();
+
+        // No token at clone time means no persisted credential file or global helper.
+        SandboxRuntime.ExecResult tokenFile = runtime.exec(
+                id, "test -f \"$HOME/.config/hugin/github-token\"; echo $?", Duration.ofSeconds(10));
+        assertThat(tokenFile.output().strip()).isEqualTo("1");
+
+        runtime.delete(id);
+    }
+
     private Path initSourceRepo(Path repo) throws Exception {
         Files.createDirectories(repo);
         run(repo, "git", "init", "-b", "main");
@@ -153,7 +199,12 @@ class DockerSandboxRuntimeTest {
                     cwd="$base/workspace"
                     if [ -n "$workdir" ]; then cwd="${workdir//\\/workspace/$base/workspace}"; fi
                     mkdir -p "$cwd" 2>/dev/null
-                    ( cd "$cwd" 2>/dev/null && env "${envs[@]}" bash -lc "$script" )
+                    # Give each fake container its own HOME so `git config --global` and the persisted
+                    # credential helper stay isolated (as in a real container) instead of writing to
+                    # the host's ~/.gitconfig.
+                    home="$base/home"
+                    mkdir -p "$home" 2>/dev/null
+                    ( cd "$cwd" 2>/dev/null && env HOME="$home" "${envs[@]}" bash -lc "$script" )
                     exit $?;;
                   inspect)
                     fmt=""; name=""
