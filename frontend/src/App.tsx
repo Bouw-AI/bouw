@@ -616,7 +616,8 @@ export default function App() {
     );
   }
 
-  const name = session?.username ?? "there";
+  // Refer to the user by their chosen name, falling back to their login email then a generic greeting.
+  const name = session?.displayName?.trim() || session?.username || "there";
   const isChatScreen = screen === "chat" || screen === "purechat";
   const showDesktopPanel = screen === "chat" && !!thread;
 

@@ -14,7 +14,6 @@ export function UserDetailsScreen(props: {
   const { session, onBack, onMenu, onResetPassword, onSessionUpdate } = props;
 
   const [displayName, setDisplayName] = useState(session.displayName ?? "");
-  const [email, setEmail] = useState(session.email ?? "");
   const [customInstructions, setCustomInstructions] = useState(session.customInstructions ?? "");
 
   const [savingProfile, setSavingProfile] = useState(false);
@@ -24,9 +23,8 @@ export function UserDetailsScreen(props: {
   // Re-seed fields when the session updates after a successful save.
   useEffect(() => {
     setDisplayName(session.displayName ?? "");
-    setEmail(session.email ?? "");
     setCustomInstructions(session.customInstructions ?? "");
-  }, [session.displayName, session.email, session.customInstructions]);
+  }, [session.displayName, session.customInstructions]);
 
   const handleSaveProfile = async () => {
     if (savingProfile) return;
@@ -36,7 +34,8 @@ export function UserDetailsScreen(props: {
     try {
       const updated = await updateUserProfile(session.token, {
         displayName: displayName.trim() || null,
-        email: email.trim() || null,
+        // The login email is the account identity; keep the stored email column in sync with it.
+        email: session.username,
         customInstructions: customInstructions.trim() || null
       });
       onSessionUpdate({
@@ -59,15 +58,12 @@ export function UserDetailsScreen(props: {
 
       <div className="settings-section">
         <div className="history-group-label">PROFILE</div>
-        <p className="settings-hint">Your username cannot be changed.</p>
+        <p className="settings-hint">
+          Your name is how we&apos;ll refer to you. Your email is your login and can&apos;t be changed.
+        </p>
 
         <label className="composer-select settings-select">
-          <span>Username</span>
-          <input type="text" value={session.username} disabled readOnly className="settings-number-input" />
-        </label>
-
-        <label className="composer-select settings-select">
-          <span>Display name</span>
+          <span>Name</span>
           <input
             type="text"
             placeholder="Your name"
@@ -80,14 +76,7 @@ export function UserDetailsScreen(props: {
 
         <label className="composer-select settings-select">
           <span>Email</span>
-          <input
-            type="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            maxLength={255}
-            className="settings-number-input"
-          />
+          <input type="email" value={session.username} disabled readOnly className="settings-number-input" />
         </label>
       </div>
 
