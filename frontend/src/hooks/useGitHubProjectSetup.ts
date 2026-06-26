@@ -14,6 +14,7 @@ import { fetchBugReports } from "../services/integrationApi";
 import { fetchGitHubBranches, fetchGitHubRepositories } from "../services/githubApi";
 import { createGitHubSandbox } from "../services/runApi";
 import { createThread } from "../services/threadApi";
+import { isMockMode } from "../mocks/env";
 
 const buildGitHubBugReportPrompt = (report: BugReportSummary) =>
   [
@@ -138,6 +139,17 @@ export function useGitHubProjectSetup(params: {
       setSelectedBranch(preferredBranch);
     }
   }, [selectedRepo, selectedBranch, branchOptions, repoOptions]);
+
+  // Mock mode only: production loads repositories when the user explicitly opens the setup screen
+  // (which preloads via openGitHubRepoSetup). For deterministic `?mockScreen=github-repo` deep links
+  // there is no such action, so kick off the same load once the screen is shown and GitHub is active.
+  useEffect(() => {
+    if (!isMockMode() || screen !== "github-repo") return;
+    if (!session || !githubStatus?.active) return;
+    if (repoOptions.length > 0 || loadingRepos) return;
+    void openGitHubRepoSetup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, session, githubStatus?.active]);
 
   const confirmGitHubRepo = useCallback(async () => {
     if (!session || !selectedRepo || !selectedBranch) return;

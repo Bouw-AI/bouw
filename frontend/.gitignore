@@ -7,3 +7,9 @@ dist
 /.DS_Store
 .env.local
 .env.*.local
+
+# Playwright screenshot harness output
+/screenshots
+/test-results
+/playwright-report
+/.playwright
