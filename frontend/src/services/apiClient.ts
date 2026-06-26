@@ -78,6 +78,13 @@ export async function errorFromResponse(response: Response): Promise<Error & { s
 
 /** Thin JSON fetch wrapper that attaches auth + content headers and unwraps error bodies. */
 export async function apiFetch<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
+  // Mock mode short-circuits every backend call to fixture data. The mock module is dynamically
+  // imported behind the build-time guard so neither it nor the fixtures ship in a normal build.
+  if (import.meta.env.VITE_HUGIN_MOCK_MODE === "true") {
+    const { mockApiFetch } = await import("../mocks/mockApiFetch");
+    return mockApiFetch<T>(path, init);
+  }
+
   const headers = new Headers(init.headers || {});
   headers.set("Accept", "application/json");
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");

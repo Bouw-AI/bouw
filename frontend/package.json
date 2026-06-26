@@ -5,11 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "VITE_HUGIN_MOCK_MODE=true vite",
     "lint": "eslint src --ext .ts,.tsx",
     "build": "tsc -b && vite build",
+    "build:mock": "VITE_HUGIN_MOCK_MODE=true vite build",
     "test": "vitest run",
     "typecheck": "tsc -b --pretty false",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "preview:mock": "VITE_HUGIN_MOCK_MODE=true vite preview --host 127.0.0.1 --port 4173 --strictPort",
+    "screenshots": "playwright test tests/visual"
   },
   "dependencies": {
     "lucide-react": "^0.539.0",
@@ -20,6 +24,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",
+    "@playwright/test": "1.56.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^18.3.3",

@@ -18,6 +18,11 @@ import {
 
 const APP_STORAGE_KEY = "hugin-minimal-ui-state-v1";
 
+// Compiled out of a normal build; only the mock harness sets this. The JSON-data endpoints route to
+// fixtures via `apiFetch`/`mockApiFetch`; the raw-fetch mutations and the SSE stream below have no
+// backend in mock mode, so they short-circuit to inert no-ops.
+const MOCK_MODE = import.meta.env.VITE_HUGIN_MOCK_MODE === "true";
+
 type ChatEventsResponse = {
   sessionId: string;
   events: ChatEvent[];
@@ -127,6 +132,7 @@ export async function sendChatMessage(
 }
 
 export async function cancelChatRun(token: string, sessionId: string): Promise<void> {
+  if (MOCK_MODE) return;
   // The cancel endpoint returns 202/204 with no body, so use a raw fetch rather than apiFetch
   // (which parses JSON). Any active run is terminated server-side; the resulting run_error arrives
   // over the event stream and re-enables the composer.
@@ -145,6 +151,7 @@ export async function resolveChatApproval(
   approvalId: string,
   decision: "approve" | "decline"
 ): Promise<void> {
+  if (MOCK_MODE) return;
   // The approval endpoint returns 202 with no body; the resulting approval_resolved/run_completed
   // events arrive over the event stream (and on the next hydrate) to update the card and composer.
   const response = await fetch(
@@ -517,6 +524,7 @@ export async function syncThreadHistory(token: string, thread: ChatThread): Prom
 
 /** Forgets the server-side conversation memory for a session. Best-effort; ignores a missing session. */
 export async function deleteThreadHistory(token: string, sessionId: string): Promise<void> {
+  if (MOCK_MODE) return;
   await fetch(`/api/agent/history?sessionId=${encodeURIComponent(sessionId)}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` }
@@ -557,6 +565,17 @@ export function openChatEventStream(
   initialAfterSeq: number,
   handlers: ChatEventStreamHandlers
 ) {
+  if (MOCK_MODE) {
+    // No live backend in mock mode: the full transcript is delivered up-front by the hydrate path,
+    // so the "stream" just reports an open connection and never emits.
+    handlers.onStatus?.("open");
+    return {
+      close() {
+        handlers.onStatus?.("closed");
+      }
+    };
+  }
+
   const controller = new AbortController();
   let afterSeq = initialAfterSeq;
   let closed = false;

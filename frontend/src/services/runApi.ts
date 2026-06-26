@@ -1,6 +1,10 @@
 import type { AgentRun, FileNode, SandboxInfo, ToolSummary } from "../lib/types";
 import { apiFetch } from "./apiClient";
 
+// Compiled out of a normal build. The JSON reads route to fixtures via apiFetch; the raw-fetch
+// mutations below have no backend in mock mode and short-circuit to no-ops.
+const MOCK_MODE = import.meta.env.VITE_HUGIN_MOCK_MODE === "true";
+
 /** Lists the server home directory (~/) file tree backing the "Agent" chat mode. */
 export async function fetchAgentWorkspaceFiles(token: string): Promise<FileNode[]> {
   return apiFetch<FileNode[]>("/api/agent/workspace/files", {}, token);
@@ -20,6 +24,7 @@ export async function createGitHubSandbox(
 }
 
 export async function deleteSandbox(token: string, id: string): Promise<void> {
+  if (MOCK_MODE) return;
   await fetch(`/api/sandboxes/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` }
@@ -46,6 +51,7 @@ export async function fetchAgentRuns(token: string): Promise<AgentRun[]> {
 }
 
 export async function cancelAgentRun(token: string, id: string): Promise<void> {
+  if (MOCK_MODE) return;
   const response = await fetch(`/api/agent/runs/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` }

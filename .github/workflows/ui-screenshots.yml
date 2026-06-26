@@ -1,0 +1,109 @@
+name: UI Screenshots
+
+# Generates UI screenshots for every pull request so reviewers can eyeball the frontend before
+# merging. This is a review aid only — there are no baseline images and no pixel-diff comparisons
+# (yet). The screenshots are captured by Playwright against the frontend running in mock mode (no
+# backend) and uploaded as a workflow artifact, with a sticky PR comment linking to it.
+
+on:
+  pull_request:
+
+concurrency:
+  group: ui-screenshots-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Least privilege: read the repo, and (for same-repo PRs) write the sticky comment. Pull requests
+# from forks run with a read-only token; the comment step is skipped for them but the artifact still
+# uploads and the job still succeeds.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  screenshots:
+    name: Capture UI screenshots
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build frontend (mock mode)
+        run: npm run build:mock
+
+      - name: Generate screenshots
+        # The Playwright web server serves the mock build via `vite preview` and the spec captures a
+        # full-page screenshot of every screen at desktop and mobile viewports.
+        run: npm run screenshots
+
+      - name: Upload screenshots artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hugin-ui-screenshots
+          path: frontend/screenshots/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Post or update sticky PR comment
+        # Skip on forked PRs (read-only token) but never fail the job because of it.
+        if: ${{ always() && github.event.pull_request.head.repo.full_name == github.repository }}
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- hugin-ui-screenshots -->';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const sha = context.payload.pull_request.head.sha;
+            const body = [
+              marker,
+              '## UI Screenshot Preview',
+              '',
+              `Commit: \`${sha}\``,
+              '',
+              'Screens captured (desktop + mobile):',
+              '',
+              '- Login',
+              '- Chat',
+              '- History',
+              '- Integrations',
+              '- Settings',
+              '- GitHub',
+              '- Preferences',
+              '- Agent Threads',
+              '- User Details',
+              '',
+              `Download the screenshots from the **hugin-ui-screenshots** artifact on [this workflow run](${runUrl}).`,
+              '',
+              'This is a review aid only.',
+              'Visual regression comparisons are not yet enabled.'
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
