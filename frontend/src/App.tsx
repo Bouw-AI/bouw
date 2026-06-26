@@ -40,6 +40,8 @@ import { AgentThreadsScreen } from "./screens/AgentThreadsScreen";
 import { UserDetailsScreen } from "./screens/UserDetailsScreen";
 import { MenuOverlay } from "./components/MenuOverlay";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { DesktopSidebar } from "./components/desktop/DesktopSidebar";
+import { DesktopProjectPanel } from "./components/desktop/DesktopProjectPanel";
 
 // Re-exports kept stable for tests and external imports after the screen/hook refactor.
 export { reduceChatEvent } from "./stores/chatEventReducer";
@@ -303,6 +305,11 @@ export default function App() {
     store.patchThread(thread.id, { modelId: selected.id, reasoningEffort: nextReasoning });
   }, [models, thread, store, preferences.defaultModelId]);
 
+  const goHome = useCallback(() => {
+    setScreen(thread?.kind === "github" ? "chat" : "purechat");
+    setMenuOpen(false);
+  }, [thread]);
+
   const openIntegrations = useCallback(() => {
     setReturnScreen(screen === "integrations" ? returnScreen : screen);
     setScreen("integrations");
@@ -551,9 +558,26 @@ export default function App() {
 
   const name = session?.username ?? "there";
   const isChatScreen = screen === "chat" || screen === "purechat";
+  const showDesktopPanel = screen === "chat" && !!thread;
 
   return (
-    <div className="mock-page">
+    <div className={`mock-page${session ? " desktop-has-sidebar" : ""}${showDesktopPanel ? " desktop-has-panel" : ""}`}>
+      {session ? (
+        <DesktopSidebar
+          username={name}
+          screen={screen}
+          threads={store.historyThreads}
+          activeThreadId={thread?.id}
+          githubConnected={githubStatus?.active === true}
+          onNewChat={startChat}
+          onHome={goHome}
+          onSearch={() => { setHistoryQuery(""); setScreen("history"); }}
+          onProjects={github.openGitHubRepoSetup}
+          onIntegrations={openIntegrations}
+          onSettings={openPreferences}
+          onThread={openHistory}
+        />
+      ) : null}
       <div className="device-shell">
         {!session || screen === "login" ? (
           <LoginScreen
@@ -698,6 +722,15 @@ export default function App() {
           />
         ) : null}
       </div>
+      {session && showDesktopPanel && thread ? (
+        <DesktopProjectPanel
+          thread={thread}
+          files={files}
+          wsOpen={wsOpen}
+          onToggleWs={() => setWsOpen((current) => !current)}
+          sandboxStatus={sandboxStatus}
+        />
+      ) : null}
     </div>
   );
 }
