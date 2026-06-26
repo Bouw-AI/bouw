@@ -2463,8 +2463,10 @@ select {
 }
 
 /* Mobile: keep workspace panel visible in the center column */
-.workspace-panel-mobile {
-  display: block;
+@media (max-width: 1099px) {
+  .workspace-panel-mobile {
+    display: block;
+  }
 }
 
 /* ── Desktop Sidebar ───────────────────────────────────────────────────────── */
