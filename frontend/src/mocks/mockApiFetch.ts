@@ -66,7 +66,7 @@ export function mockApiFetch<T>(rawPath: string, init: RequestInit = {}): Promis
   if (route === "POST /api/auth/login" || route === "POST /api/auth/register") {
     return ok({ email: mockSession.username, verificationRequired: true, message: "We emailed you a 6-digit code." }) as Promise<T>;
   }
-  if (route === "POST /api/auth/verify") {
+  if (route === "POST /api/auth/verify" || route === "POST /api/auth/password/forgot/verify") {
     return ok({
       token: mockSession.token,
       tokenType: "Bearer",
@@ -74,6 +74,9 @@ export function mockApiFetch<T>(rawPath: string, init: RequestInit = {}): Promis
       username: mockSession.username,
       roles: mockSession.roles
     }) as Promise<T>;
+  }
+  if (route === "POST /api/auth/password/forgot") {
+    return ok({ email: mockSession.username, verificationRequired: true, message: "If that account exists, we emailed a 6-digit code." }) as Promise<T>;
   }
   if (route === "GET /api/user/profile") return ok(mockUserProfile) as Promise<T>;
   if (route === "PUT /api/user/profile") {
