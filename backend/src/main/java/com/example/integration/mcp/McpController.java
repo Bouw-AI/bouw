@@ -34,17 +34,20 @@ public class McpController {
     private final McpDiscoveryService discoveryService;
     private final McpOAuthService oauthService;
     private final McpCatalogService catalogService;
+    private final McpAuditService auditService;
     private final String redirectBaseUrl;
 
     public McpController(McpConnectionService connectionService,
                          McpDiscoveryService discoveryService,
                          McpOAuthService oauthService,
                          McpCatalogService catalogService,
+                         McpAuditService auditService,
                          @Value("${mcp.oauth.redirect-base-url:}") String redirectBaseUrl) {
         this.connectionService = connectionService;
         this.discoveryService = discoveryService;
         this.oauthService = oauthService;
         this.catalogService = catalogService;
+        this.auditService = auditService;
         this.redirectBaseUrl = redirectBaseUrl;
     }
 
@@ -102,6 +105,13 @@ public class McpController {
     @GetMapping("/catalog")
     public List<McpCatalogEntry> catalog() {
         return catalogService.catalog();
+    }
+
+    /** The authenticated user's recent MCP tool-invocation audit records (newest first). */
+    @GetMapping("/audit")
+    public List<McpAuditLogDto> audit(@AuthenticationPrincipal Jwt jwt,
+                                      @RequestParam(required = false) Integer limit) {
+        return auditService.recent(owner(jwt), limit);
     }
 
     /** Begins the OAuth Authorization Code flow; returns the URL the browser should open. */
