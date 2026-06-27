@@ -25,12 +25,29 @@ public class ChatSessionRepository {
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
     private static final TypeReference<List<ChatAttachment>> ATTACHMENTS_TYPE = new TypeReference<>() {};
 
+    public record ChatSessionSummary(String id, String title, String mode, Instant createdAt, Instant updatedAt) {}
+
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
 
     public ChatSessionRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+    }
+
+    public List<ChatSessionSummary> findByOwner(String owner) {
+        return jdbcTemplate.query("""
+                select id, title, mode, created_at, updated_at
+                from chat_sessions
+                where owner_username = ?
+                order by updated_at desc
+                """, (rs, rowNum) -> new ChatSessionSummary(
+                rs.getString("id"),
+                rs.getString("title"),
+                rs.getString("mode"),
+                rs.getTimestamp("created_at").toInstant(),
+                rs.getTimestamp("updated_at").toInstant()
+        ), owner);
     }
 
     public void upsertSession(String sessionId, String owner, String title, String mode, Instant now) {

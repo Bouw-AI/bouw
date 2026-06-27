@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 
-import { createThread, getThreadTitle } from "./services/threadApi";
+import { createThread, getThreadTitle, fetchChatSessions } from "./services/threadApi";
 import { fetchModels, reportBug, saveEnabledModels } from "./services/integrationApi";
 import { fetchGitHubRepository, fetchGitHubStatus } from "./services/githubApi";
 import { deleteSandbox } from "./services/runApi";
@@ -231,6 +231,30 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
+
+  // Sync thread metadata from the server so history persists across devices and localStorage clears.
+  useEffect(() => {
+    if (!session) return;
+    fetchChatSessions(session.token)
+      .then((summaries) => {
+        const threads: ChatThread[] = summaries.map((s) => ({
+          id: s.id,
+          title: s.title ?? "",
+          kind: (s.mode?.toLowerCase() as "chat" | "agent" | "github") ?? "chat",
+          createdAt: s.createdAt,
+          updatedAt: s.updatedAt,
+          entries: [],
+          activities: [],
+          lastSeq: 0,
+          connectionStatus: "idle",
+          hasHistory: true
+        }));
+        store.initFromServer(threads);
+      })
+      .catch(() => {
+        // Server unavailable; history is still available from localStorage.
+      });
+  }, [session, store]);
 
   useEffect(() => {
     if (!session) return;
@@ -632,13 +656,11 @@ export default function App() {
           githubConnected={githubStatus?.active === true}
           onNewChat={startChat}
           onHome={goHome}
-          onSearch={() => { setHistoryQuery(""); setScreen("history"); }}
           onProjects={github.openGitHubRepoSetup}
           onIntegrations={openIntegrations}
           onSettings={openPreferences}
           onThread={openHistory}
           openRouterCredits={openRouterCredits}
-          onManageApiKey={openPreferences}
         />
       ) : null}
       <div className="device-shell">
