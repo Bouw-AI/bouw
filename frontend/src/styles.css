@@ -2933,9 +2933,6 @@ select {
   color: #8b9099;
   text-align: center;
 }
-  color: #adb2ba;
-  flex-shrink: 0;
-}
 
 .ds-recent-list {
   flex: 1;
