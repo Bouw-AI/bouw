@@ -2343,6 +2343,21 @@ select {
   gap: 8px;
 }
 
+/* Separate consecutive labelled fields so a field's label never butts against the
+   previous field's input (e.g. the EMAIL label sitting flush under the NAME box). */
+.settings-section .settings-select + .settings-select {
+  margin-top: 16px;
+}
+
+/* Line each section's label up flush-left with the field labels, hint text, and
+   input boxes beneath it. The shared `.history-group-label` carries a 4px left
+   indent for the history list, which left these settings labels sitting proud of
+   the rest of the column. */
+.settings-section > .history-group-label {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 /* Standalone selects on the Settings, GitHub-setup, etc. screens aren't wrapped in
    a `.composer-field` (which supplies the border, leading icon, and caret the chat
    composer relies on). On their own they inherited that wrapper's 36px leading
