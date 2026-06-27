@@ -1,4 +1,5 @@
 import type {
+  McpAuditEntry,
   McpCatalogEntry,
   McpDiscoveryResult,
   McpServer,
@@ -100,6 +101,10 @@ export async function setMcpToolEnabled(
 
 export async function fetchMcpCatalog(token: string): Promise<McpCatalogEntry[]> {
   return apiFetch<McpCatalogEntry[]>("/api/mcp/catalog", {}, token);
+}
+
+export async function fetchMcpAuditLog(token: string, limit = 50): Promise<McpAuditEntry[]> {
+  return apiFetch<McpAuditEntry[]>(`/api/mcp/audit?limit=${encodeURIComponent(limit)}`, {}, token);
 }
 
 /** Starts the OAuth flow for a server and returns the authorization URL to open. */

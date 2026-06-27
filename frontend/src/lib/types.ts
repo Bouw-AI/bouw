@@ -224,6 +224,18 @@ export type McpServer = {
   tools: McpTool[];
 };
 
+/** One MCP tool-invocation audit record. Mirrors the backend McpAuditLogDto. */
+export type McpAuditEntry = {
+  id: string;
+  serverId: string | null;
+  serverName: string | null;
+  toolName: string | null;
+  status: string;
+  argumentsPreview: string | null;
+  resultPreview: string | null;
+  createdAt: string;
+};
+
 /** A curated MCP server users can add with one click. Mirrors the backend McpCatalogEntry. */
 export type McpCatalogEntry = {
   id: string;

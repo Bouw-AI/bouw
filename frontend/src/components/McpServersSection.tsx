@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Server } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, RefreshCw, Server } from "lucide-react";
 
-import type { AuthSession, McpCatalogEntry, McpServer, McpTool } from "../lib/types";
+import type { AuthSession, McpAuditEntry, McpCatalogEntry, McpServer, McpTool } from "../lib/types";
 import type { Screen } from "../lib/screen";
 import { useMcpServers } from "../hooks/useMcpServers";
+import { formatTimestamp } from "../services/apiClient";
 import type { McpCreatePayload, McpUpdatePayload } from "../services/mcpApi";
 
 const TRANSPORT_OPTIONS = [
@@ -119,6 +120,8 @@ export function McpServersSection(props: {
         ))}
       </div>
 
+      <McpActivityPanel entries={mcp.mcpAudit} onRefresh={mcp.loadMcpAudit} />
+
       {dialog.mode !== "closed" ? (
         <McpServerDialog
           server={dialog.mode === "edit" ? dialog.server : null}
@@ -166,6 +169,54 @@ function McpCatalogCard(props: { entry: McpCatalogEntry; installed: boolean; onA
       <button type="button" className="mcp-btn-secondary" disabled={installed} onClick={props.onAdd}>
         {installed ? "Added" : "Add"}
       </button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Activity (audit log)                                               */
+/* ------------------------------------------------------------------ */
+
+function McpActivityPanel(props: { entries: McpAuditEntry[]; onRefresh: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mcp-activity">
+      <div className="mcp-activity-head">
+        <button type="button" className="integration-link-action mcp-expand-button"
+                onClick={() => setOpen((v) => !v)}>
+          {open ? <ChevronDown size={14} strokeWidth={2.2} /> : <ChevronRight size={14} strokeWidth={2.2} />}
+          Recent activity{props.entries.length > 0 ? ` (${props.entries.length})` : ""}
+        </button>
+        {open ? (
+          <button type="button" className="integration-link-action mcp-activity-refresh"
+                  aria-label="Refresh activity" onClick={props.onRefresh}>
+            <RefreshCw size={13} strokeWidth={2.2} />
+          </button>
+        ) : null}
+      </div>
+      {open ? (
+        props.entries.length === 0 ? (
+          <p className="integration-card-desc">No MCP tool calls recorded yet.</p>
+        ) : (
+          <div className="mcp-activity-list">
+            {props.entries.map((entry) => (
+              <div key={entry.id} className="mcp-activity-row">
+                <span className={`mcp-activity-status mcp-activity-${entry.status}`}>{entry.status}</span>
+                <div className="mcp-activity-info">
+                  <div className="mcp-activity-names">
+                    <code className="mcp-tool-hugin">{entry.toolName ?? "(unknown tool)"}</code>
+                    {entry.serverName ? <span className="mcp-tool-original">{entry.serverName}</span> : null}
+                    <span className="mcp-activity-time">{formatTimestamp(entry.createdAt)}</span>
+                  </div>
+                  {entry.resultPreview ? (
+                    <p className="mcp-tool-desc mcp-activity-result">{entry.resultPreview}</p>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : null}
     </div>
   );
 }

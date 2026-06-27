@@ -106,6 +106,7 @@ export function mockApiFetch<T>(rawPath: string, init: RequestInit = {}): Promis
   // --- MCP servers (no servers connected in the mock environment) -----------
   if (route === "GET /api/mcp/servers") return ok([]) as Promise<T>;
   if (route === "GET /api/mcp/catalog") return ok([]) as Promise<T>;
+  if (path === "/api/mcp/audit") return ok([]) as Promise<T>;
   if (method === "POST" && /\/api\/mcp\/servers\/[^/]+\/oauth\/start$/.test(path)) {
     return ok({ authorizationUrl: "https://example.com/authorize?mock=1" }) as Promise<T>;
   }

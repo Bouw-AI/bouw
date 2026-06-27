@@ -3618,3 +3618,81 @@ select {
 .mcp-catalog-card-body {
   min-width: 0;
 }
+
+/* MCP activity (audit log viewer) */
+.mcp-activity {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #efeff1;
+}
+
+.mcp-activity-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mcp-activity-refresh {
+  display: inline-flex;
+  align-items: center;
+}
+
+.mcp-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mcp-activity-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.mcp-activity-status {
+  flex-shrink: 0;
+  margin-top: 1px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: calc(10.5px * var(--font-scale));
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.mcp-activity-success {
+  background: #e6f4ea;
+  color: #1b8a4b;
+}
+
+.mcp-activity-error {
+  background: #fdecec;
+  color: #e5484d;
+}
+
+.mcp-activity-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.mcp-activity-names {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-activity-time {
+  color: #adb2ba;
+  font-size: calc(11px * var(--font-scale));
+}
+
+.mcp-activity-result {
+  margin-top: 2px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}

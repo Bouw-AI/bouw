@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { AuthSession, McpCatalogEntry, McpServer, McpTestResult } from "../lib/types";
+import type { AuthSession, McpAuditEntry, McpCatalogEntry, McpServer, McpTestResult } from "../lib/types";
 import type { Screen } from "../lib/screen";
 import {
   createMcpServer,
   deleteMcpServer,
   discoverMcpTools,
+  fetchMcpAuditLog,
   fetchMcpCatalog,
   fetchMcpServers,
   setMcpToolEnabled,
@@ -30,6 +31,7 @@ export function useMcpServers(params: {
   const { session, screen, onError, onChanged } = params;
   const [servers, setServers] = useState<McpServer[]>([]);
   const [catalog, setCatalog] = useState<McpCatalogEntry[]>([]);
+  const [audit, setAudit] = useState<McpAuditEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, McpTestResult>>({});
@@ -46,12 +48,22 @@ export function useMcpServers(params: {
     }
   }, [session, onError]);
 
+  const loadAudit = useCallback(async () => {
+    if (!session) return;
+    try {
+      setAudit(await fetchMcpAuditLog(session.token));
+    } catch {
+      // Activity is non-critical; leave whatever we had.
+    }
+  }, [session]);
+
   useEffect(() => {
     if (!session || screen !== "integrations") return;
     void load();
+    void loadAudit();
     // Catalog is static; load it once when the screen opens (best-effort).
     fetchMcpCatalog(session.token).then(setCatalog).catch(() => setCatalog([]));
-  }, [session, screen, load]);
+  }, [session, screen, load, loadAudit]);
 
   // Re-poll the server list a few times after an OAuth popup so a card flips to "connected"
   // once the callback stores tokens, without a manual refresh.
@@ -226,10 +238,12 @@ export function useMcpServers(params: {
   return {
     mcpServers: servers,
     mcpCatalog: catalog,
+    mcpAudit: audit,
     mcpLoading: loading,
     mcpBusyId: busyId,
     mcpTestResults: testResults,
     loadMcpServers: load,
+    loadMcpAudit: loadAudit,
     createMcpServer: create,
     updateMcpServer: update,
     removeMcpServer: remove,
