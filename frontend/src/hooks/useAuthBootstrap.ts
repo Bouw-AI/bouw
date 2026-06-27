@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { offerToSavePassword } from "../lib/credentials";
 import type { AuthSession } from "../lib/types";
 import {
   confirmForgotPassword,
@@ -125,6 +126,9 @@ export function useAuthBootstrap(params: {
     if (busy || !code.trim()) return;
     setBusy(true);
     setError(null);
+    // Capture the password before we clear it below — the browser save prompt needs it, and our
+    // two-step flow has no password field in the DOM at this point for Chrome to read on its own.
+    const enteredPassword = password;
     try {
       const session =
         mode === "forgot-verify"
@@ -135,6 +139,8 @@ export function useAuthBootstrap(params: {
       saveAuthSession(validated);
       onSignedIn(validated);
       setSession(validated);
+      // Offer to save (or, after a reset, update) the credential now that sign-in has succeeded.
+      void offerToSavePassword(validated.email || pendingEmail || validated.username, enteredPassword);
       setPassword("");
       setConfirmPassword("");
       setCode("");
@@ -143,7 +149,7 @@ export function useAuthBootstrap(params: {
     } finally {
       setBusy(false);
     }
-  }, [busy, code, mode, pendingEmail, onSignedIn, setSession]);
+  }, [busy, code, mode, password, pendingEmail, onSignedIn, setSession]);
 
   /** Abandon the code step and return to the sign-in form. */
   const cancelVerification = useCallback(() => {

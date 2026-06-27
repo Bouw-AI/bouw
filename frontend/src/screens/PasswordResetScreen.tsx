@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { AppHeader } from "../components/AppHeader";
+import { offerToSavePassword } from "../lib/credentials";
 import { requestPasswordReset, confirmPasswordReset } from "../services/apiClient";
 import type { AuthSession } from "../lib/types";
 
@@ -62,6 +63,8 @@ export function PasswordResetScreen(props: {
     setBusy(true);
     try {
       await confirmPasswordReset(session.token, code.trim());
+      // Let the browser update the stored credential with the new password.
+      void offerToSavePassword(session.email || session.username, newPassword);
       setDone(true);
       setNotice(null);
     } catch (e) {
