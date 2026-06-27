@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { FolderGit2, Home, MessageCirclePlus, Puzzle, Search, Settings } from "lucide-react";
 
 import type { ChatThread } from "../../lib/types";
@@ -19,7 +20,6 @@ export function DesktopSidebar(props: {
   githubConnected: boolean;
   onNewChat: () => void;
   onHome: () => void;
-  onSearch: () => void;
   onProjects: () => void;
   onIntegrations: () => void;
   onSettings: () => void;
@@ -27,7 +27,7 @@ export function DesktopSidebar(props: {
   openRouterCredits: OpenRouterCredits | null;
 }) {
   const initials = props.username.slice(0, 2).toUpperCase();
-  const recentThreads = props.threads.slice(0, 12);
+  const [searchQuery, setSearchQuery] = useState("");
   const onChat = props.screen === "purechat" || props.screen === "chat";
 
   const credits = props.openRouterCredits;
@@ -38,6 +38,12 @@ export function DesktopSidebar(props: {
     hasBalance && credits!.totalCredits! > 0
       ? Math.min(1, Math.max(0, (credits!.totalUsage ?? 0) / credits!.totalCredits!))
       : 0;
+
+  const lowerQuery = searchQuery.trim().toLowerCase();
+  const filteredThreads = props.threads.filter(
+    (t) => !lowerQuery || t.title.toLowerCase().includes(lowerQuery)
+  );
+  const recentThreads = filteredThreads.slice(0, 12);
 
   return (
     <aside className="desktop-sidebar">
@@ -67,14 +73,6 @@ export function DesktopSidebar(props: {
         </button>
         <button
           type="button"
-          className={`ds-nav-item ${props.screen === "history" ? "ds-nav-item-active" : ""}`}
-          onClick={props.onSearch}
-        >
-          <Search size={16} strokeWidth={2} />
-          <span>Search</span>
-        </button>
-        <button
-          type="button"
           className={`ds-nav-item ${props.screen === "github-repo" ? "ds-nav-item-active" : ""}`}
           onClick={props.onProjects}
         >
@@ -99,23 +97,40 @@ export function DesktopSidebar(props: {
         </button>
       </nav>
 
-      {/* Recent Chats */}
-      {recentThreads.length > 0 ? (
+      {/* Search + Recent Chats */}
+      {props.threads.length > 0 ? (
         <div className="ds-recents">
           <div className="ds-section-label">Recent Chats</div>
-          <div className="ds-recent-list">
-            {recentThreads.map((thread) => (
-              <button
-                key={thread.id}
-                type="button"
-                className={`ds-recent-item ${thread.id === props.activeThreadId ? "ds-recent-item-active" : ""}`}
-                onClick={() => props.onThread(thread)}
-                title={thread.title}
-              >
-                <span className="ds-recent-title">{thread.title || "New chat"}</span>
-              </button>
-            ))}
+          <div className="ds-recent-search-wrap">
+            <Search size={14} strokeWidth={2} className="ds-recent-search-icon" />
+            <input
+              type="text"
+              className="ds-recent-search-input"
+              placeholder="Search history…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
           </div>
+          {recentThreads.length > 0 ? (
+            <div className="ds-recent-list">
+              {recentThreads.map((thread) => (
+                <button
+                  key={thread.id}
+                  type="button"
+                  className={`ds-recent-item ${thread.id === props.activeThreadId ? "ds-recent-item-active" : ""}`}
+                  onClick={() => props.onThread(thread)}
+                  title={thread.title}
+                >
+                  <span className="ds-recent-title">{thread.title || "New chat"}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="ds-recent-empty">No sessions match &ldquo;{searchQuery.trim()}&rdquo;.</p>
+          )}
         </div>
       ) : null}
 

@@ -54,6 +54,19 @@ public class ChatSessionController {
         this.chatStreamHeartbeatExecutor = chatStreamHeartbeatExecutor;
     }
 
+    @GetMapping
+    public ResponseEntity<List<ChatSessionSummaryResponse>> listSessions(@AuthenticationPrincipal Jwt jwt) {
+        List<ChatSessionSummaryResponse> sessions = chatSessionService.findSessions(owner(jwt)).stream()
+                .map(summary -> new ChatSessionSummaryResponse(
+                        summary.id(),
+                        summary.title(),
+                        summary.mode(),
+                        summary.createdAt(),
+                        summary.updatedAt()))
+                .toList();
+        return ResponseEntity.ok(sessions);
+    }
+
     @PostMapping("/{sessionId}/messages")
     public ResponseEntity<ChatSessionMessageResponse> createMessage(@PathVariable String sessionId,
                                                                     @RequestBody ChatSessionMessageRequest request,

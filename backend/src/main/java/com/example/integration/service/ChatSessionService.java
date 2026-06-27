@@ -128,6 +128,10 @@ public class ChatSessionService {
         return accepted;
     }
 
+    public List<ChatSessionRepository.ChatSessionSummary> findSessions(String owner) {
+        return repository.findByOwner(owner);
+    }
+
     public List<ChatSessionEvent> readEvents(String sessionId, String owner, long afterSeq) {
         if (repository.sessionExists(sessionId) && !repository.sessionExistsForOwner(sessionId, owner)) {
             throw new ResponseStatusException(NOT_FOUND, "Chat session not found");

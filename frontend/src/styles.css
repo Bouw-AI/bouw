@@ -2889,6 +2889,50 @@ select {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  color: #8b9099;
+}
+
+.ds-recent-search-wrap {
+  position: relative;
+  margin: 0 0 8px;
+}
+
+.ds-recent-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #8b9099;
+  pointer-events: none;
+}
+
+.ds-recent-search-input {
+  display: block;
+  width: 100%;
+  padding: 7px 10px 7px 32px;
+  border: 1px solid #e4e5e8;
+  border-radius: 8px;
+  background: #fff;
+  font-size: calc(12.5px * var(--font-scale));
+  color: #1c1f23;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.ds-recent-search-input::placeholder {
+  color: #8b9099;
+}
+
+.ds-recent-search-input:focus {
+  border-color: #b4b6bb;
+}
+
+.ds-recent-empty {
+  padding: 16px 8px;
+  font-size: calc(12px * var(--font-scale));
+  color: #8b9099;
+  text-align: center;
+}
   color: #adb2ba;
   flex-shrink: 0;
 }
@@ -2998,6 +3042,7 @@ select {
   font-size: calc(12.5px * var(--font-scale));
   font-weight: 500;
   text-align: center;
+  text-decoration: none;
   cursor: pointer;
   transition: background 0.15s ease;
 }

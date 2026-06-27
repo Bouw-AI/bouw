@@ -92,6 +92,9 @@ export function mockApiFetch<T>(rawPath: string, init: RequestInit = {}): Promis
     return ok({ email: mockSession.username, verificationRequired: true, message: "We emailed you a 6-digit code." }) as Promise<T>;
   }
 
+  // --- Chat sessions --------------------------------------------------------
+  if (route === "GET /api/chat/sessions") return ok([]) as Promise<T>;
+
   // --- Models ---------------------------------------------------------------
   if (path === "/api/models" || path === "/api/models/preferences") {
     return ok({ models: mockModels }) as Promise<T>;

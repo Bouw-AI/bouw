@@ -161,6 +161,7 @@ type StoreAction =
   | { type: "setConnection"; id: string; status: ConnectionStatus }
   | { type: "setRun"; id: string; run: ChatRun | null }
   | { type: "addPendingUser"; id: string; entry: { id: string; content: string; attachments?: ChatAttachment[]; createdAt: string } }
+  | { type: "initFromServer"; threads: ChatThread[] }
   | { type: "clear" };
 
 function storeReducer(state: StoreState, action: StoreAction): StoreState {
@@ -220,6 +221,19 @@ function storeReducer(state: StoreState, action: StoreAction): StoreState {
     }
     case "clear":
       return { byId: {}, activeId: null };
+    case "initFromServer": {
+      // Merge server threads into existing state. Server threads take precedence: when an existing
+      // local-only thread has the same id, the server metadata (title, timestamps) is used, but
+      // the runtime fields (entries, run, connectionStatus) are preserved.
+      const merged = { ...state.byId };
+      for (const thread of action.threads) {
+        const existing = merged[thread.id];
+        merged[thread.id] = existing
+          ? { ...thread, entries: existing.entries, lastSeq: existing.lastSeq, run: existing.run, connectionStatus: existing.connectionStatus }
+          : thread;
+      }
+      return { ...state, byId: merged };
+    }
     default:
       return state;
   }
@@ -258,6 +272,7 @@ export type ChatSessionStore = {
   markRunCancelling: (threadId: string) => void;
   cancelRun: (threadId: string) => Promise<void>;
   resolveApproval: (threadId: string, approvalId: string, decision: "approve" | "decline") => Promise<void>;
+  initFromServer: (threads: ChatThread[]) => void;
   clearAll: () => void;
 };
 
@@ -510,6 +525,10 @@ export function useChatSessionStore(
     saveActiveThreadId(null);
   }, []);
 
+  const initFromServer = useCallback((threads: ChatThread[]) => {
+    dispatch({ type: "initFromServer", threads });
+  }, []);
+
   // Re-sync and re-attach the active stream when the tab regains focus.
   useEffect(() => {
     if (!token) return;
@@ -533,6 +552,16 @@ export function useChatSessionStore(
     for (const handle of streams.values()) handle.close();
     streams.clear();
   }, [streams]);
+
+  // Persist the thread index synchronously before navigating away, so a link click that tears down
+  // the React tree before the on-change effect fires still saves the latest thread metadata.
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveThreadIndex(Object.values(stateRef.current.byId));
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
 
   const threads = useMemo(
     () => Object.values(state.byId).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)),
@@ -567,6 +596,7 @@ export function useChatSessionStore(
       markRunCancelling,
       cancelRun,
       resolveApproval,
+      initFromServer,
       clearAll
     }),
     [
@@ -589,6 +619,7 @@ export function useChatSessionStore(
       markRunCancelling,
       cancelRun,
       resolveApproval,
+      initFromServer,
       clearAll
     ]
   );

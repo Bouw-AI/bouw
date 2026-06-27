@@ -23,6 +23,14 @@ const APP_STORAGE_KEY = "hugin-minimal-ui-state-v1";
 // backend in mock mode, so they short-circuit to inert no-ops.
 const MOCK_MODE = import.meta.env.VITE_HUGIN_MOCK_MODE === "true";
 
+export type ChatSessionSummary = {
+  id: string;
+  title: string;
+  mode: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type ChatEventsResponse = {
   sessionId: string;
   events: ChatEvent[];
@@ -529,6 +537,12 @@ export async function deleteThreadHistory(token: string, sessionId: string): Pro
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` }
   });
+}
+
+/** Lists all chat sessions for the authenticated user, ordered by most recent first. */
+export async function fetchChatSessions(token: string): Promise<ChatSessionSummary[]> {
+  if (MOCK_MODE) return [];
+  return apiFetch<ChatSessionSummary[]>(`/api/chat/sessions`, {}, token);
 }
 
 function parseChatSseEvent(rawEvent: string): ChatEvent | null {
