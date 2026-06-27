@@ -126,19 +126,25 @@ public final class Prompts {
     // ── GitHub-repo chat context ──────────────────────────────────────────────
 
     /**
-     * Injected as a system message on every request bound to a GitHub-repo sandbox. It tells the
-     * model it is a software engineer working inside a specific cloned repository so it frames its
-     * work — investigation, edits, builds, tests, and git operations — as changes to that repo.
+     * Injected as a system message on every request bound to a GitHub-repo sandbox — the "GitHub
+     * project" chat mode. This is the chat-type-specific section of the system prompt: it tells the
+     * model that this conversation runs inside an isolated Docker sandbox container, working on a
+     * freshly pulled clone of a specific repository, so it frames its work — investigation, edits,
+     * builds, tests, and git operations — as changes to that repo.
      *
      * @param repoFullName the {@code owner/repo} the sandbox was cloned from
      */
     public static String githubRepoContext(String repoFullName) {
         String repo = repoFullName == null || repoFullName.isBlank() ? "this repository" : repoFullName.trim();
         return ("""
-                Your environment IS the GitHub repository %s. You are a software engineer working \
-                inside a fresh clone of this repository's selected branch — the repository's own \
-                files are the root of your workspace, so paths are relative to the repository root \
-                (there is no extra nesting). ALL of your work happens inside this repository.
+                You are in a GitHub project chat for the repository %s. This conversation runs inside \
+                a dedicated, isolated Docker sandbox container that was provisioned just for this \
+                chat, and the repository was freshly pulled (a clean clone of its selected branch) \
+                into that container when the chat started. You are a software engineer working on \
+                that freshly pulled copy — the repository's own files are the root of your workspace, \
+                so paths are relative to the repository root (there is no extra nesting). ALL of your \
+                work happens inside this repository, inside this sandbox container; nothing you do \
+                touches the host machine or any other repository.
                 \
                 ENVIRONMENT BOUNDARY (strict): the repository folder is the entire world you can \
                 touch. Every file tool (read_file, write_file, edit_file, list_files, find_files, \

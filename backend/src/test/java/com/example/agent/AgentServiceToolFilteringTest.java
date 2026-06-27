@@ -68,6 +68,29 @@ class AgentServiceToolFilteringTest {
     }
 
     @Test
+    void githubProjectSandboxAdvertisesAllGithubTools() {
+        // A GitHub project chat is always sandbox-bound and clones via the connected GitHub App, so
+        // both kinds of GitHub tool must reach the model: the workspace-scoped git tools (which
+        // require a sandbox) and the GitHub App integration tools (available while the App is
+        // connected). Stub one of each plus a never-available github tool to prove the gates.
+        var service = serviceWith(
+                new StubTool("git_status", true, true),
+                new StubTool("git_commit", true, true),
+                new StubTool("git_push", true, true),
+                new StubTool("github_create_pull_request", false, true),
+                new StubTool("github_create_issue", false, true),
+                new StubTool("github_list_repositories", false, true),
+                new StubTool("github_disconnected_tool", false, false));
+
+        var names = service.availableTools("sandbox-1").stream().map(AgentService.ToolSummary::name).toList();
+
+        assertThat(names).contains(
+                "git_status", "git_commit", "git_push",
+                "github_create_pull_request", "github_create_issue", "github_list_repositories");
+        assertThat(names).doesNotContain("github_disconnected_tool");
+    }
+
+    @Test
     void unavailableIntegrationToolIsNeverAdvertised() {
         var service = serviceWith(
                 new StubTool("chat_tool", false, true),
