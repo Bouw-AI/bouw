@@ -5,7 +5,7 @@ import type { ChatThread } from "../../lib/types";
 import type { Screen } from "../../lib/screen";
 import type { OpenRouterCredits } from "../../services/apiClient";
 
-const LOGO = "/bouw-bird.jpg";
+const LOGO = "/bouw-logo.png";
 
 /** Formats a credit amount as a compact dollar figure (OpenRouter credits are denominated in USD). */
 function formatCredits(value: number): string {
@@ -23,6 +23,7 @@ export function DesktopSidebar(props: {
   onProjects: () => void;
   onIntegrations: () => void;
   onSettings: () => void;
+  onManageApiKey: () => void;
   onThread: (thread: ChatThread) => void;
   openRouterCredits: OpenRouterCredits | null;
 }) {
@@ -161,14 +162,23 @@ export function DesktopSidebar(props: {
                   : "Balance unavailable."}
           </p>
         )}
-        <a
-          href="https://openrouter.ai/settings/credits"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="ds-credit-manage-btn"
-        >
-          Manage Credits
-        </a>
+        <div className="ds-credit-manage-row">
+          <a
+            href="https://openrouter.ai/settings/credits"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ds-credit-manage-btn"
+          >
+            Manage Credits
+          </a>
+          <button
+            type="button"
+            className="ds-credit-manage-btn"
+            onClick={props.onManageApiKey}
+          >
+            Manage API Key
+          </button>
+        </div>
       </div>
 
       {/* Profile footer */}
