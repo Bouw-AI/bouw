@@ -3048,6 +3048,16 @@ select {
   background: #f4f4f6;
 }
 
+.ds-credit-manage-row {
+  display: flex;
+  gap: 6px;
+}
+
+.ds-credit-manage-row .ds-credit-manage-btn {
+  flex: 1;
+  width: auto;
+}
+
 .ds-profile {
   display: flex;
   align-items: center;

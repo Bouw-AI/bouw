@@ -297,6 +297,17 @@ export default function App() {
     }
   }, [store.activeBusy, screen, refreshOpenRouterCredits]);
 
+  // Refresh when the user returns to the browser tab so stale data doesn't linger.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshOpenRouterCredits();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [refreshOpenRouterCredits]);
+
   // Populate the desktop project panel with live GitHub metadata for the active project thread.
   const repoFullName = thread?.kind === "github" ? thread.repoFullName : undefined;
   const githubActive = githubStatus?.active === true;
@@ -414,6 +425,13 @@ export default function App() {
     setMenuOpen(false);
     setBugReportNotice(null);
   }, [screen, returnScreen]);
+
+  const openPreferencesAtApiKey = useCallback(() => {
+    openPreferences();
+    setTimeout(() => {
+      document.getElementById("openrouter-api-key-section")?.scrollIntoView({ behavior: "smooth" });
+    }, 50);
+  }, [openPreferences]);
 
   const openAgentThreads = useCallback(() => {
     setReturnScreen(screen === "agent-threads" ? returnScreen : screen);
@@ -659,6 +677,7 @@ export default function App() {
           onProjects={github.openGitHubRepoSetup}
           onIntegrations={openIntegrations}
           onSettings={openPreferences}
+          onManageApiKey={openPreferencesAtApiKey}
           onThread={openHistory}
           openRouterCredits={openRouterCredits}
         />

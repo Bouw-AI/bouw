@@ -288,7 +288,7 @@ export function SettingsScreen(props: {
         </button>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section" id="openrouter-api-key-section">
         <div className="history-group-label">OPENROUTER API KEY</div>
         <p className="settings-hint">
           Your personal OpenRouter key is used to run your agent sessions and powers the usage meter.
@@ -314,6 +314,18 @@ export function SettingsScreen(props: {
           />
         </label>
 
+        {keyStatus?.configured ? (
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={handleRemoveKey}
+            disabled={savingKey}
+            style={{ marginTop: "8px" }}
+          >
+            Remove
+          </button>
+        ) : null}
+
         {keyError && <p className="login-error">{keyError}</p>}
         {keySaved && <p className="screen-note">API key saved.</p>}
       </div>
@@ -322,16 +334,6 @@ export function SettingsScreen(props: {
         <button type="button" className="primary-button" onClick={handleSaveKey} disabled={savingKey}>
           {savingKey ? "Saving…" : keyStatus?.configured ? "Replace key" : "Save key"}
         </button>
-        {keyStatus?.configured ? (
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={handleRemoveKey}
-            disabled={savingKey}
-          >
-            Remove
-          </button>
-        ) : null}
       </div>
     </div>
   );
