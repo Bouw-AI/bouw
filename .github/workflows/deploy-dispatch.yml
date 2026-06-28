@@ -33,7 +33,7 @@ jobs:
           }}
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.BOUW_DEPLOY_REPO_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ secrets.BOUW_DEPLOY_REPO_DISPATCH_TOKEN || secrets.HUGIN_DEPLOY_REPO_DISPATCH_TOKEN }}
           DEPLOY_REPO: jeremyunck/hugin-deploy
           SOURCE_REPOSITORY: ${{ github.repository }}
           SOURCE_SHA: ${{ inputs.sha || github.event.workflow_run.head_sha || github.sha }}
